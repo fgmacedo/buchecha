@@ -1,7 +1,5 @@
 ---
 title: Autonomous spec execution
-sidebar_position: 3
-comments: true
 ---
 
 # Autonomous spec execution
@@ -16,16 +14,16 @@ This guide is the **default**. An individual spec may strengthen or relax specif
 bcc run docs/specs/<spec>.md
 ```
 
-`bcc` reads `.bcc.toml` in the current project, invokes the configured agent in a phase-by-phase loop by default, and decides based on each diary entry. Detail in [Command line](#command-line) below.
+`bcc` reads `.bcc.toml` in the current project, invokes the configured agent in a phase-by-phase loop by default, and decides based on each journal entry. Detail in [Command line](#command-line) below.
 
 ## Execution mode
 
 Default: **phase-by-phase loop** (Ralph-style). `bcc` invokes a fresh instance of the agent for each pending phase. Each instance:
 
-1. Reads the spec, this guide, and the diary.
+1. Reads the spec, this guide, and the journal.
 1. Identifies the next phase with `[ ]` items in the plan.
 1. Implements only that phase end to end (code, tests, commits, `[x]` checkboxes).
-1. Writes a new entry on top of the Execution Log with `**Result**: ok | partial | blocked | done`.
+1. Writes a new entry on top of the Execution Journal with `**Result**: ok | partial | blocked | done`.
 1. Exits.
 
 The outer loop reads `Result` from the latest entry and decides:
@@ -47,7 +45,7 @@ To be executed autonomously, a spec must have:
 1. Objective done criteria per phase (tests, lint, etc.) or explicit inheritance of this guide's defaults.
 1. Objective stop criteria (success, block, human decision).
 1. Real ambiguities surfaced as "Open questions". The agent stops on these instead of guessing.
-1. An empty "Execution Log" section at the end, for the agent to fill.
+1. An empty "Execution Journal" section at the end, for the agent to fill.
 1. Where parallelism is allowed, indicate boundaries (which phases, how many workers, what unit each worker takes).
 
 The template at `docs/templates/spec.md` ships with all of this.
@@ -60,13 +58,13 @@ Each instance (one per iteration in loop mode, or a single one in single-shot) m
 1. Work on a fresh branch created from `main`. Branch name pattern: `<type>/<short-slug>` (e.g., `refac/api-ports-adapters`, `feat/web-search-ui`). Never commit directly to `main`. On subsequent loop iterations, reuse the same branch (verify with `git branch --show-current`).
 1. Each milestone becomes a small commit following the project's commit style from recent `git log` (prefixes like `parser:`, `api:`, `refac:`, `docs:`).
 1. Mark plan checkboxes as `[x]` in the same commit that delivers the item.
-1. In loop mode, implement exactly **one pending phase** and exit. In single-shot, update the diary at every milestone until reaching a stop criterion.
-1. Every diary entry records: result, commits, non-obvious decisions next iterations must respect (e.g., adapter name, chosen schema, return convention). The diary is the handoff between iterations; what is not there, the next iteration does not know.
+1. In loop mode, implement exactly **one pending phase** and exit. In single-shot, update the journal at every milestone until reaching a stop criterion.
+1. Every journal entry records: result, commits, non-obvious decisions next iterations must respect (e.g., adapter name, chosen schema, return convention). The journal is the handoff between iterations; what is not there, the next iteration does not know.
 1. **Do not mark `[x]` on a partially delivered item.** A checked box is a contract that the spec is satisfied at that point. If implementation only covers part of what the sub-item describes, the sub-item stays `[ ]` and the remaining work is recorded per [Discovered work](#discovered-work).
 
 ## Absolute restrictions
 
-Violating any item below is grounds for abort. Record the temptation in the diary and stop.
+Violating any item below is grounds for abort. Record the temptation in the journal and stop.
 
 1. Work **only inside the project directory** (cwd where invocation happened). Nothing outside.
 1. **Do not execute** `git push`, `gh pr create`, `git reset --hard`, `git rebase -i`, nor use `--no-verify`/`--force`.
@@ -78,12 +76,12 @@ A spec may add specific restrictions. It cannot relax this list.
 
 ## Discovered work
 
-During implementation of a phase it is common to discover work covered by the spec (sections like "Components", "URL contract", "API contract") that does not fit entirely in the current sub-item, or that emerges as a consequence of a local technical decision. This work **may never be silenced** with prose like "deferred to another phase", "separate work", "out of scope of P<n>" in the `**Decisions**` field or in the `**Summary**`. The diary is not an instrument to transfer scope.
+During implementation of a phase it is common to discover work covered by the spec (sections like "Components", "URL contract", "API contract") that does not fit entirely in the current sub-item, or that emerges as a consequence of a local technical decision. This work **may never be silenced** with prose like "deferred to another phase", "separate work", "out of scope of P<n>" in the `**Decisions**` field or in the `**Summary**`. The journal is not an instrument to transfer scope.
 
 The rule is binary:
 
 1. **Implement now**, within the current iteration, if trivial and within the planned phase.
-1. **Record as a new `[ ]` sub-item** in the plan, in the current phase (if it belongs there) or in an existing future phase, **before exiting**. The sub-item enters as a numbered line with `1.` (project convention); the diary entry explicitly cites that new sub-items were added in `**Decisions**` or `**Problems**`. If no future phase fits, create a new phase `P<n+1>: <title>` in the plan with the corresponding items; this is structural and requires justification in the diary.
+1. **Record as a new `[ ]` sub-item** in the plan, in the current phase (if it belongs there) or in an existing future phase, **before exiting**. The sub-item enters as a numbered line with `1.` (project convention); the journal entry explicitly cites that new sub-items were added in `**Decisions**` or `**Problems**`. If no future phase fits, create a new phase `P<n+1>: <title>` in the plan with the corresponding items; this is structural and requires justification in the journal.
 
 `**Decisions**` records technical choices within what was implemented (module names, schemas, conventions, shortcuts to undo). It is not the place to describe spec-covered work that was left out; for that, use a new `[ ]` sub-item.
 
@@ -99,11 +97,11 @@ The spec defines the technical done criteria per phase. A reasonable default for
 
 For other ecosystems, the spec specifies the equivalents.
 
-If a check fails and the agent does not resolve in 3 attempts, revert the last problematic commit with `git revert` (not `reset`), record the impasse in the diary, and stop the phase.
+If a check fails and the agent does not resolve in 3 attempts, revert the last problematic commit with `git revert` (not `reset`), record the impasse in the journal, and stop the phase.
 
 ## Stop criteria
 
-Each iteration ends with a `Result` value in the diary. The outer loop acts on it:
+Each iteration ends with a `Result` value in the journal. The outer loop acts on it:
 
 | Result | When | Loop action |
 |---|---|---|
@@ -112,7 +110,7 @@ Each iteration ends with a `Result` value in the diary. The outer loop acts on i
 | `done` | Zero `[ ]` sub-items in the entire plan. The outer loop verifies and aborts if any `[ ]` remains | Stop, success |
 | `blocked` | Technical block (3 consecutive validation failures after `git revert`), real human decision (undocumented ambiguity, non-trivial trade-off), temptation to violate an absolute restriction, or explicit "stop for human review" point in the plan with items still pending | Stop, requires human review |
 
-The diary entry **must** record:
+The journal entry **must** record:
 
 1. `**Result**: <value>` on its own line, exact. The loop parses it.
 1. `**Summary**`: 1-3 lines of what was done.
@@ -121,9 +119,9 @@ The diary entry **must** record:
 1. `**Problems**`: incidents and resolutions (omit if none).
 1. `**Next**`: next pending phase, or `none` when `Result: done`.
 
-## Execution Log
+## Execution Journal
 
-Each spec keeps an "Execution Log" section at the end of the document. New entries go on **top** of the list (most recent first). It is a contract read by the outer loop (it parses `**Result**:`) and by the next iteration's agent (reads `**Decisions**` to avoid undoing previous choices).
+Each spec keeps an "Execution Journal" section at the end of the document. New entries go on **top** of the list (most recent first). It is a contract read by the outer loop (it parses `**Result**:`) and by the next iteration's agent (reads `**Decisions**` to avoid undoing previous choices).
 
 Format:
 
@@ -149,7 +147,7 @@ The author reads top to bottom in the morning to understand what happened overni
 
 ## Localization
 
-`bcc` supports localized vocabularies via `.bcc.toml`. The contract above uses English defaults: `## Implementation Plan`, `## Execution Log`, `**Result**`, values `ok`/`partial`/`done`/`blocked`. For projects in another language, configure the corresponding strings in `.bcc.toml` (`[specs]` and `[loop.results]` sections). The loop semantics stay the same; only the surface vocabulary changes.
+`bcc` supports localized vocabularies via `.bcc.toml`. The contract above uses English defaults: `## Implementation Plan`, `## Execution Journal`, `**Result**`, values `ok`/`partial`/`done`/`blocked`. For projects in another language, configure the corresponding strings in `.bcc.toml` (`[specs]` and `[loop.results]` sections). The loop semantics stay the same; only the surface vocabulary changes.
 
 ## Command line
 
@@ -170,7 +168,7 @@ bcc watch docs/specs/2026-04-29-title.md
 Behavior:
 
 1. Verifies the spec exists.
-1. Loop mode invokes the agent in sequence. Each iteration has a focused prompt for one phase. Between iterations, it parses `**Result**:` from the latest diary entry and decides. Aborts also if `HEAD` did not advance in the iteration.
+1. Loop mode invokes the agent in sequence. Each iteration has a focused prompt for one phase. Between iterations, it parses `**Result**:` from the latest journal entry and decides. Aborts also if `HEAD` did not advance in the iteration.
 1. Each iteration logs JSONL events to a per-iteration file (path printed at start).
 1. Runs in foreground; use a tmux session to survive logout (`Ctrl+B d` to detach).
 1. Exit codes: `0` done, `1` blocked, `2` unknown result, `3` `HEAD` did not advance, `4` iteration cap reached, `5` `done` declared with `[ ]` items still in the plan.

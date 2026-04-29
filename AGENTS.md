@@ -1,10 +1,10 @@
 # buchecha
 
-A Go CLI that runs a coding agent against a Markdown spec in a phase-by-phase loop, with a strict diary-based handoff contract and a live status TUI. Replaces ad-hoc shell wrappers (Ralph-style) with a single binary, structured event streams, and observable execution.
+A Go CLI that runs a coding agent against a Markdown spec in a phase-by-phase loop, with a strict journal-based handoff contract and a live status TUI. Replaces ad-hoc shell wrappers (Ralph-style) with a single binary, structured event streams, and observable execution.
 
 ## Why it exists
 
-The spec-driven autonomous-loop pattern works: write a Markdown spec with a numbered Implementation Plan, point an agent (Claude Code, Codex, Gemini) at it, let it implement one phase per iteration, commit, write a diary entry, exit; outer loop reads the diary and decides whether to continue, stop, or escalate. Most existing implementations are bash scripts: opaque while running, project-bound, hard to share. `buchecha` keeps the pattern's discipline (Plan with `[x]`/`[ ]`, strict `**Result**` parsing, no scope transfer in prose) and rebuilds it as a portable Go tool with a live dashboard.
+The spec-driven autonomous-loop pattern works: write a Markdown spec with a numbered Implementation Plan, point an agent (Claude Code, Codex, Gemini) at it, let it implement one phase per iteration, commit, write a journal entry, exit; outer loop reads the journal and decides whether to continue, stop, or escalate. Most existing implementations are bash scripts: opaque while running, project-bound, hard to share. `buchecha` keeps the pattern's discipline (Plan with `[x]`/`[ ]`, strict `**Result**` parsing, no scope transfer in prose) and rebuilds it as a portable Go tool with a live dashboard.
 
 It is not a general-purpose AI orchestrator. It is **one loop, one spec, one binary**, and it stays small.
 
@@ -34,7 +34,7 @@ internal/tui/                 (bubbletea Model/Update/View; Phase 2)
 internal/loop/                (orchestration, decision table, prompt build,
                               defines Executor / GitProbe / SpecReader ports)
         ↓
-internal/spec/                (Spec/Phase/Item/DiaryEntry value objects, parsers)
+internal/spec/                (Spec/Phase/Item/JournalEntry value objects, parsers)
 internal/config/              (Config types, defaults, env precedence)
         ↑
 internal/executor/<adapter>/  (e.g. claude/) implements loop.Executor
@@ -64,7 +64,7 @@ The domain is small. We use the parts of DDD that pay off and skip the rest.
 - **Domain services** (behavior that does not belong on a single entity): `LoopDecider` (pure function on `(LatestResult, HEADAdvanced, UncheckedCount) → Action`), `Heuristic` (loop-suspect detector).
 - **Ports**: `Executor`, `GitProbe`, `SpecReader`, `ConfigLoader`. Interfaces in the consumer package.
 - **Adapters**: concrete implementations of ports, each in its own package.
-- **Ubiquitous language** (use these names everywhere: code, comments, docs, prompts): spec, plan, phase, item, iteration, result, diary entry, checkbox, executor, watcher.
+- **Ubiquitous language** (use these names everywhere: code, comments, docs, prompts): spec, plan, phase, item, iteration, result, journal entry, checkbox, executor, watcher.
 
 We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory/repository ceremonies. Too much for the size of this domain.
 
@@ -72,7 +72,7 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 
 ### SOLID, applied here
 
-- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `loop` changes when iteration semantics change. `spec` changes when the diary format changes. Mixed concerns are a smell.
+- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `loop` changes when iteration semantics change. `spec` changes when the journal format changes. Mixed concerns are a smell.
 - **OCP**: adding an agent is a new package under `executor/`, not edits to existing ones. Adding a heuristic is a new file in `loop/heuristics/`, not edits to the decider.
 - **LSP**: any `Executor` implementation must honor the contract (cancellable via context, exit code propagated, JSONL written line-by-line). Tests use a fake executor that proves the contract.
 - **ISP**: small interfaces. `Executor` has one method (`Run`). `GitProbe` has the few methods loop actually calls (`HeadSHA`, `IsClean`). No god interfaces.
@@ -80,7 +80,7 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 
 ### GRASP, where it helps
 
-- **Information Expert**: `Spec` knows how to count its own checkboxes; `DiaryEntry` knows its own format. The loop asks the spec, never reaches inside.
+- **Information Expert**: `Spec` knows how to count its own checkboxes; `JournalEntry` knows its own format. The loop asks the spec, never reaches inside.
 - **Low Coupling / High Cohesion**: small packages with their own vocabulary. No package called `util` or `helpers`. If a function does not belong somewhere, it does not belong.
 - **Pure Fabrication**: `LoopDecider` is a fabrication, not a real-world concept. It exists to isolate the decision rules from I/O so they are trivially testable.
 - **Indirection**: ports are the indirection between the loop and the outside world. Replacing `claude` with `codex` is a new adapter, not a loop edit.
@@ -93,7 +93,7 @@ A change in one dimension must not cascade into others.
 - Replace `bubbletea` with another TUI: touches `internal/tui/` only.
 - Add `codex` agent: new package `internal/executor/codex/`. No edit anywhere else.
 - Switch from TOML to YAML for config: new adapter under `internal/configloader/`. The `Config` type does not move.
-- Change spec format (e.g., add a new diary field): `internal/spec/` and `docs/guides/autonomous-execution.md` only.
+- Change spec format (e.g., add a new journal field): `internal/spec/` and `docs/guides/autonomous-execution.md` only.
 
 Red flag: a feature requires editing four or more packages. Stop, revisit cohesion.
 
@@ -112,12 +112,12 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 - Exported types: `CamelCase`. Unexported: `camelCase`.
 - Receivers: short, consistent across methods of the same type (`s *Spec`, `l *Loop`).
 - Test functions: `TestThing_Behavior`. Subtests: `t.Run("descriptive case", ...)`.
-- File names: lowercase with underscore for clarity (`loop_test.go`, `parse_diary.go`).
+- File names: lowercase with underscore for clarity (`loop_test.go`, `parse_journal.go`).
 
 ### Errors
 
-- Wrap with context: `fmt.Errorf("parse diary at %s: %w", path, err)`. Always `%w`.
-- Sentinel errors as package-level vars: `var ErrUnknownResult = errors.New("unknown diary result")`.
+- Wrap with context: `fmt.Errorf("parse journal at %s: %w", path, err)`. Always `%w`.
+- Sentinel errors as package-level vars: `var ErrUnknownResult = errors.New("unknown journal result")`.
 - Compare with `errors.Is/As`, never string match.
 - Domain errors carry enough context to diagnose without the stack trace.
 
@@ -232,7 +232,7 @@ git tag -a v0.1.0 -m '...' && goreleaser release
 ## Language
 
 - **All code, comments, docs, commit messages, and prompts in this repo are in English.**
-- Localization is a runtime feature exposed through `.bcc.toml` (`project.language`). Specs in any language work; the keywords used to parse them (plan heading, diary heading, result values) come from the user's config.
+- Localization is a runtime feature exposed through `.bcc.toml` (`project.language`). Specs in any language work; the keywords used to parse them (plan heading, journal heading, result values) come from the user's config.
 - The default vocabulary embedded in the binary covers `en` and `pt-BR`. More languages added as PRs adding a row to the defaults table.
 - **Never use the en-dash character (`—`) in prose.** Use commas, periods, or rephrase. Authorial preference, enforced.
 
@@ -245,7 +245,7 @@ git tag -a v0.1.0 -m '...' && goreleaser release
 - Tests must pass on `go test -race ./...` before any commit that touches concurrent code.
 - TODOs require a concrete next action. No `// TODO: improve this`.
 - Commit messages: imperative mood, lowercase prefix matching `git log` style (`spec:`, `loop:`, `executor:`, `tui:`, `cmd:`, `docs:`, `refac:`). One commit per milestone.
-- The `docs/specs/buchecha-mvp/index.md` is the live status tracker for the MVP. When a phase advances, update its checkbox in the same commit, and add a diary entry in the spec following the [Autonomous execution guide](docs/guides/autonomous-execution.md).
+- The `docs/specs/buchecha-mvp/index.md` is the live status tracker for the MVP. When a phase advances, update its checkbox in the same commit, and add a journal entry in the spec following the [Autonomous execution guide](docs/guides/autonomous-execution.md).
 - When in doubt about whether a piece of code belongs on the domain side or the adapter side, ask: would replacing the agent (Claude → Codex) require touching this code? If yes, it is in the wrong place; move it to an adapter.
 
 ## Open knowledge

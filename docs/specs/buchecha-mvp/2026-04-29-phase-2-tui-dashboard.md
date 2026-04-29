@@ -10,13 +10,10 @@ decision-date:
 superseded-by:
 supersedes:
 review-by:
-area:
-team:
 tags:
   - phase-2
   - mvp
   - tui
-comments: true
 ---
 
 # Phase 2: TUI dashboard
@@ -44,7 +41,7 @@ A streaming log is the wrong shape for these questions. A dashboard with fixed p
 - [ ] Health panel: heartbeat (seconds since last event), tools/min, recent error count, rate-limit status, token/cost accumulator.
 - [ ] Activity panel: current tool call, last agent message, time-in-current-action.
 - [ ] Progress panel: plan checkboxes per phase, current phase highlighted.
-- [ ] Risk panel ("if you close now"): committed vs uncommitted work, diary-entry status for current iteration.
+- [ ] Risk panel ("if you close now"): committed vs uncommitted work, journal-entry status for current iteration.
 - [ ] Sample stream: last 5-10 tool actions for context.
 - [ ] Loop-suspect heuristic: flag when last 10 tool calls are dominated by repeated `(tool, primary_arg)` pairs.
 - [ ] Graceful resize, Ctrl+C exits cleanly without corrupting the terminal.
@@ -99,7 +96,7 @@ A streaming log is the wrong shape for these questions. A dashboard with fixed p
 ┌─ if you close now ───────────────────────────────────────────┐
 │ ✓ committed:   P1, P2, 2/7 sub-items of P3 (12 commits)     │
 │ ⚠ uncommitted: 3 files (last Edit 12s ago)                  │
-│ ⚠ diary:       Result for iter 3 not yet written            │
+│ ⚠ journal:       Result for iter 3 not yet written            │
 └──────────────────────────────────────────────────────────────┘
 ┌─ recent actions ─────────────────────────────────────────────┐
 │ 14:32:18  Bash  go test ./internal/spec                      │
@@ -117,7 +114,7 @@ A streaming log is the wrong shape for these questions. A dashboard with fixed p
 | JSONL events | `tail -f` semantics via `os.File` + `bufio.Scanner` polling EOF | Continuous (event-driven) |
 | `.bcc-status/<slug>.json` | `fsnotify` on the file | Event-driven |
 | git state (`HEAD`, `status --porcelain`, `rev-list main..HEAD --count`) | `os/exec` | Every 2s |
-| Spec markdown (plan checkboxes, diary latest result) | Parser from `internal/spec` | Every 5s |
+| Spec markdown (plan checkboxes, journal latest result) | Parser from `internal/spec` | Every 5s |
 
 ### Heuristics
 
@@ -187,7 +184,7 @@ bcc watch <spec> [flags]
 1. [ ] `internal/watcher/jsonl.go`: tail JSONL, parse events into typed structs (Init, RateLimit, Thinking, ToolUse, ToolResult, AssistantText, Result).
 1. [ ] `internal/watcher/status.go`: read status JSON, watch via fsnotify, emit on change.
 1. [ ] `internal/watcher/git.go`: periodic `git rev-parse HEAD`, `git status --porcelain`, `git rev-list main..HEAD --count`. Use channels.
-1. [ ] `internal/watcher/spec.go`: periodic re-parse of plan and latest diary `Result`.
+1. [ ] `internal/watcher/spec.go`: periodic re-parse of plan and latest journal `Result`.
 1. [ ] `internal/watcher/watcher.go`: aggregate sources, expose channel of `Update` events.
 1. [ ] Tests using a fake JSONL file and a temporary git repo.
 
@@ -204,7 +201,7 @@ bcc watch <spec> [flags]
 1. [ ] `internal/tui/now.go`: latest tool_use formatted per tool (Bash command, Edit file, etc.); time-since calculation; latest assistant text.
 1. [ ] `internal/tui/health.go`: heartbeat seconds + color; tools/min; errors count; rate limit; token/cost.
 1. [ ] `internal/tui/progress.go`: phase-by-phase checkbox rendering; current phase marker `►`.
-1. [ ] `internal/tui/risk.go`: committed (parsed from spec checkboxes + git ahead count); uncommitted (`status --porcelain` files); diary status (latest `Result` parsed vs not parsed).
+1. [ ] `internal/tui/risk.go`: committed (parsed from spec checkboxes + git ahead count); uncommitted (`status --porcelain` files); journal status (latest `Result` parsed vs not parsed).
 1. [ ] `internal/tui/actions.go`: last 5 tool calls with timestamps.
 
 ### P2.5: heuristics
@@ -224,7 +221,7 @@ bcc watch <spec> [flags]
 1. [ ] Run `bcc run` on a real spec in one tmux pane and `bcc watch` in another. Confirm all panels update; heartbeat ticks; plan checkboxes change as agent commits.
 1. [ ] Trigger loop-suspect by having the agent grep the same file 8 times; confirm warning appears.
 1. [ ] Test rate-limit display by injecting a synthetic `rate_limit_event` into the JSONL.
-1. [ ] Close `bcc run` mid-iteration; confirm `bcc watch` shows red heartbeat and the "diary not written" line in the risk panel.
+1. [ ] Close `bcc run` mid-iteration; confirm `bcc watch` shows red heartbeat and the "journal not written" line in the risk panel.
 
 ## Autonomous execution
 
@@ -259,6 +256,6 @@ Default Go criteria (gofmt, go vet, go test, go build) plus:
 - bubbles: `github.com/charmbracelet/bubbles`
 - fsnotify: `github.com/fsnotify/fsnotify`
 
-## Execution Log
+## Execution Journal
 
 (empty until Phase 2 is run)

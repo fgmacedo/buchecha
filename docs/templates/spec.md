@@ -136,9 +136,9 @@ How will we know it works? Metrics, alerts, dashboards.
 
 - Links to related documents, ADRs, issues, etc.
 
-## Execution Log
+## Execution Journal
 
-Most recent entries on top. Contract (`**Result**`, `**Decisions**`, etc.) defined in the [Autonomous execution guide](../guides/autonomous-execution.md#execution-log). The outer loop parses this block; keep the format exact.
+Most recent entries on top. Contract (`**Result**`, `**Decisions**`, etc.) defined in the [Autonomous execution guide](../guides/autonomous-execution.md#execution-journal). The outer loop parses this block; keep the format exact.
 
 (empty until first execution)
 ````

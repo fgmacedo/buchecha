@@ -10,19 +10,16 @@ decision-date:
 superseded-by:
 supersedes:
 review-by:
-area:
-team:
 tags:
   - phase-1
   - mvp
-comments: true
 ---
 
 # Phase 1: bash parity
 
 ## Summary
 
-Port `scripts/exec-spec.sh` (~280 lines of bash) to a Go CLI subcommand `bcc run <spec>`, preserving the diary contract, exit codes, and overall behavior. Add `bcc init` interactive wizard that writes `.bcc.toml`. Add config layer with `[env]` support (`.env` loading + inline vars). No TUI in this phase.
+Port `scripts/exec-spec.sh` (~280 lines of bash) to a Go CLI subcommand `bcc run <spec>`, preserving the journal contract, exit codes, and overall behavior. Add `bcc init` interactive wizard that writes `.bcc.toml`. Add config layer with `[env]` support (`.env` loading + inline vars). No TUI in this phase.
 
 ## Context and motivation
 
@@ -32,10 +29,10 @@ The current shell wrapper works but is opaque, bash-bound, and project-specific.
 
 ### Goals
 
-- [ ] `bcc run <spec>` end-to-end functional parity with `scripts/exec-spec.sh`: phase loop, single-shot mode, max-iterations cap, HEAD-advanced check, diary parsing, exit codes 0/1/2/3/4/5.
+- [ ] `bcc run <spec>` end-to-end functional parity with `scripts/exec-spec.sh`: phase loop, single-shot mode, max-iterations cap, HEAD-advanced check, journal parsing, exit codes 0/1/2/3/4/5.
 - [ ] `bcc init` interactive wizard generates `.bcc.toml` with sensible defaults.
 - [ ] Config layer (`internal/config`) loads `.bcc.toml`, applies defaults by `project.language`, supports `[env]` with `.env` files and `[env.vars]` inline.
-- [ ] Spec parser (`internal/spec`) extracts plan headings, counts `[x]`/`[ ]` items, parses latest diary `**Result**`. Pure functions, table-driven tests.
+- [ ] Spec parser (`internal/spec`) extracts plan headings, counts `[x]`/`[ ]` items, parses latest journal `**Result**`. Pure functions, table-driven tests.
 - [ ] Executor (`internal/executor`) runs the agent subprocess, streams JSONL events to a per-iteration file, captures exit code.
 - [ ] Loop controller (`internal/loop`) implements the decision table with same semantics as the bash `case`.
 - [ ] Localization: a `.bcc.toml` set to `language = "pt-BR"` makes `bcc run` work on `condo-fiscal` specs without rewriting them.
@@ -68,9 +65,9 @@ buchecha/
 │   │   ├── defaults.go
 │   │   └── env.go
 │   ├── spec/                     # domain: pure parsers, value objects
-│   │   ├── spec.go               # Spec, Phase, Item, DiaryEntry, Result
+│   │   ├── spec.go               # Spec, Phase, Item, JournalEntry, Result
 │   │   ├── plan.go               # ParsePlan, CountChecked, CountUnchecked
-│   │   ├── diary.go              # ParseLatestResult
+│   │   ├── journal.go              # ParseLatestResult
 │   │   └── headings.go           # FindHeading, SectionBetween
 │   ├── loop/                     # domain: orchestration + ports
 │   │   ├── loop.go               # Loop.Run; decision table
@@ -112,7 +109,7 @@ extra_args = ["--dangerously-skip-permissions", "--output-format", "stream-json"
 [specs]
 dir = "docs/specs"
 plan_heading = "## Implementation Plan"   # auto-defaulted from project.language
-diary_heading = "## Execution Log"
+journal_heading = "## Execution Journal"
 
 [loop]
 mode = "phase"                        # "phase" | "single-shot"
@@ -136,7 +133,7 @@ files = [".env", ".env.bcc"]          # loaded in order, later wins among files
 # Add per-project env vars here. Tilde and ${VAR} are expanded.
 ```
 
-`project.language = "pt-BR"` switches defaults for `specs.plan_heading`, `specs.diary_heading`, and `loop.results.*` to the pt-BR equivalents (`## Plano de implementação`, `## Diário de execução`, `ok` / `parcial` / `finalizado` / `bloqueado`).
+`project.language = "pt-BR"` switches defaults for `specs.plan_heading`, `specs.journal_heading`, and `loop.results.*` to the pt-BR equivalents (`## Plano de implementação`, `## Diário de execução`, `ok` / `parcial` / `finalizado` / `bloqueado`).
 
 ### Env precedence (highest first)
 
@@ -204,7 +201,7 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 1. [ ] `internal/config/config.go`: `Config` struct mirroring TOML schema; `Load(path) (*Config, error)`; `Discover(cwd) (*Config, error)` (walks up).
 1. [ ] `internal/config/defaults.go`: `applyDefaults(c *Config)` filling missing values per `project.language`.
 1. [ ] `internal/config/env.go`: `(c *Config) ApplyEnv(extraFlags []string) error` resolving precedence and exporting to `os.Setenv`. No values logged.
-1. [ ] `internal/spec/headings.go`, `plan.go`, `diary.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
+1. [ ] `internal/spec/headings.go`, `plan.go`, `journal.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
 1. [ ] `go test ./internal/config/... ./internal/spec/...` zero failures.
 
 ### P1.2: executor adapter with JSONL streaming
@@ -233,8 +230,8 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 ### P1.5: validation against `condo-fiscal`
 
 1. [ ] Author manually creates `.bcc.toml` in `condo-fiscal` repo with `language = "pt-BR"`, points `[executor].binary` to `claude`, configures `[env.vars]` with `CLAUDE_CONFIG_DIR`.
-1. [ ] Run `bcc run docs/specs/<a-finished-spec>.md --max-iterations 0` (dry-load) and confirm spec/plan/diary parsing matches what the bash awk produced.
-1. [ ] Run `bcc run docs/specs/<a-real-pending-spec>.md` for one iteration with stub model (or smallest claude model) and confirm exit codes and diary parsing on real output.
+1. [ ] Run `bcc run docs/specs/<a-finished-spec>.md --max-iterations 0` (dry-load) and confirm spec/plan/journal parsing matches what the bash awk produced.
+1. [ ] Run `bcc run docs/specs/<a-real-pending-spec>.md` for one iteration with stub model (or smallest claude model) and confirm exit codes and journal parsing on real output.
 
 ## Autonomous execution
 
@@ -254,7 +251,7 @@ In addition to the guide defaults:
 
 1. Success: P1.1 through P1.5 all `[x]`, criteria above all green, manual smoke on `condo-fiscal` confirms localization works.
 1. Block: 3 consecutive validation failures after `git revert`. Or if the `claude` JSONL contract changes mid-development.
-1. Human decision: any deviation from the diary contract semantics (e.g., new `Result` value needed). Requires guide update first.
+1. Human decision: any deviation from the journal contract semantics (e.g., new `Result` value needed). Requires guide update first.
 
 ## Risks and mitigations
 
@@ -265,6 +262,6 @@ In addition to the guide defaults:
 | Localization defaults drift from `condo-fiscal` strings | Low | High | Snapshot test loading the actual `condo-fiscal` spec headings |
 | Cobra flag handling diverges from bash flag order | Low | Low | Document flag mapping in README; tests cover all flags |
 
-## Execution Log
+## Execution Journal
 
 (empty until Phase 1 is run)

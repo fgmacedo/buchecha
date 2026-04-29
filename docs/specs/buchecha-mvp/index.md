@@ -23,7 +23,7 @@ comments: true
 
 ## Summary
 
-Build `bcc`, a Go CLI that replaces shell-script-based agentic loops (Ralph-style) with a single binary, a strict diary-based handoff contract, and a live status TUI. First user is the author (using it on `condo-fiscal`); long-term goal is open-sourcing it as an alternative to ad-hoc shell loops once the product validates.
+Build `bcc`, a Go CLI that replaces shell-script-based agentic loops (Ralph-style) with a single binary, a strict journal-based handoff contract, and a live status TUI. First user is the author (using it on `condo-fiscal`); long-term goal is open-sourcing it as an alternative to ad-hoc shell loops once the product validates.
 
 ## Context and motivation
 
@@ -33,7 +33,7 @@ The author runs a shell wrapper (`scripts/exec-spec.sh`, ~280 lines) on top of C
 2. **No portability**: tied to bash, awk, and project-specific conventions in pt-BR.
 3. **No distribution path**: can't be shared without users replicating the bash setup, the doc conventions, and the agent configuration manually.
 
-`buchecha` keeps the spec contract that makes the loop work (Plan + Execution Log, strict `**Result**` parsing, `[x]`/`[ ]` discipline) and rebuilds it as a Go single-binary CLI with:
+`buchecha` keeps the spec contract that makes the loop work (Plan + Execution Journal, strict `**Result**` parsing, `[x]`/`[ ]` discipline) and rebuilds it as a Go single-binary CLI with:
 
 - `bcc run`: phase-by-phase loop with parity to the shell script's behavior, plus structured JSONL output from agent events.
 - `bcc watch`: htop-style live dashboard answering "is it alive, looping, blocked, what's at risk if I close it?".
@@ -116,7 +116,7 @@ Repo skeleton, templates, this initiative, Phase 1 and Phase 2 specs, first comm
 
 Detailed plan in [2026-04-29-phase-1-bash-parity.md](./2026-04-29-phase-1-bash-parity.md).
 
-Goal: `bcc run <spec>` reproduces the behavior of `scripts/exec-spec.sh` end-to-end, with the same exit codes and the same diary contract. JSONL stream from the agent is captured to a file. No TUI yet. `bcc init` wizard generates `.bcc.toml`. Config supports `[env]` with `.env` files and inline vars.
+Goal: `bcc run <spec>` reproduces the behavior of `scripts/exec-spec.sh` end-to-end, with the same exit codes and the same journal contract. JSONL stream from the agent is captured to a file. No TUI yet. `bcc init` wizard generates `.bcc.toml`. Config supports `[env]` with `.env` files and inline vars.
 
 ### Phase 2: TUI dashboard
 
@@ -137,7 +137,7 @@ Captured here for visibility; specs created when Phase 1 and 2 stabilize.
 
 ## Open questions
 
-- [ ] Naming of the diary contract keyword for "spec fully done": `done` (English), or `finished`? Picked `done` for brevity; revisit if it conflicts with something common.
+- [ ] Naming of the journal contract keyword for "spec fully done": `done` (English), or `finished`? Picked `done` for brevity; revisit if it conflicts with something common.
 - [ ] Should `bcc watch` auto-attach to a running `bcc run` via PID file, or always require the spec path argument? Defaulting to "always require spec path" for Phase 2 simplicity.
 - [ ] Plug-in surface for custom heuristics (e.g., "loop-suspect" detector) in Phase 3+. TBD.
 - [ ] Handling of `.bcc.toml` discovery: walk up from cwd to find one (like `git`), or require `--config` flag? Lean toward walking up.
@@ -149,9 +149,9 @@ Captured here for visibility; specs created when Phase 1 and 2 stabilize.
 - Charm bubbletea: `github.com/charmbracelet/bubbletea`.
 - Cobra: `github.com/spf13/cobra`.
 
-## Execution Log
+## Execution Journal
 
-Most recent entries on top. Contract in [Autonomous execution guide](../../guides/autonomous-execution.md#execution-log).
+Most recent entries on top. Contract in [Autonomous execution guide](../../guides/autonomous-execution.md#execution-journal).
 
 ### 2026-04-29 11:00, Phase 0: Bootstrap
 
