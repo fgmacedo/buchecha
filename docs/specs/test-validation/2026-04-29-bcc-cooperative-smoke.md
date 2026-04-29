@@ -57,7 +57,7 @@ This is not a typical autonomous run. The goals are NOT just to deliver the impl
 
 ### P1: Smoke round-trip
 
-1. [ ] Read this repository's `README.md` and write a 3-sentence summary of what `buchecha` is, in plain English, to `testdata/bcc-validation/summary.md`. The summary should be understandable to someone who has never seen the project.
+1. [x] Read this repository's `README.md` and write a 3-sentence summary of what `buchecha` is, in plain English, to `testdata/bcc-validation/summary.md`. The summary should be understandable to someone who has never seen the project.
 1. [ ] Add a `**Notes for observer**` section to your journal entry as described in the cooperative protocol above. Be specific; vague feedback is worse than no feedback.
 
 ### P2: Observer-driven iteration
