@@ -223,10 +223,13 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 
 ### P1.4: cobra wiring + end-to-end
 
-1. [ ] `cmd/run.go`: parse flags, load config via `configloader/toml`, apply env, instantiate `executor/claude` and `git/cli` and `specreader/markdown`, build `Loop`, invoke. Translate Go error to exit code.
-1. [ ] `cmd/init.go`: linear stdin wizard, write `.bcc.toml`. `--force` and `--language` honored.
-1. [ ] `cmd/watch.go`: print "not implemented yet (Phase 2)" and return exit 2.
-1. [ ] End-to-end smoke test: a small spec in `testdata/specs/sample-en.md` driven by `executor/fake` that simulates two iterations (`partial`, `done`); verifies exit 0 and correct file outputs.
+1. [x] `internal/git/cli/cli.go`: implements `loop.GitProbe` via `os/exec` (HeadSHA, CurrentBranch, IsClean). Discovered as required by the package layout but missing from earlier sub-items.
+1. [x] `internal/specreader/markdown/markdown.go`: implements `loop.SpecReader` via `os.ReadFile`. Discovered, same reason.
+1. [x] `cmd.ExitCode` package-level int + main.go threading: lets RunE handlers set the bash-compatible exit code; main.go reads it after Execute. Discovered while wiring `cmd/run`.
+1. [x] `cmd/run.go`: parse flags, load config via `configloader/toml` (`--config` overrides Discover), apply env (`--env` overrides everything), instantiate `executor/claude` + `git/cli` + `specreader/markdown`, build `Loop`, invoke. SIGINT/SIGTERM handled via `signal.NotifyContext`. Sets `cmd.ExitCode`.
+1. [x] `cmd/init.go`: linear stdin wizard with pure `WriteConfigTOML(path, initInput)` underneath (testable). `--force` and `--language` honored.
+1. [x] `cmd/watch.go`: stub from Phase 0 returns "not implemented yet (Phase 2)"; kept as-is.
+1. [x] End-to-end smoke test (`internal/loop/integration_test.go`): real git repo + real `specreader/markdown` + a wrapper around `executor/fake` that mutates the spec and commits between iterations. Two scenarios: two-iter to done with exit 0 and JSONL files emitted; HEAD-stuck on no-commit returns exit 3.
 
 ### P1.5: validation against `condo-fiscal`
 
@@ -264,6 +267,15 @@ In addition to the guide defaults:
 | Cobra flag handling diverges from bash flag order | Low | Low | Document flag mapping in README; tests cover all flags |
 
 ## Execution Journal
+
+### 2026-04-29 15:00, P1.4: cobra wiring and end-to-end
+
+- **Result**: ok
+- **Summary**: Wired everything together. Implemented two adapters that the layout required but earlier sub-items did not list (`internal/git/cli` for `loop.GitProbe`, `internal/specreader/markdown` for `loop.SpecReader`), plus the exit-code threading from `cmd` to `main`. `cmd/run.go` loads config, applies env, instantiates the three adapters, builds Loop, runs under `signal.NotifyContext` for SIGINT/SIGTERM. `cmd/init.go` is a linear stdin wizard with a pure `WriteConfigTOML` underneath; tests verify TOML round-trips through `configloader/toml`. Integration tests in `internal/loop/integration_test.go` run a real git repo + real markdown reader + a wrapper around the fake executor that mutates the spec and commits between iterations: covers two-iter-to-done (exit 0, JSONL files written) and HEAD-stuck-on-no-commit (exit 3). 9 packages green under `go test -race`.
+- **Commits**: (forthcoming) git/cli: GitProbe via os/exec (P1.4 discovered); specreader/markdown: SpecReader on disk (P1.4 discovered); cmd: thread exit codes through cmd.ExitCode (P1.4 discovered); cmd/run: wire adapters into Loop (P1.4); cmd/init: wizard with pure WriteConfigTOML (P1.4); loop: integration tests with real git + fake editing executor (P1.4); docs: mark P1.4 [x] and journal entry
+- **Decisions**: (1) Three sub-items discovered and added to P1.4 plan in the same iteration that delivers them: `internal/git/cli`, `internal/specreader/markdown`, and `cmd.ExitCode` threading. The original P1.4 sub-list named the cobra commands but did not list the adapters they instantiate; I treated this as "implementation detail of the layout" and registered explicit sub-items for traceability. (2) `cmd.ExitCode` is a package-level int set by RunE handlers and read by main.go after Execute. Cobra's default error→exit-1 is preserved when a handler does not set ExitCode. This is simpler than threading a custom error type through cobra. (3) `cmd/run.go` uses `signal.NotifyContext(SIGINT, SIGTERM)`; the user can Ctrl+C to abort and the executor's cancel chain (cmd.Cancel → SIGINT subprocess → 5s grace → SIGKILL) takes over. (4) `cmd/init.go` is split: pure `WriteConfigTOML(path, initInput) error` (exported, tested) plus the wizard `runInitWizard(stdin, stdout, target)` (interactive glue). Tests cover the pure half and skip the interactive half; `--force` is checked against existing files before prompting. (5) Integration test wraps `executor/fake` with an `editingExec` that runs scripted hooks before each fake.Run call; hook 1 commits "[x] [ ] / Result: ok", hook 2 commits "[x] [x] / Result: done". Validates the full Loop with real adapters end-to-end without touching a real claude binary. (6) `gitcli` and `markdown` use stdlib only (os/exec, os.ReadFile). They live under `internal/git/cli` and `internal/specreader/markdown` so future siblings (e.g., `internal/git/jj` for jujutsu) drop in without renaming.
+- **Problems**: none. The integration test design did require an inline `editingExec` wrapper because `fake.Step` does not have a per-step hook; if this pattern repeats, we may add `Step.OnRun func()` later.
+- **Next**: P1.5 (manual validation against `condo-fiscal`)
 
 ### 2026-04-29 14:00, P1.3: loop controller
 
