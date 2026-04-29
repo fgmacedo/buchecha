@@ -1,9 +1,12 @@
-.PHONY: build install test test-race vet fmt fmt-check tidy clean
+.PHONY: build install check-build test test-race vet fmt fmt-check tidy clean
 
-build:
+check-build:
+	go build ./...
+
+build: check-build
 	go build -o bcc ./cmd/bcc
 
-install:
+install: check-build
 	go install ./cmd/bcc
 
 test:
