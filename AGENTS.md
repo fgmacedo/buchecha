@@ -194,6 +194,32 @@ Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sam
 
 Once `bcc` is stable, every spec we run on the `bcc` repo itself is the strongest possible test: it exercises the full loop on real work. CI will have a smoke job that runs a tiny spec end-to-end against a stub executor.
 
+## Estimating tasks
+
+Any task an agent can assist with (most of what we do) has three time components. Estimates must account for all three explicitly, and call out what is **not** included.
+
+Three components:
+
+1. **Human spec time**: writing the brief, the plan with checkboxes, done and stop criteria, open questions. The level of detail required for autonomous execution is higher than for hand-coding; account for that.
+1. **Agent execution time**: running `bcc run` (or equivalent) end-to-end. Depends on phase complexity, model latency, and how many iterations the loop converges in. Wall-clock here is dominated by waiting on the agent, not by human attention.
+1. **Review time**: an agent reviewer (e.g., the `review` slash command, or a second `bcc run` against a review-only spec) plus optionally a human review pass. The agent reviewer usually catches mechanical issues; human review focuses on judgment calls and intent.
+
+Format estimates so all three are visible:
+
+> P1.2 (executor adapter): ~1h spec + ~30min agent run + ~15min review = ~2h elapsed. Excludes manual smoke on `condo-fiscal` (~15min, separate).
+
+What is **not** included unless explicitly stated:
+
+1. Manual testing (smoke runs, exploratory testing, UI validation).
+1. Deployment, release, or distribution work (goreleaser, tagging, Homebrew updates).
+1. Communication overhead (PR review threads, follow-up clarifications, design discussions).
+1. Refactoring or scope discovered during the work (treat as new sub-items per [Discovered work](docs/guides/autonomous-execution.md#discovered-work)).
+1. Operational tasks (CI configuration, secrets rotation, infra changes).
+1. Time blocked waiting on human input (when the agent stops for a question).
+1. Recompiling/reinstalling the agent's environment (e.g., `go install` after self-hosted edits).
+
+If a task does not fit this shape (e.g., research with no clear stop criterion, or open design exploration), say so up front rather than producing a misleading three-component estimate.
+
 ## Tooling and commands
 
 ```bash
