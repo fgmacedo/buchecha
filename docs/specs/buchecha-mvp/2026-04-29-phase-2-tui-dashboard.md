@@ -1,5 +1,5 @@
 ---
-title: "Phase 2: TUI dashboard"
+title: "Phase 2: live TUI in `bcc run`"
 type: spec
 status: draft
 authors:
@@ -16,212 +16,352 @@ tags:
   - tui
 ---
 
-# Phase 2: TUI dashboard
+# Phase 2: live TUI in `bcc run`
 
 ## Summary
 
-Implement `bcc watch <spec>`: a live status dashboard showing what the agent is doing now, loop health, plan progress, and what is at risk if the user closes the terminal. Built with bubbletea + lipgloss + bubbles, reading the JSONL stream produced by `bcc run` plus git state and the spec markdown.
+`bcc run <spec>` is a live, observable foreground command. The same invocation drives the iteration loop and renders a dashboard in the terminal: real-time event stream, plan progress, health metrics, and graceful controls (`q` to quit, `space` to pause). The TUI is the default rendering backend. `--output text` emits a structured human log on stderr; `--output json` emits a stable NDJSON event stream on stdout for machine consumers (one `bcc` orchestrating others, CI pipelines, log aggregators). All three modes consume the same normalized event channel; the `Executor` port emits typed events so codex and gemini adapters drop in without TUI changes.
 
 ## Context and motivation
 
-Phase 1 makes the loop work but does not solve the original pain: when the user is awake and watching, the bash-style "phase done" black box is too coarse. The user needs to answer four questions in a glance:
+`bcc run` drives an autonomous loop that can take minutes to hours. The user must answer two questions at any moment, without typing anything:
 
-1. Is it alive (or stuck)?
-2. Is it looping in circles (or making real progress)?
-3. Is it blocked by something external (rate limit, network)?
-4. What is at risk if I close the laptop right now?
+1. Is it alive and making progress?
+2. If I close the laptop right now, what do I lose?
 
-A streaming log is the wrong shape for these questions. A dashboard with fixed panels updating in place (htop style) is the right shape.
+A streaming log answers neither. A live panel-based dashboard, in the same terminal as the loop, answers both. A dashboard built into `bcc run` (instead of a separate watcher process) means one command, one terminal, one source of truth.
+
+A third use case is structural: when `bcc` itself is invoked by another agent, by another `bcc`, or by a CI pipeline, the human-shaped UI must give way to a machine-readable stream on stdout. Same loop, three rendering backends, one normalized event model.
 
 ## Goals and non-goals
 
 ### Goals
 
-- [ ] `bcc watch <spec>` opens in a separate terminal/pane and renders a 5-panel dashboard.
-- [ ] Health panel: heartbeat (seconds since last event), tools/min, recent error count, rate-limit status, token/cost accumulator.
-- [ ] Activity panel: current tool call, last agent message, time-in-current-action.
-- [ ] Progress panel: plan checkboxes per phase, current phase highlighted.
-- [ ] Risk panel ("if you close now"): committed vs uncommitted work, journal-entry status for current iteration.
-- [ ] Sample stream: last 5-10 tool actions for context.
-- [ ] Loop-suspect heuristic: flag when last 10 tool calls are dominated by repeated `(tool, primary_arg)` pairs.
-- [ ] Graceful resize, Ctrl+C exits cleanly without corrupting the terminal.
-- [ ] Auto-discovers the latest JSONL file for the given spec via the shared status file written by `bcc run`.
+- [ ] `bcc run <spec>` opens TUI by default; loop runs in the same process, foreground.
+- [ ] `--output <mode>` selects the rendering backend: `tui` (default), `text`, `json`.
+- [ ] `text` mode: structured human log via `slog` to stderr. Nothing on stdout. Suitable for CI and `tee`.
+- [ ] `json` mode: NDJSON event stream on stdout, one event per line. Suitable for `bcc` coordinating other `bcc` instances, log aggregators, custom dashboards. Stable schema.
+- [ ] `--verbosity <level>` filters the event stream: `error` | `warn` | `info` (default) | `debug` | `trace`. Each event has an implicit level; the flag drops anything below it before the render backend sees it. Applies to `text` and `json`; ignored for `tui` (TUI panels are already curated). Default `info` is the right shape for orchestrators that want signal without noise.
+- [ ] Normalized event model in `internal/loop`: `IterationStarted`, `AgentEventReceived` (Init, Thinking, ToolUse, ToolResult, AssistantText, RateLimit, ResultSummary), `IterationFinished`, `LoopFinished`. All three modes consume the same channel.
+- [ ] `Executor` port emits typed events on a channel. Adapters translate native agent formats.
+- [ ] Claude adapter: parses Claude Code's `--output-format stream-json` into normalized events. Persists raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` for audit. (Raw agent log is per-adapter and distinct from the loop-level NDJSON of `--output json`.)
+- [ ] 5-panel TUI layout: header, now/health, progress, risk, recent actions.
+- [ ] Visual polish: lipgloss colors, spinner on active tool, progress bar (items checked / total), ETA (rolling iteration time).
+- [ ] Controls in TUI: `q` / Ctrl+C (graceful shutdown), `space` (pause between iterations), `?` (help overlay).
+- [ ] Loop-suspect heuristic: 7-of-last-10 same `(tool, primary_arg)` flags warning row.
+- [ ] Graceful resize, no terminal corruption on exit (panic / signal / kill).
 
 ### Non-goals
 
-- Embedding the dashboard inside `bcc run` foreground (separate terminal/pane is simpler and more flexible).
-- Interactive controls beyond `q` (quit) and `?` (help). Phase 3+ may add `space` (pause), `r` (retry).
-- Web dashboard.
-- Historical view of past iterations (Phase 3+).
-- Multi-spec view (Phase 3+).
+- Steering (mid-run user messages to the agent). Covered by [Phase 3 steering spec](./2026-04-29-phase-3-steering.md). Requires per-adapter research.
+- Separate watcher process or `bcc watch` command. The TUI lives inside `bcc run`.
+- External status files or sidecar IPC. The in-process event channel is the only source of truth between loop and render backends.
+- Web dashboard, multi-spec view, historical view (Phase 3+).
+- Restart/retry of the current iteration from the TUI.
+- Schema versioning for `--output json`. The schema is stable from Phase 2 onward and additions must be additive (new event kinds, new optional fields). No `schema_version` field, no negotiation.
 
 ## Proposal
 
-### Shared state contract
+### Normalized event model
 
-`bcc run` writes a status file at `<spec_dir>/.bcc-status/<spec_slug>.json`, updated at iteration boundaries. `bcc watch` reads this to discover the active JSONL.
+All event types live in `internal/loop`. Adapters import from here.
 
-```json
-{
-  "spec_path": "docs/specs/foo.md",
-  "spec_slug": "foo",
-  "started_at": "2026-04-29T11:00:00Z",
-  "iter_started_at": "2026-04-29T11:14:32Z",
-  "iter_current": 3,
-  "iter_max": 20,
-  "jsonl_current": "/tmp/bcc-foo-iter3.jsonl",
-  "last_result": "partial",
-  "branch": "feat/foo"
+Agent-level events (one per agent action):
+
+```go
+package loop
+
+type AgentEventKind string
+
+const (
+    KindInit          AgentEventKind = "init"
+    KindThinking      AgentEventKind = "thinking"
+    KindToolUse       AgentEventKind = "tool_use"
+    KindToolResult    AgentEventKind = "tool_result"
+    KindAssistantText AgentEventKind = "assistant_text"
+    KindRateLimit     AgentEventKind = "rate_limit"
+    KindResultSummary AgentEventKind = "result_summary"
+)
+
+type AgentEvent struct {
+    Kind AgentEventKind
+    At   time.Time
+    Init *InitInfo           // present when Kind == KindInit
+    Tool *ToolCallInfo       // present for tool_use / tool_result
+    Text string              // present for thinking / assistant_text
+    Rate *RateLimitInfo
+    Done *ResultSummaryInfo
 }
 ```
 
-### Layout
+Loop-level events wrap agent events plus boundary signals:
+
+```go
+type Event interface{ isLoopEvent() }
+
+type IterationStarted struct {
+    Index, MaxIter int
+    At             time.Time
+}
+
+type IterationFinished struct {
+    Index        int
+    Result       spec.Result    // ok / partial / blocked / done
+    HEADAdvanced bool
+    NewlyChecked int
+    DurationMS   int64
+    LogPath      string         // raw agent log for this iteration
+}
+
+type AgentEventReceived struct{ Event AgentEvent }
+
+type LoopFinished struct {
+    Reason   string             // "spec done" | "max iterations" | "blocked" | "user cancelled" | "fatal"
+    ExitCode int
+    At       time.Time
+}
+```
+
+### Event levels (filtered by `--verbosity`)
+
+Every event has an implicit level. The verbosity flag is a low-water mark.
+
+| Level | Events included |
+|---|---|
+| `error` | `loop_finished` when `exit_code != 0`; `agent_event:tool_result` with `is_error=true` |
+| `warn` | + `agent_event:rate_limit` with `status != "allowed"` |
+| `info` (default) | + `iter_started`, `iter_finished`, `loop_finished` (any exit code), `agent_event:tool_use`, `agent_event:result_summary` |
+| `debug` | + `agent_event:assistant_text`, `agent_event:init`, all `agent_event:tool_result` |
+| `trace` | + `agent_event:thinking` (full reasoning text), any internal/diagnostic events added later |
+
+Rationale: `info` is the orchestrator-friendly default. A parent `bcc` watching a child gets one line per iteration boundary, one per tool call, plus cost summaries, plus terminal status. No reasoning text, no per-tool result bodies. To debug a misbehaving child, bump to `debug` or `trace`. To keep CI logs lean, drop to `warn`.
+
+### `--output json` schema
+
+Each loop event serialises to one NDJSON line on stdout. The wire format:
+
+```json
+{"type":"iter_started","at":"2026-04-29T14:32:00Z","level":"info","index":3,"max_iter":20}
+{"type":"agent_event","at":"...","level":"trace","kind":"thinking","text":"Adjusting parser..."}
+{"type":"agent_event","at":"...","level":"info","kind":"tool_use","tool":{"id":"toolu_01","name":"Edit","args":{"file_path":"internal/spec/plan.go"}}}
+{"type":"agent_event","at":"...","level":"debug","kind":"tool_result","tool":{"id":"toolu_01","is_error":false,"summary":"file edited"}}
+{"type":"agent_event","at":"...","level":"info","kind":"result_summary","done":{"num_turns":12,"total_cost_usd":0.34,"input_tokens":12000,"output_tokens":2300,"duration_ms":42100}}
+{"type":"iter_finished","at":"...","level":"info","index":3,"result":"partial","head_advanced":true,"newly_checked":2,"duration_ms":420000,"log_path":".bcc/logs/foo-iter3.jsonl"}
+{"type":"loop_finished","at":"...","level":"info","reason":"spec done","exit_code":0}
+```
+
+Rules:
+
+1. Stdout carries only NDJSON event lines, post-verbosity filter. No banners, no trailing summary.
+2. Stderr carries human diagnostics (`slog` text). In `json` mode, only adapter and loop diagnostics go to stderr, never the user-facing structured events.
+3. Exit code mirrors the loop's terminal status (per Phase 1 exit-code table).
+4. Schema is additive: new event kinds and new optional fields can be introduced without a version bump. Consumers MUST ignore unknown fields and unknown `type` values.
+5. Each emitted event line includes a `level` field (`"error"|"warn"|"info"|"debug"|"trace"`) so consumers can re-filter post-hoc without re-running.
+
+### Executor port
+
+```go
+type Executor interface {
+    Run(ctx context.Context, prompt string, events chan<- AgentEvent) (ExecResult, error)
+}
+
+type ExecResult struct {
+    ExitCode int
+    LogPath  string  // raw native log, written by adapter
+}
+```
+
+Cancellation contract: when `ctx` is canceled, the adapter signals the subprocess (typically SIGINT), waits with a bounded grace period before SIGKILL, drains its parser, and returns promptly. The loop forwards a `LoopFinished{Reason: "user cancelled"}` upward.
+
+### Loop entry point
+
+```go
+func (l *Loop) Run(ctx context.Context, events chan<- Event) error
+```
+
+`cmd/run.go` owns the channel. A small bridge goroutine forwards items into whichever rendering backend is active:
+
+- TUI: bridge converts each `Event` into a `tea.Msg` and feeds the bubbletea program.
+- text: bridge calls `slog.Info(...)` per event with structured attributes.
+- json: bridge serialises each event to NDJSON and writes to stdout.
+
+### Layout (TUI mode)
 
 ```
-┌─ bcc watch ──────────────────────────────────────────────────┐
-│ spec: docs/specs/foo.md         iter: 3/20   ●● 14m32s      │
-│ branch: feat/foo  (5 commits ahead of main)                  │
-└──────────────────────────────────────────────────────────────┘
-┌─ now ───────────────────────────────────┐ ┌─ health ─────────┐
-│ ▸ Edit internal/spec/plan.go            │ │ heartbeat: 3s ●  │
-│   12s ago, thought 8s before            │ │ tools/min: 6     │
+┌─ bcc ─ feat/foo ─ iter 3/20 ─ 14m32s ───────────────────────┐
+│ docs/specs/foo.md                              ●● 🟢 alive  │
+└─────────────────────────────────────────────────────────────┘
+┌─ now ───────────────────────────────────┐ ┌─ health ────────┐
+│ ⠋ Edit internal/spec/plan.go            │ │ heartbeat: 3s ●  │
+│   12s in, thought 8s before             │ │ tools/min: 6     │
 │                                         │ │ errors (5m): 0   │
 │ » "Adjusting parser for empty cells..." │ │ rate: ok         │
-│                                         │ │ tokens out: 2.3k │
+│                                         │ │ tokens: 2.3k     │
 │                                         │ │ cost: $1.23      │
 └─────────────────────────────────────────┘ └──────────────────┘
-┌─ progress ───────────────────────────────────────────────────┐
-│ P1 ☑☑☑☑   P2 ☑☑☑   P3 ☑☑►☐☐☐☐ (current)   P4 ☐☐☐   P5 ☐☐☐   │
-└──────────────────────────────────────────────────────────────┘
-┌─ if you close now ───────────────────────────────────────────┐
-│ ✓ committed:   P1, P2, 2/7 sub-items of P3 (12 commits)     │
-│ ⚠ uncommitted: 3 files (last Edit 12s ago)                  │
-│ ⚠ journal:       Result for iter 3 not yet written            │
-└──────────────────────────────────────────────────────────────┘
-┌─ recent actions ─────────────────────────────────────────────┐
-│ 14:32:18  Bash  go test ./internal/spec                      │
-│ 14:32:05  Edit  internal/spec/plan.go                        │
-│ 14:31:47  Read  internal/spec/plan.go                        │
-│ 14:31:32  Bash  git status                                   │
-│ 14:31:19  Read  docs/specs/foo.md                            │
-└──────────────────────────────────────────────────────────────┘
+┌─ progress ──────────────────────────────────────────────────┐
+│ P1 ☑☑☑☑   P2 ☑☑☑   P3 ☑☑►☐☐☐☐ (current)   P4 ☐☐☐  P5 ☐☐☐    │
+│ ███████████░░░░░░░░  11/20 items, ~6m per iter, ETA ~54m    │
+└─────────────────────────────────────────────────────────────┘
+┌─ if you close now ──────────────────────────────────────────┐
+│ ✓ committed:   P1, P2, 2/7 sub-items of P3 (12 commits)    │
+│ ⚠ uncommitted: 3 files (last Edit 12s ago)                 │
+│ ⚠ journal:     Result for iter 3 not yet written           │
+└─────────────────────────────────────────────────────────────┘
+┌─ recent actions ────────────────────────────────────────────┐
+│ 14:32:18  Bash  go test ./internal/spec                     │
+│ 14:32:05  Edit  internal/spec/plan.go                       │
+│ 14:31:47  Read  internal/spec/plan.go                       │
+│ 14:31:32  Bash  git status                                  │
+│ 14:31:19  Read  docs/specs/foo.md                           │
+└─────────────────────────────────────────────────────────────┘
+[q]uit  [space]pause  [?]help
 ```
 
-### Data sources and refresh cadence
+### Data sources (TUI panels)
 
-| Source | Mechanism | Cadence |
-|---|---|---|
-| JSONL events | `tail -f` semantics via `os.File` + `bufio.Scanner` polling EOF | Continuous (event-driven) |
-| `.bcc-status/<slug>.json` | `fsnotify` on the file | Event-driven |
-| git state (`HEAD`, `status --porcelain`, `rev-list main..HEAD --count`) | `os/exec` | Every 2s |
-| Spec markdown (plan checkboxes, journal latest result) | Parser from `internal/spec` | Every 5s |
+| Source | Mechanism |
+|---|---|
+| Agent events | `loop.Event` channel from in-process loop |
+| Iteration boundaries | `IterationStarted` / `IterationFinished` from loop |
+| git state (commits ahead, dirty files) | periodic probe via `loop.GitProbe`, every 2s |
+| Spec checkboxes | re-parse via `loop.SpecReader`, after each `IterationFinished` |
+| Cost / tokens | accumulated from `KindResultSummary` events |
 
 ### Heuristics
 
 | Signal | Computation | Display |
 |---|---|---|
-| Heartbeat | `now - last_event_ts` | Green < 30s, yellow < 2min, red ≥ 2min |
-| Loop-suspect | last 10 `tool_use` events: if ≥ 7 share `(name, primary_arg)`, flag | Warning row in health panel |
-| Errors recent | count of `tool_result.is_error=true` in last 5min | Number with color (≥ 1 yellow, ≥ 5 red) |
-| Rate limit | latest `rate_limit_event.status != "allowed"` | Red row in health |
-| Tools/min | rolling 60s rate of `tool_use` | Number |
-| Cost | sum of `result.total_cost_usd` across iterations of this spec | Currency |
+| Heartbeat | `now - last_event_at` | green < 30s, yellow < 2m, red ≥ 2m |
+| Loop-suspect | last 10 `KindToolUse` events: ≥ 7 share `(name, primary_arg)` | warning row in health |
+| Errors recent | `KindToolResult` with `IsError=true`, sliding 5m | colored count |
+| Rate limit | latest `KindRateLimit` with `Status != "allowed"` | red row |
+| Tools/min | rolling 60s rate of `KindToolUse` | number |
+| Cost | sum of `KindResultSummary.TotalCostUSD` | currency |
+| ETA | `mean(iteration_durations) × items_remaining_in_plan` | human duration |
 
 ### Architecture
 
 ```mermaid
 graph TD
-    JSONL[JSONL file] -->|tail| WATCHER[event watcher]
-    STATUS[.bcc-status JSON] -->|fsnotify| WATCHER
-    GIT[git CLI] -->|periodic| WATCHER
-    SPECMD[spec.md] -->|periodic| WATCHER
-    WATCHER --> MODEL[bubbletea Model]
-    MODEL --> VIEW[lipgloss View]
-    VIEW --> TERM[terminal]
+    CMD[cmd/run.go] --> LOOP[loop.Run]
+    CMD --> RB[render backend]
+    LOOP -->|Event chan| BRIDGE[bridge goroutine]
+    BRIDGE --> RB
+    RB -->|tui| TUI[bubbletea program]
+    RB -->|text| SLOG[slog stderr]
+    RB -->|json| NDJSON[NDJSON stdout]
+    LOOP --> EXEC[loop.Executor]
+    EXEC -->|AgentEvent chan| LOOP
+    LOOP --> GIT[loop.GitProbe]
+    LOOP --> SPECR[loop.SpecReader]
+    TUI --> TERM[terminal]
 ```
 
-### Package layout (additions)
+### Package layout
 
 ```
 internal/
-├── watcher/
-│   ├── watcher.go                # source aggregator, emits Msg into bubbletea
-│   ├── jsonl.go                  # tail JSONL, parse events
-│   ├── status.go                 # read/watch .bcc-status JSON
-│   ├── git.go                    # periodic git probes
-│   └── spec.go                   # periodic spec re-parse
+├── loop/
+│   ├── ports.go                  # Executor, GitProbe, SpecReader interfaces
+│   ├── events.go                 # AgentEvent, Event, AgentEventKind
+│   ├── eventlevel.go             # LevelOf(Event) Level + verbosity filter
+│   ├── eventjson.go              # NDJSON serialiser for --output json
+│   └── loop.go                   # Loop.Run drives iterations, emits Events
+├── executor/claude/
+│   ├── claude.go                 # parses stream-json into AgentEvent
+│   └── log.go                    # raw stream persistence to .bcc/logs/
 └── tui/
     ├── tui.go                    # bubbletea Model/Update/View root
-    ├── header.go                 # spec + iter + branch + heartbeat dot
+    ├── header.go                 # spec, branch, iter, elapsed, alive dot
     ├── now.go                    # current activity panel
-    ├── health.go                 # health stats panel
-    ├── progress.go               # plan checkboxes panel
+    ├── health.go                 # health metrics panel
+    ├── progress.go               # plan checkboxes, progress bar, ETA
     ├── risk.go                   # "if you close now" panel
     ├── actions.go                # recent actions panel
-    └── theme.go                  # lipgloss styles
+    ├── help.go                   # ? overlay
+    └── theme.go                  # lipgloss styles, --no-color support
 ```
 
-### CLI surface (Phase 2 additions)
+### CLI surface
 
 ```bash
-bcc watch <spec> [flags]
-  --jsonl <path>            # explicit JSONL override (skip status discovery)
+bcc run <spec> [flags]
+  --output <mode>           # tui (default) | text | json
+  --verbosity <level>       # error | warn | info (default) | debug | trace
+  --no-color                # disable lipgloss colors (also affects text mode tags)
+  --max-iter <n>            # override .bcc.toml [loop].max_iterations
   --refresh-git <ms>        # git probe interval, default 2000
-  --refresh-spec <ms>       # spec re-parse interval, default 5000
-  --no-color                # disable lipgloss colors
 ```
 
 ## Implementation Plan
 
-### P2.1: status file producer in `bcc run`
+### P2.1: event types and Executor contract
 
-1. [ ] Extend `internal/loop` to write/update `.bcc-status/<slug>.json` at iteration boundaries.
-1. [ ] On `bcc run` exit (any path), write final status with terminal reason.
-1. [ ] Tests: unit tests for status file writer; smoke test confirms file appears and updates.
+1. [ ] Add `internal/loop/events.go` with `AgentEvent`, `AgentEventKind`, `Event` interface, and the four loop-level event types. Pure types, no I/O.
+1. [ ] Set `loop.Executor.Run` signature to `Run(ctx, prompt, events chan<- AgentEvent) (ExecResult, error)`. `loop.Loop.Run` forwards agent events into its own `chan<- Event`.
+1. [ ] Update the existing fake executor in tests to push canned `AgentEvent`s on the channel.
+1. [ ] Tests: table-driven loop test asserts the sequence of `Event`s emitted for a known fake transcript.
 
-### P2.2: watcher package (no UI)
+### P2.2: claude adapter emits typed events
 
-1. [ ] `internal/watcher/jsonl.go`: tail JSONL, parse events into typed structs (Init, RateLimit, Thinking, ToolUse, ToolResult, AssistantText, Result).
-1. [ ] `internal/watcher/status.go`: read status JSON, watch via fsnotify, emit on change.
-1. [ ] `internal/watcher/git.go`: periodic `git rev-parse HEAD`, `git status --porcelain`, `git rev-list main..HEAD --count`. Use channels.
-1. [ ] `internal/watcher/spec.go`: periodic re-parse of plan and latest journal `Result`.
-1. [ ] `internal/watcher/watcher.go`: aggregate sources, expose channel of `Update` events.
-1. [ ] Tests using a fake JSONL file and a temporary git repo.
+1. [ ] `internal/executor/claude/claude.go`: parse stream-json line-by-line into `AgentEvent`. Map every Claude event subtype to a `Kind`.
+1. [ ] `internal/executor/claude/log.go`: persist raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` as the parser reads it. `ExecResult.LogPath` returns the path.
+1. [ ] Tests: replay a captured stream-json fixture (`testdata/full-iter.jsonl`) and assert the produced `AgentEvent` sequence.
+1. [ ] Smoke: run a one-phase spec end-to-end with `--output text`.
 
-### P2.3: bubbletea skeleton
+### P2.3: text and json output modes
 
-1. [ ] `internal/tui/tui.go`: `Model` struct holding all panel state; `Init()`, `Update(msg)`, `View()`.
-1. [ ] Bridge `watcher.Update` events into bubbletea via `tea.Cmd` reading from a channel.
-1. [ ] Empty render with all 5 panels showing placeholders. `q`/Ctrl+C exits cleanly.
-1. [ ] Window resize handled (`tea.WindowSizeMsg`).
+1. [ ] `cmd/run.go`: `--output` flag with values `tui` (default), `text`, `json`; `--verbosity` flag with values `error|warn|info|debug|trace` (default `info`). Build the channel, dispatch to backend.
+1. [ ] `internal/loop/eventlevel.go`: pure function `LevelOf(Event) Level` mapping each event to its level per the table above. Table-driven test asserts every kind has a level.
+1. [ ] Verbosity filter: middleware goroutine that reads the loop channel and drops events below the threshold before forwarding to the backend. Backends never see filtered-out events.
+1. [ ] text backend: drain channel into `slog` lines on stderr with structured attrs. The slog level matches the event level (`Debug`, `Info`, `Warn`, `Error`).
+1. [ ] `internal/loop/eventjson.go`: marshal each `Event` into the documented NDJSON shape, including the `level` field.
+1. [ ] json backend: drain channel, write one NDJSON line per event to stdout, flush after each.
+1. [ ] Verify signal handling: Ctrl+C cancels ctx, loop returns cleanly, exit code preserved across all three modes.
+1. [ ] Tests: capture stdout for json mode against a fixed fake transcript; assert byte-for-byte expected NDJSON at each verbosity level.
 
-### P2.4: panels
+### P2.4: bubbletea skeleton
 
-1. [ ] `internal/tui/header.go`: spec, iter, branch, heartbeat dot.
-1. [ ] `internal/tui/now.go`: latest tool_use formatted per tool (Bash command, Edit file, etc.); time-since calculation; latest assistant text.
-1. [ ] `internal/tui/health.go`: heartbeat seconds + color; tools/min; errors count; rate limit; token/cost.
-1. [ ] `internal/tui/progress.go`: phase-by-phase checkbox rendering; current phase marker `►`.
-1. [ ] `internal/tui/risk.go`: committed (parsed from spec checkboxes + git ahead count); uncommitted (`status --porcelain` files); journal status (latest `Result` parsed vs not parsed).
-1. [ ] `internal/tui/actions.go`: last 5 tool calls with timestamps.
+1. [ ] `internal/tui/tui.go`: `Model` struct holding panel state; `Init()`, `Update(msg)`, `View()`.
+1. [ ] Bridge: `tea.Cmd` that reads from `chan loop.Event` and emits a `tea.Msg` per event.
+1. [ ] `q` and Ctrl+C cancel the loop ctx, then exit bubbletea cleanly via `tea.Quit`.
+1. [ ] `space` toggles a `paused` flag; loop reads a `<-chan struct{}` from TUI before starting next iteration.
+1. [ ] Window resize handled (`tea.WindowSizeMsg`). Empty placeholders rendered for all panels.
 
-### P2.5: heuristics
+### P2.5: panels
 
-1. [ ] Loop-suspect detector: last-10 ring buffer of `(tool, primary_arg)`; threshold ≥ 7/10 same key. Display warning row.
-1. [ ] Error rate counter: 5-minute sliding window of `is_error=true` events.
+1. [ ] `header.go`: spec path, branch, iter `n/N`, elapsed-since-start, alive dot.
+1. [ ] `now.go`: spinner + current `KindToolUse` formatted per tool (Bash command, Edit file, Read path); time-since calculation; latest `KindAssistantText`.
+1. [ ] `health.go`: heartbeat + color; tools/min; errors count; rate limit; tokens; cost.
+1. [ ] `progress.go`: phase-by-phase checkbox rendering; current phase marker `►`; lipgloss progress bar (`bubbles/progress`) for `items_checked / total`; ETA from iteration duration history.
+1. [ ] `risk.go`: committed (parsed from spec checkboxes + git ahead count); uncommitted (`git status --porcelain` files); journal status (latest `**Result**` parsed vs not).
+1. [ ] `actions.go`: last 5 tool calls with timestamps, color-coded by tool kind.
+
+### P2.6: heuristics
+
+1. [ ] Loop-suspect detector: ring buffer of last 10 `(tool, primary_arg)`; threshold ≥ 7/10 same key. Display warning row in health.
+1. [ ] Error rate counter: 5-minute sliding window of `IsError=true`.
 1. [ ] Tools/min rate: 60-second sliding window.
 
-### P2.6: theming and polish
+### P2.7: theming and polish
 
-1. [ ] `internal/tui/theme.go` with lipgloss styles. `--no-color` disables color via lipgloss `lipgloss.SetColorProfile`.
-1. [ ] Help screen: `?` toggles a modal overlay listing keybindings.
+1. [ ] `internal/tui/theme.go` lipgloss styles. `--no-color` disables color via `lipgloss.SetColorProfile(termenv.Ascii)`.
+1. [ ] Help screen: `?` toggles modal overlay listing keybindings.
 1. [ ] Manual visual review at 80x24, 120x40, 200x60 terminal sizes.
+1. [ ] Terminal restoration on panic: deferred `program.ReleaseTerminal()` plus SIGTERM signal handler.
 
-### P2.7: end-to-end validation
+### P2.8: end-to-end validation
 
-1. [ ] Run `bcc run` on a real spec in one tmux pane and `bcc watch` in another. Confirm all panels update; heartbeat ticks; plan checkboxes change as agent commits.
-1. [ ] Trigger loop-suspect by having the agent grep the same file 8 times; confirm warning appears.
-1. [ ] Test rate-limit display by injecting a synthetic `rate_limit_event` into the JSONL.
-1. [ ] Close `bcc run` mid-iteration; confirm `bcc watch` shows red heartbeat and the "journal not written" line in the risk panel.
+1. [ ] Run `bcc run` on a real one-phase spec with `--output tui`. Confirm panels populate and iteration completes.
+1. [ ] Same spec with `--output text`: confirm slog output is readable and exit code matches TUI mode.
+1. [ ] Same spec with `--output json`: pipe stdout through `jq -c` and confirm every line parses; exit code matches.
+1. [ ] Verbosity sweep: run the same spec at `--verbosity error`, `info`, `trace`; confirm the line counts strictly increase and no line at a lower level disappears at a higher level.
+1. [ ] Smoke test "bcc coordinating bccs": small Go program reads NDJSON from `bcc run ... --output json --verbosity info` and prints a one-line summary per `iter_finished`. Demonstrates that `info` is the right default for orchestrators.
+1. [ ] Trigger loop-suspect by having the agent grep the same file 8 times; confirm warning appears in TUI.
+1. [ ] Synthetic rate-limit event injected via fake executor; confirm red row in TUI and corresponding NDJSON event.
+1. [ ] Ctrl+C mid-iteration: confirm clean terminal restore in TUI, no garbage characters; exit code reflects user-cancelled in all three modes.
+1. [ ] Resize while running TUI: no clipping or overflow.
 
 ## Autonomous execution
 
@@ -229,32 +369,36 @@ This spec follows the [Autonomous execution guide](../../guides/autonomous-execu
 
 ### Done criteria
 
-Default Go criteria (gofmt, go vet, go test, go build) plus:
+Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 
 1. Manual visual review at 3 terminal sizes confirms no overflow or clipping.
-1. End-to-end test in P2.7 succeeds.
+1. End-to-end test in P2.8 succeeds across all three `--output` modes.
 
 ### Stop criteria
 
-1. Success: P2.1 through P2.7 all `[x]` and end-to-end visual review passes.
-1. Block: bubbletea API surprise (e.g., terminal restoration on Ctrl+C fails on macOS) that needs design rethink.
-1. Human decision: layout choices that affect UX (e.g., panel ordering, color palette).
+1. **Success**: P2.1 through P2.8 all `[x]` and end-to-end review passes.
+1. **Block**: bubbletea API surprise (terminal restoration, signal handling, channel-into-`tea.Cmd`) that needs design rethink.
+1. **Human decision**: layout choices that affect UX (panel ordering, color palette, exact ETA formula). The NDJSON event schema is locked at the start of P2.3 and any change there requires human sign-off.
 
 ## Risks and mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| bubbletea + fsnotify + goroutines = race conditions | Medium | Medium | Single source-of-truth `Model`; all updates funnel through `Update(msg)`; `-race` flag in tests |
-| Terminal corruption on Ctrl+C / crash | Low | High | Always wrap in `tea.NewProgram(...).Start()` with deferred restore; manual SIGINT handler as backup |
+| TUI + loop goroutines = race conditions | Medium | Medium | Single source-of-truth `Model`; all updates funnel through `Update(msg)`; `-race` flag in tests |
+| Terminal corruption on Ctrl+C / panic | Low | High | `tea.NewProgram(...).Run()` deferred restore; SIGTERM handler calls `ReleaseTerminal()` |
+| NDJSON schema premature lock-in | Medium | Medium | Schema additive only; consumers ignore unknown fields/kinds; documented in goals |
 | Heuristic false positives (loop-suspect on legitimate repetition) | Medium | Low | Tune thresholds during dogfooding; threshold tunable via `.bcc.toml` later |
-| Status JSON race with `bcc run` writing it | Low | Medium | Atomic write (temp + rename) on the producer side |
+| Pause semantics confusing (between vs during iter) | Low | Low | UI label says "pause after this iter"; documented in `?` help |
+| Stdin contention (TUI reads keys, agent subprocess inherits stdin) | Low | Medium | Adapter explicitly disconnects subprocess stdin (`cmd.Stdin = nil`); TUI owns os.Stdin |
+| Large iterations overrun event channel buffer | Low | Low | Channel buffered to 256; on overflow, drop with `slog.Warn` |
 
 ## References
 
 - bubbletea: `github.com/charmbracelet/bubbletea`
 - lipgloss: `github.com/charmbracelet/lipgloss`
-- bubbles: `github.com/charmbracelet/bubbles`
-- fsnotify: `github.com/fsnotify/fsnotify`
+- bubbles: `github.com/charmbracelet/bubbles` (`progress`, `viewport`, `help`, `spinner`)
+- Claude Code stream-json format: `claude --output-format stream-json` reference
+- Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
 

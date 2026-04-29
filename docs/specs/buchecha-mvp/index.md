@@ -35,8 +35,7 @@ The author runs a shell wrapper (`scripts/exec-spec.sh`, ~280 lines) on top of C
 
 `buchecha` keeps the spec contract that makes the loop work (Plan + Execution Journal, strict `**Result**` parsing, `[x]`/`[ ]` discipline) and rebuilds it as a Go single-binary CLI with:
 
-- `bcc run`: phase-by-phase loop with parity to the shell script's behavior, plus structured JSONL output from agent events.
-- `bcc watch`: htop-style live dashboard answering "is it alive, looping, blocked, what's at risk if I close it?".
+- `bcc run`: phase-by-phase loop with a live TUI by default. Phase 1 ships parity with the shell script and structured agent-event capture. Phase 2 wraps the loop in a real-time dashboard answering "is it alive, looping, blocked, what is at risk if I close it?", plus `--output text|json` for headless and orchestrator use.
 - `bcc init`: interactive wizard to create `.bcc.toml`, supporting localized vocabulary, multiple agent executors (Claude/Codex/Gemini), `.env` loading.
 - Eventual self-hosting: once the basics work, new features ship as specs that `bcc` itself runs.
 
@@ -44,17 +43,17 @@ The author runs a shell wrapper (`scripts/exec-spec.sh`, ~280 lines) on top of C
 
 ```mermaid
 graph TD
-    USER[User] --> BCC[bcc CLI]
+    USER[User] --> BCC[bcc run]
     BCC --> CONFIG[.bcc.toml + .env]
     BCC --> SPEC[Markdown spec]
     BCC --> EXEC[Agent subprocess]
-    EXEC --> JSONL[JSONL event stream]
-    JSONL --> LOOP[Loop decision]
-    JSONL --> DASH[bcc watch dashboard]
+    EXEC --> EVENTS[Typed event stream]
+    EVENTS --> LOOP[Loop decision]
+    EVENTS --> RENDER[Render backend: tui / text / json]
     LOOP --> SPEC
     LOOP --> GIT[git verify HEAD advanced]
-    DASH --> SPEC
-    DASH --> GIT
+    RENDER --> SPEC
+    RENDER --> GIT
 ```
 
 ## Spec map
@@ -74,7 +73,8 @@ graph LR
 |---|---|---|---|
 | [index.md](./index.md) | initiative | draft | This big picture |
 | [2026-04-29-phase-1-bash-parity.md](./2026-04-29-phase-1-bash-parity.md) | spec | draft | `bcc run` with full functional parity to `scripts/exec-spec.sh` |
-| [2026-04-29-phase-2-tui-dashboard.md](./2026-04-29-phase-2-tui-dashboard.md) | spec | draft | `bcc watch` live status dashboard via bubbletea |
+| [2026-04-29-phase-2-tui-dashboard.md](./2026-04-29-phase-2-tui-dashboard.md) | spec | draft | Live TUI built into `bcc run` plus `--output text\|json` for headless / orchestrator use; normalized event model |
+| [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md) | spec | draft | Mid-run user-to-agent steering via TUI input, capability-gated per executor |
 | Phase 3+ | (placeholder) | future | Self-hosting, multi-agent support, PRD→Spec→bcc flow, releases |
 
 ## Cross-cutting decisions
@@ -122,12 +122,13 @@ Goal: `bcc run <spec>` reproduces the behavior of `scripts/exec-spec.sh` end-to-
 
 Detailed plan in [2026-04-29-phase-2-tui-dashboard.md](./2026-04-29-phase-2-tui-dashboard.md).
 
-Goal: `bcc watch <spec>` shows a live status dashboard answering "is it alive, looping in circles, blocked externally, what's at risk if I close it?". Reads JSONL + git + spec markdown. bubbletea + lipgloss + bubbles.
+Goal: `bcc run <spec>` opens a live TUI by default showing real-time activity, plan progress, health, and risk panels. Same process owns the loop and the dashboard. The `Executor` port is refactored to emit a normalized event stream so codex and gemini drop in without TUI changes. `--output text` falls back to structured slog on stderr; `--output json` emits a stable NDJSON event stream on stdout (verbosity-filtered) so a parent `bcc` or any tool can orchestrate child runs.
 
-### Phase 3+: Future scope (not yet specified)
+### Phase 3+: Future scope
 
-Captured here for visibility; specs created when Phase 1 and 2 stabilize.
+Some specs are draft; others are placeholders. Specs created when Phase 1 and 2 stabilize.
 
+1. [ ] **Mid-run steering** (draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)): user injects messages into the live agent conversation via the TUI; capability-gated per executor adapter.
 1. [ ] **Self-hosting validation**: run a `bcc`-managed spec end-to-end on the `bcc` repo itself.
 1. [ ] **Multi-agent executor support**: codex, gemini, generic subprocess. Runtime selection via `[executor].agent`.
 1. [ ] **PRD → Spec → bcc flow**: `bcc new prd <slug>`, `bcc new spec <slug>` scaffold from templates. Optional `bcc derive spec <prd>` that asks the agent to draft a spec from a PRD.
