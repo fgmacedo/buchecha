@@ -5,20 +5,28 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
-// theme bundles the lipgloss styles the panels use. Phase 2.5 keeps
-// the surface minimal: a panel-title style, an "ok" / "warn" / "err"
-// trio for status glyphs, and a subdued style for secondary text. The
-// full palette and `--no-color` toggle land in P2.7.
+// theme bundles the lipgloss styles the panels share. Style construction
+// reads the lipgloss default renderer's color profile lazily, so calling
+// DisableColor before any panel renders produces an Ascii (no-color)
+// output without changing any panel code. Panels reference the styles
+// by name (theme.title, theme.ok, ...).
+//
+// Color choice rationale: ANSI-16 indexed colors keep the output legible
+// across nearly every terminal palette (light or dark, default or
+// custom). Bright variants are reserved for transient alerts; the
+// stable status glyphs use the muted base colors.
 var theme = struct {
-	title    lipgloss.Style
-	ok       lipgloss.Style
-	warn     lipgloss.Style
-	err      lipgloss.Style
-	subtle   lipgloss.Style
-	bar      lipgloss.Style
-	barEmpty lipgloss.Style
+	title    lipgloss.Style // bold panel heading
+	ok       lipgloss.Style // healthy state, ✓ glyphs, "alive" dot
+	warn     lipgloss.Style // caution: paused tag, ⚠ glyphs, journal-missing
+	err      lipgloss.Style // failure: error count, rate-limit, loop-suspect
+	subtle   lipgloss.Style // secondary text (timestamps, paths, hints)
+	bar      lipgloss.Style // filled cells in the progress bar
+	barEmpty lipgloss.Style // empty cells in the progress bar
+	keyHint  lipgloss.Style // help-overlay keyboard glyph (e.g. "[q]")
 }{
 	title:    lipgloss.NewStyle().Bold(true),
 	ok:       lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
@@ -27,6 +35,19 @@ var theme = struct {
 	subtle:   lipgloss.NewStyle().Faint(true),
 	bar:      lipgloss.NewStyle().Foreground(lipgloss.Color("12")),
 	barEmpty: lipgloss.NewStyle().Faint(true),
+	keyHint:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14")),
+}
+
+// DisableColor forces the lipgloss default renderer into the Ascii
+// profile so every theme.* style renders as plain text. Wired to
+// `--output tui --no-color` in cmd/run; safe to call before
+// tea.NewProgram or after (subsequent renders pick up the new profile).
+//
+// Also affects any non-TUI render path that happens to use lipgloss
+// styles. The text and json backends do not use lipgloss today, so the
+// flag is effectively a TUI-only switch in practice.
+func DisableColor() {
+	lipgloss.SetColorProfile(termenv.Ascii)
 }
 
 // panelTitle renders the bracketed heading every panel prints on its

@@ -49,6 +49,7 @@ type Model struct {
 	// Live state.
 	width, height  int
 	paused         bool
+	helpVisible    bool   // true while the ? overlay is up
 	runBaselineSHA string // captured from the first IterationStarted
 
 	// Terminal state.
@@ -169,7 +170,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // handleKey implements the keyboard contract: q / Ctrl+C cancel the
-// loop ctx and ask bubbletea to quit; space toggles the pause gate.
+// loop ctx and ask bubbletea to quit; space toggles the pause gate;
+// ? toggles the help overlay.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -184,6 +186,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gate.SetPaused(m.paused)
 			m.header.paused = m.paused
 		}
+		return m, nil
+	case "?":
+		m.helpVisible = !m.helpVisible
 		return m, nil
 	}
 	return m, nil
@@ -235,13 +240,18 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 }
 
 // View renders the dashboard. Terminal states bypass panel rendering
-// and emit a one-line summary.
+// and emit a one-line summary. The help overlay (toggled by `?`)
+// replaces the panels with a keybinding listing.
 func (m Model) View() string {
 	if m.finished && m.cancelled {
 		return "bcc: cancelled\n"
 	}
 	if m.finished {
 		return "bcc: loop finished\n"
+	}
+
+	if m.helpVisible {
+		return renderHelp()
 	}
 
 	now := time.Now()

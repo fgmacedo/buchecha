@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,6 +32,7 @@ var (
 	runAllowDirty bool
 	runOutput     string
 	runVerbosity  string
+	runNoColor    bool
 )
 
 var runCmd = &cobra.Command{
@@ -54,6 +56,7 @@ func init() {
 	runCmd.Flags().BoolVarP(&runAllowDirty, "allow-dirty", "d", false, "skip the pre-flight clean-tree check (the agent will see the dirty tree)")
 	runCmd.Flags().StringVar(&runOutput, "output", OutputTUI, "render backend: tui|text|json")
 	runCmd.Flags().StringVar(&runVerbosity, "verbosity", loop.LevelInfo.String(), "event level low-water mark: error|warn|info|debug|trace")
+	runCmd.Flags().BoolVar(&runNoColor, "no-color", false, "disable color output (lipgloss styles render as plain text)")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -66,6 +69,10 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	if !validOutputMode(runOutput) {
 		ExitCode = loop.ExitInvalid
 		return fmt.Errorf("unknown --output %q (want tui|text|json)", runOutput)
+	}
+
+	if runNoColor {
+		tui.DisableColor()
 	}
 
 	// In text mode the user expects events at their level on stderr.
@@ -251,12 +258,39 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 		tea.WithoutSignalHandler(),
 	)
 
+	// Belt-and-braces terminal restoration: program.Run() restores the
+	// terminal during normal exit and bubbletea installs its own panic
+	// handler for in-program panics, but neither protects against an
+	// outer panic in this function before Run returns. The deferred
+	// ReleaseTerminal undoes the alt-screen / raw mode in that path so
+	// the user is not left staring at a broken terminal.
+	defer func() {
+		if r := recover(); r != nil {
+			_ = program.ReleaseTerminal()
+			fmt.Fprintf(os.Stderr, "bcc: panic in TUI host: %v\n%s\n", r, debug.Stack())
+			panic(r)
+		}
+	}()
+
 	type runResult struct {
 		code int
 		err  error
 	}
 	runCh := make(chan runResult, 1)
 	go func() {
+		// Convert a loop-goroutine panic into an error on runCh and
+		// signal the program to quit. Without this, l.Run panicking
+		// would crash the process before bubbletea restores the
+		// terminal, leaving the user in alt-screen with no shell prompt.
+		defer func() {
+			if r := recover(); r != nil {
+				program.Quit()
+				runCh <- runResult{
+					code: loop.ExitInvalid,
+					err:  fmt.Errorf("loop panicked: %v\n%s", r, debug.Stack()),
+				}
+			}
+		}()
 		code, err := l.Run(ctx, raw)
 		runCh <- runResult{code: code, err: err}
 	}()

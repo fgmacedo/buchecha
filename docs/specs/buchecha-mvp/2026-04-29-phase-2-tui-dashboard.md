@@ -346,10 +346,10 @@ bcc run <spec> [flags]
 
 ### P2.7: theming and polish
 
-1. [ ] `internal/tui/theme.go` lipgloss styles. `--no-color` disables color via `lipgloss.SetColorProfile(termenv.Ascii)`.
-1. [ ] Help screen: `?` toggles modal overlay listing keybindings.
+1. [x] `internal/tui/theme.go` lipgloss styles. `--no-color` disables color via `lipgloss.SetColorProfile(termenv.Ascii)`.
+1. [x] Help screen: `?` toggles modal overlay listing keybindings.
 1. [ ] Manual visual review at 80x24, 120x40, 200x60 terminal sizes.
-1. [ ] Terminal restoration on panic: deferred `program.ReleaseTerminal()` plus SIGTERM signal handler.
+1. [x] Terminal restoration on panic: deferred `program.ReleaseTerminal()` plus SIGTERM signal handler.
 
 ### P2.8: end-to-end validation
 
@@ -401,6 +401,15 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 15:50, P2.7 theming and polish (3/4)
+
+- **Result**: review
+- **Summary**: Closed P2.7.1, P2.7.2, and P2.7.4 in this iteration; P2.7.3 (manual visual review at 80x24, 120x40, 200x60) is observer-driven and remains `[ ]`. Added `tui.DisableColor()` that calls `lipgloss.SetColorProfile(termenv.Ascii)` so every theme.* style renders as plain text; new `--no-color` flag on `bcc run` invokes it before tea.NewProgram. Centralised the lipgloss styles in `theme.go` with documented intent per style and added a new `theme.keyHint` for the help overlay. New `internal/tui/help.go` defines the `?` modal: `helpEntries` lists every keybinding, `renderHelp()` builds the overlay (title, aligned key/desc table, return hint), and the `Model` gains a `helpVisible` toggle plus a `?` key handler in `handleKey`; `View()` short-circuits to the overlay when visible so the dashboard panels are not drawn underneath. Terminal restoration on panic is now belt-and-braces: `runWithTUI` adds a `defer recover` that calls `program.ReleaseTerminal()` and re-panics on outer-host crashes, and the `l.Run` goroutine recovers any panic, calls `program.Quit()`, and reports the panic as a `runResult.err` so the deferred bubbletea shutdown still restores the terminal. SIGTERM is already routed through `signal.NotifyContext(SIGINT, SIGTERM)` in `runCmd.RunE` and `tea.WithContext(ctx)` translates the cancel into a clean program exit; that wiring is left as is. New tests: `theme_test.go` (`DisableColor` strips ANSI from a styled render and restores after; `pluralize` table); `help_test.go` (`renderHelp` includes every key/desc; `?` toggles `helpVisible`; help overlay replaces panels; default View has no help). `gofmt -l`, `go vet`, `go test -race ./...`, `go build` all clean.
+- **Commits**: this commit `tui: theme polish, ? help overlay, panic-safe TUI host`
+- **Decisions**: P2.7.3 cannot be performed by the agent (a human must look at the dashboard at three terminal sizes); exiting `review` per the autonomous-execution guide ("Recoverable observer checkpoint... asks the human to look") is the cleanest signal. The observer should run `bcc run docs/specs/<some-real-spec>.md --output tui` (or any spec in progress) at 80x24, 120x40, 200x60, confirm no overflow or clipping in the header / now / health / progress / risk / actions panels, then mark P2.7.3 [x] and re-trigger the loop. `--no-color` is implemented as a global lipgloss profile flip via `lipgloss.SetColorProfile(termenv.Ascii)` (the API the spec called out by name) rather than per-style guards; this is the lipgloss-recommended path and means panels never need to branch on color mode. The flag is accepted in all three `--output` modes (text and json do not use lipgloss today, so it is effectively a TUI-only switch). The help overlay renders in place of the panels rather than as an overlaid box: bubbletea has no first-class modal primitive at v1.3, and a full-screen replacement is the simplest shape that meets the "modal overlay listing keybindings" requirement; `?` toggles, every other key still works (q/Ctrl+C cancel, space pauses) so the user is not trapped. The `theme.keyHint` style (bold + cyan) lives next to the existing palette so future additions to the help screen pick it up automatically. Terminal restoration: `program.Run()` already restores on normal exit and bubbletea installs its own panic handler for in-program panics; the new code defends only against an outer panic in `runWithTUI` itself or in the `l.Run` goroutine, both of which would otherwise crash the process before the alt-screen is unwound. The loop-goroutine recover converts the panic into an error on `runCh` and signals the program to quit, so the existing `program.Run() → res := <-runCh` flow still produces a structured exit. Did NOT add a separate SIGTERM handler: the existing `signal.NotifyContext(SIGINT, SIGTERM)` already translates the signal into ctx cancellation, and `tea.WithContext(ctx)` is the documented way to react to it; adding a duplicate handler would race the existing one.
+- **Next**: P2.7 (P2.7.3 manual visual review by observer) → P2.8 (end-to-end validation)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter4.jsonl. P2.7.3 needs you: rebuild (`go install ./cmd/bcc`), then run `bcc run <some-spec> --output tui` at 80x24, 120x40, 200x60 (resize the terminal between runs or use tmux panes). Confirm no panel overflow, no truncation that hides critical info, no clipping of progress bars. Try `?` to confirm the help overlay shows and toggles. Try `--no-color` and confirm output is plain ASCII. When satisfied, edit the spec to mark P2.7.3 [x] and re-trigger `bcc run`; the next iteration will move to P2.8.
 
 ### 2026-04-29 15:25, P2.6 heuristics
 
