@@ -215,13 +215,33 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 	gate := tui.NewGate()
 	l.PauseGate = gate.Chan()
 
+	specCfg := tui.SpecConfig{
+		PlanHeading:    l.Config.Specs.PlanHeading,
+		JournalHeading: l.Config.Specs.JournalHeading,
+		ResultKeyword:  l.Config.Specs.ResultKeyword,
+		ResultVocab: spec.ResultVocab{
+			OK:      l.Config.Loop.Results.OK,
+			Partial: l.Config.Loop.Results.Partial,
+			Done:    l.Config.Loop.Results.Done,
+			Blocked: l.Config.Loop.Results.Blocked,
+			Review:  l.Config.Loop.Results.Review,
+		},
+	}
+
+	gitProbeAdapter, _ := l.Git.(tui.GitProbe)
+	specReaderAdapter, _ := l.SpecReader.(tui.SpecReader)
+
 	model := tui.New(tui.Options{
-		Events:   raw,
-		Cancel:   cancel,
-		Gate:     gate,
-		SpecPath: specPath,
-		Branch:   branch,
-		MaxIter:  l.Config.Loop.MaxIterations,
+		Events:     raw,
+		Cancel:     cancel,
+		Gate:       gate,
+		SpecPath:   specPath,
+		Branch:     branch,
+		MaxIter:    l.Config.Loop.MaxIterations,
+		SpecReader: specReaderAdapter,
+		GitProbe:   gitProbeAdapter,
+		GitCtx:     ctx,
+		SpecConfig: specCfg,
 	})
 	// WithoutSignalHandler: signal.NotifyContext in RunE owns SIGINT /
 	// SIGTERM; bubbletea must not install a competing handler.

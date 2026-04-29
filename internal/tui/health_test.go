@@ -1,0 +1,112 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop"
+)
+
+func TestHealth_onAgentEvent_AccumulatesCounters(t *testing.T) {
+	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
+	h := healthPanel{startedAt: now.Add(-time.Minute)}
+
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolUse, At: now.Add(-30 * time.Second), Tool: &loop.ToolCallInfo{}})
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolUse, At: now.Add(-20 * time.Second), Tool: &loop.ToolCallInfo{}})
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolResult, At: now.Add(-15 * time.Second), Tool: &loop.ToolCallInfo{IsError: true}})
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindResultSummary, At: now, Done: &loop.ResultSummaryInfo{
+		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
+	}})
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindRateLimit, At: now, Rate: &loop.RateLimitInfo{Status: "warning"}})
+
+	if h.totalTools != 2 {
+		t.Errorf("totalTools = %d, want 2", h.totalTools)
+	}
+	if h.totalErrors != 1 {
+		t.Errorf("totalErrors = %d, want 1", h.totalErrors)
+	}
+	if h.totalTokens != 2200 {
+		t.Errorf("totalTokens = %d, want 2200", h.totalTokens)
+	}
+	if h.totalCostUSD < 0.4 || h.totalCostUSD > 0.45 {
+		t.Errorf("totalCostUSD = %f, want ~0.42", h.totalCostUSD)
+	}
+	if h.rate.Status != "warning" {
+		t.Errorf("rate.Status = %q, want warning", h.rate.Status)
+	}
+}
+
+func TestHealth_view_RendersAllRows(t *testing.T) {
+	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
+	h := healthPanel{startedAt: now.Add(-time.Minute)}
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolUse, At: now.Add(-10 * time.Second), Tool: &loop.ToolCallInfo{}})
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindResultSummary, At: now, Done: &loop.ResultSummaryInfo{
+		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
+	}})
+
+	out := h.view(now)
+	for _, w := range []string{"health", "heartbeat", "tools/min", "errors", "rate", "tokens", "cost"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("missing label %q\n%s", w, out)
+		}
+	}
+	if !strings.Contains(out, "$0.42") {
+		t.Errorf("cost not rendered as $0.42: %q", out)
+	}
+	if !strings.Contains(out, "2.2k") {
+		t.Errorf("tokens not humanised to 2.2k: %q", out)
+	}
+}
+
+func TestToolsPerMin_CountsRecentOnly(t *testing.T) {
+	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
+	stamps := []time.Time{
+		now.Add(-90 * time.Second), // outside window
+		now.Add(-30 * time.Second),
+		now.Add(-10 * time.Second),
+		now.Add(-1 * time.Second),
+	}
+	if got := toolsPerMin(stamps, now); got != 3 {
+		t.Errorf("tools/min = %d, want 3", got)
+	}
+}
+
+func TestCountSince_HandlesEmpty(t *testing.T) {
+	if got := countSince(nil, time.Now()); got != 0 {
+		t.Errorf("empty stamps should yield 0, got %d", got)
+	}
+}
+
+func TestPushStamp_TrimsToCap(t *testing.T) {
+	var s []time.Time
+	for i := 0; i < healthRingCap+50; i++ {
+		s = pushStamp(s, time.Unix(int64(i), 0))
+	}
+	if len(s) != healthRingCap {
+		t.Errorf("pushStamp cap not enforced: len=%d, want %d", len(s), healthRingCap)
+	}
+	// Most recent stamp must be the last we pushed.
+	if s[len(s)-1].Unix() != int64(healthRingCap+50-1) {
+		t.Errorf("last stamp = %v, want %d", s[len(s)-1], healthRingCap+50-1)
+	}
+}
+
+func TestFormatTokens(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0"},
+		{42, "42"},
+		{999, "999"},
+		{1500, "1.5k"},
+		{12345, "12.3k"},
+		{1_500_000, "1.5M"},
+	}
+	for _, c := range cases {
+		if got := formatTokens(c.n); got != c.want {
+			t.Errorf("formatTokens(%d) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}

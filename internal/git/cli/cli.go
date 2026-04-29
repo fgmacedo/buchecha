@@ -49,6 +49,21 @@ func (p *Probe) IsClean(ctx context.Context) (bool, error) {
 	return out == "", nil
 }
 
+// DirtyFileCount returns the number of entries in `git status --porcelain`,
+// i.e. the count of files with uncommitted changes or untracked files. The
+// TUI's "if you close now" panel reads this to surface what would be lost
+// on a sudden exit. Equivalent to IsClean but quantitative.
+func (p *Probe) DirtyFileCount(ctx context.Context) (int, error) {
+	out, err := p.run(ctx, "status", "--porcelain")
+	if err != nil {
+		return 0, err
+	}
+	if out == "" {
+		return 0, nil
+	}
+	return strings.Count(out, "\n") + 1, nil
+}
+
 func (p *Probe) run(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if p.Dir != "" {

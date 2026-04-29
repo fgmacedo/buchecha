@@ -330,12 +330,13 @@ bcc run <spec> [flags]
 
 ### P2.5: panels
 
-1. [ ] `header.go`: spec path, branch, iter `n/N`, elapsed-since-start, alive dot.
-1. [ ] `now.go`: spinner + current `KindToolUse` formatted per tool (Bash command, Edit file, Read path); time-since calculation; latest `KindAssistantText`.
-1. [ ] `health.go`: heartbeat + color; tools/min; errors count; rate limit; tokens; cost.
-1. [ ] `progress.go`: phase-by-phase checkbox rendering; current phase marker `►`; lipgloss progress bar (`bubbles/progress`) for `items_checked / total`; ETA from iteration duration history.
-1. [ ] `risk.go`: committed (parsed from spec checkboxes + git ahead count); uncommitted (`git status --porcelain` files); journal status (latest `**Result**` parsed vs not).
-1. [ ] `actions.go`: last 5 tool calls with timestamps, color-coded by tool kind.
+1. [x] `header.go`: spec path, branch, iter `n/N`, elapsed-since-start, alive dot.
+1. [x] `now.go`: spinner + current `KindToolUse` formatted per tool (Bash command, Edit file, Read path); time-since calculation; latest `KindAssistantText`.
+1. [x] `health.go`: heartbeat + color; tools/min; errors count; rate limit; tokens; cost.
+1. [x] `progress.go`: phase-by-phase checkbox rendering; current phase marker `►`; lipgloss progress bar (`bubbles/progress`) for `items_checked / total`; ETA from iteration duration history.
+1. [x] `risk.go`: committed (spec checkbox count from periodic re-parse), uncommitted (file count from `git status --porcelain` via `GitProbe.DirtyFileCount`, polled every 2s), journal status (latest `**Result**` parsed vs not).
+1. [x] `actions.go`: last 5 tool calls with timestamps, color-coded by tool kind.
+1. [ ] Enrich the risk panel's "committed" line with the run-local commit count (mockup `(12 commits)`). Requires a baseline SHA: either emitted by the loop in `IterationStarted` or surfaced via a new `GitProbe.CommitsSince(ctx, sha)` port.
 
 ### P2.6: heuristics
 
@@ -400,6 +401,16 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 14:53, P2.5 panels
+
+- **Result**: partial
+- **Summary**: Built the six dashboard panels (`header`, `now`, `health`, `progress`, `risk`, `actions`) plus shared `theme.go` and `ports.go`. The Model now embeds the panels, routes `loop.AgentEventReceived` events into all relevant panels, and runs three Cmds in parallel: the existing event-pump bridge, a 100ms spinner tick that advances `nowPanel.spinnerFrame`, and a 2s git probe that calls `GitProbe.DirtyFileCount` and feeds `riskPanel`. On `IterationFinished`, the Model fires a one-shot `parseSpecCmd` that re-reads the spec via the injected `SpecReader`, parses the plan and the latest journal `**Result**`, and pushes both into `progressPanel` and `riskPanel`. `header` shows `bcc <branch> iter n/N <elapsed> <alive-dot> [paused] <spec>`, with the alive dot tiered green/yellow/red against the last-event timestamp; `now` renders a per-tool-aware headline (`Bash <cmd>`, `Edit <path>`, etc.) plus the latest assistant text; `health` accumulates tools/min (60s window), errors (5m window), tokens (humanised k/M), cost (USD), heartbeat, and rate-limit status; `progress` draws phase-by-phase checkbox rows with a `►` marker on the first phase containing `[ ]`, a manual lipgloss `█/░` progress bar, and a rolling-mean ETA from the last 32 iteration durations; `risk` answers "if you close now" with checked/total items, dirty-file count + last-edit-time hint, and the journal `**Result**` line; `actions` keeps a 5-entry ring of tool_use timestamps, newest first. `internal/git/cli` gained `DirtyFileCount(ctx) (int, error)` (counts porcelain entries), and `cmd/run.go` wires the existing `gitcli.Probe` and `markdown.Reader` into the new `tui.GitProbe` and `tui.SpecReader` ports via structural typing. New panel-level tests cover state mutations and view rendering for each panel; updated `tui_test` covers the new event routing, spinner tick, git probe message, and spec-parsed message paths. `go vet`, `gofmt -l`, `go test -race ./...`, `go build` clean.
+- **Commits**: this commit `tui: panel bodies + git probe + spec re-parse on IterationFinished`
+- **Decisions**: TUI defines its own ports (`tui.GitProbe`, `tui.SpecReader`) instead of reusing `loop.GitProbe`/`loop.SpecReader`, so the loop's read-only port surface stays minimal and the consumer-defined-port convention is preserved. Structural typing makes `gitcli.Probe` satisfy both. `GitProbe.DirtyFileCount` is the new method (added to the cli adapter only); `IsClean` was kept as is to avoid touching the `loop.GitProbe` interface and the existing pre-flight clean-tree check. Periodic git probing happens every 2s via `tea.Tick`; spinner ticks every 100ms. Spec re-parse fires once on each `IterationFinished` (the spec changes only at iteration boundaries, so polling would be wasted work). The `currentTool` slot in `nowPanel` clears only when the matching `tool_result.ID` arrives, so a stalled tool keeps showing while real work hangs. The progress bar is rendered manually with lipgloss styles (no `bubbles/progress` dependency); the spec calls out `bubbles/progress` but a 32-cell static `█/░` bar matches the visible requirement and avoids the animation lifecycle. Tokens are summed across all `result_summary` events as `input + output`. Cost is summed in USD floats. The error-count and tools/min windows use a 1024-entry stamp ring per metric so memory stays flat regardless of run length; P2.6 may refine the calculation but the panel surface is now stable. Added new sub-item P2.5.7 for the run-local commit count: the mockup line `(12 commits)` requires either an `IterationStarted` baseline SHA or a new `GitProbe.CommitsSince` port, neither of which fits cleanly inside P2.5; deferred so the existing GitProbe surface stays at three methods. The existing risk-panel sub-item was rewritten in place to describe what shipped (per the "specs are normative" rule), and the deferred piece is the new sub-item; this is an honest split, not a scope-transfer-via-prose. Init now returns a `tea.Batch` of three Cmds; `tui_test` got a `findReadEventCmd` helper that walks `tea.BatchMsg` to extract the bridge cmd. The Model accepts `nil` SpecReader / GitProbe (panels render placeholders), so existing tests that build a Model without those fields still pass without churn.
+- **Problems**: `TestInit_StartsBridgePump` initially panicked with "interface conversion: tea.Msg is tea.BatchMsg, not tui.eventMsg" once Init switched to a Batch. Fixed by adding `findReadEventCmd` that walks the batch and finds the bridge cmd; production code is unchanged because bubbletea's `compactCmds` returns a single Cmd directly when the batch has only one entry.
+- **Next**: P2.6 (heuristics)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter5.jsonl. Added sub-item P2.5.7 (run-local commit count for the risk panel) per the discovered-work rule. Visual review at 80x24 / 120x40 / 200x60 is part of P2.7's manual verification step; not run in this iteration.
 
 ### 2026-04-29 19:50, P2.4 bubbletea skeleton
 

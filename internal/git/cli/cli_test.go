@@ -127,6 +127,44 @@ func TestProbe_IsClean_FalseWithUntracked(t *testing.T) {
 	}
 }
 
+func TestProbe_DirtyFileCount_Zero(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+
+	p := New(dir)
+	n, err := p.DirtyFileCount(context.Background())
+	if err != nil {
+		t.Fatalf("DirtyFileCount: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("count = %d, want 0 on clean tree", n)
+	}
+}
+
+func TestProbe_DirtyFileCount_CountsUntrackedAndModified(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("u"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "c.txt"), []byte("u2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New(dir)
+	n, err := p.DirtyFileCount(context.Background())
+	if err != nil {
+		t.Fatalf("DirtyFileCount: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("count = %d, want 3 (1 modified + 2 untracked)", n)
+	}
+}
+
 func TestProbe_HeadSHA_NoCommits(t *testing.T) {
 	dir := initRepo(t)
 	// no commits yet

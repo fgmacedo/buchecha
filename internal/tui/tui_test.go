@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/spec"
 )
 
 // newTestModel builds a Model with a buffered events channel returned
@@ -106,8 +107,8 @@ func TestUpdate_IterationStartedTracksIndex(t *testing.T) {
 		t.Fatalf("must schedule next read after handling event")
 	}
 	mm := got.(Model)
-	if mm.iter != 3 {
-		t.Errorf("iter = %d, want 3", mm.iter)
+	if mm.header.iter != 3 {
+		t.Errorf("header.iter = %d, want 3", mm.header.iter)
 	}
 }
 
@@ -149,16 +150,43 @@ func TestUpdate_ChannelClosedQuits(t *testing.T) {
 	}
 }
 
+// findReadEventCmd walks a possibly-batched tea.Cmd and synchronously
+// invokes inner cmds until one returns an eventMsg. Init now returns a
+// Batch (event read + spinner tick + git probe) so tests can no longer
+// assume the top-level cmd directly produces an eventMsg.
+func findReadEventCmd(t *testing.T, cmd tea.Cmd) eventMsg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatalf("nil cmd")
+	}
+	msg := cmd()
+	switch m := msg.(type) {
+	case eventMsg:
+		return m
+	case tea.BatchMsg:
+		for _, c := range m {
+			if c == nil {
+				continue
+			}
+			if em, ok := c().(eventMsg); ok {
+				return em
+			}
+		}
+	}
+	t.Fatalf("no eventMsg produced by cmd (got %T)", msg)
+	return eventMsg{}
+}
+
 func TestInit_StartsBridgePump(t *testing.T) {
 	m, events, _, _ := newTestModel(t)
 	cmd := m.Init()
 	if cmd == nil {
 		t.Fatalf("Init returned nil cmd; bridge not wired")
 	}
-	// Pump one event through; the cmd should pick it up.
+	// Pump one event through; the bridge cmd should pick it up.
 	want := loop.IterationStarted{Index: 1, MaxIter: 5}
 	events <- want
-	msg := cmd().(eventMsg)
+	msg := findReadEventCmd(t, cmd)
 	if msg.closed {
 		t.Fatalf("eventMsg.closed = true, want false")
 	}
@@ -171,7 +199,7 @@ func TestInit_ChannelCloseSurfacesAsClosed(t *testing.T) {
 	m, events, _, _ := newTestModel(t)
 	close(events)
 	cmd := m.Init()
-	msg := cmd().(eventMsg)
+	msg := findReadEventCmd(t, cmd)
 	if !msg.closed {
 		t.Errorf("eventMsg.closed = false after channel close, want true")
 	}
@@ -202,6 +230,67 @@ func TestView_PausedTagAppearsInHeader(t *testing.T) {
 	out := mm.(Model).View()
 	if !strings.Contains(out, "[paused]") {
 		t.Errorf("View missing [paused] tag while paused\n%s", out)
+	}
+}
+
+func TestUpdate_AgentEventRoutesToPanels(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	at := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
+	got, _ := m.Update(eventMsg{ev: loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindToolUse, At: at,
+		Tool: &loop.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "x.go"}},
+	}}})
+	mm := got.(Model)
+	if mm.now.currentTool == nil || mm.now.currentTool.Name != "Edit" {
+		t.Errorf("tool_use not routed to nowPanel: %+v", mm.now.currentTool)
+	}
+	if mm.health.totalTools != 1 {
+		t.Errorf("tool_use not counted in healthPanel: got %d", mm.health.totalTools)
+	}
+	if len(mm.actions.entries) != 1 {
+		t.Errorf("tool_use not appended to actionsPanel: got %d", len(mm.actions.entries))
+	}
+	if mm.header.lastEvent != at {
+		t.Errorf("header heartbeat not updated: got %v, want %v", mm.header.lastEvent, at)
+	}
+}
+
+func TestUpdate_SpinnerTickAdvancesAndReschedules(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	got, cmd := m.Update(spinnerTickMsg{})
+	if cmd == nil {
+		t.Fatalf("spinner tick must reschedule itself")
+	}
+	mm := got.(Model)
+	if mm.now.spinnerFrame != 1 {
+		t.Errorf("spinnerFrame = %d, want 1", mm.now.spinnerFrame)
+	}
+}
+
+func TestUpdate_GitProbeMsgFeedsRiskPanel(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	got, _ := m.Update(gitProbeMsg{count: 4})
+	mm := got.(Model)
+	if !mm.risk.dirtyKnown || mm.risk.dirtyFileCount != 4 {
+		t.Errorf("gitProbeMsg not folded into risk panel: %+v", mm.risk)
+	}
+}
+
+func TestUpdate_SpecParsedMsgFeedsProgressAndRisk(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	plan := samplePlan()
+	got, _ := m.Update(specParsedMsg{
+		ok:          true,
+		plan:        plan,
+		latest:      spec.LatestResult{Raw: "ok", Result: spec.ResultOK},
+		latestKnown: true,
+	})
+	mm := got.(Model)
+	if mm.progress.currentPhaseIdx == -1 {
+		t.Errorf("progress panel did not record current phase")
+	}
+	if mm.risk.totalItems != 6 {
+		t.Errorf("risk panel did not record items: got %d", mm.risk.totalItems)
 	}
 }
 
