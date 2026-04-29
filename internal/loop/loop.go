@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,6 +102,7 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		ResultPartial:  cfg.Loop.Results.Partial,
 		ResultDone:     cfg.Loop.Results.Done,
 		ResultBlocked:  cfg.Loop.Results.Blocked,
+		ResultReview:   cfg.Loop.Results.Review,
 	}
 	var prompt string
 	var err error
@@ -118,6 +120,7 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		Partial: cfg.Loop.Results.Partial,
 		Done:    cfg.Loop.Results.Done,
 		Blocked: cfg.Loop.Results.Blocked,
+		Review:  cfg.Loop.Results.Review,
 	}
 
 	slug := slugFromPath(l.SpecPath)
@@ -142,6 +145,22 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		jsonlFile, err := os.Create(jsonlPath)
 		if err != nil {
 			return ExitInvalid, fmt.Errorf("create jsonl %s: %w", jsonlPath, err)
+		}
+
+		// Set BCC_* env vars before invoking the executor. The subprocess
+		// inherits them via exec.Cmd default env. The agent uses them to:
+		//   - confirm it is running under bcc (BCC_RUNNING=1)
+		//   - breadcrumb iteration / spec / jsonl / branch in journal entries
+		//   - self-check (refuse to proceed if expected vars are absent)
+		// Each iteration overwrites; last-write-wins is fine because these
+		// values are well-defined per iteration.
+		os.Setenv("BCC_RUNNING", "1")
+		os.Setenv("BCC_ITERATION", strconv.Itoa(iter))
+		os.Setenv("BCC_MAX_ITERATIONS", strconv.Itoa(maxIter))
+		os.Setenv("BCC_SPEC_PATH", l.SpecPath)
+		os.Setenv("BCC_JSONL_PATH", jsonlPath)
+		if branch, gerr := l.Git.CurrentBranch(ctx); gerr == nil && branch != "" {
+			os.Setenv("BCC_BRANCH", branch)
 		}
 
 		execCode, execErr := l.Executor.Run(ctx, prompt, jsonlFile)
@@ -251,6 +270,8 @@ func stopReason(code int) string {
 		return "done_with_leftovers"
 	case ExitMaxIterations:
 		return "max_iterations"
+	case ExitReview:
+		return "review"
 	default:
 		return "unknown"
 	}
