@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -218,6 +219,15 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 	// kept on the function signature so callers do not branch.
 	_ = verbosity
 	raw := make(chan loop.Event, 256)
+
+	// In TUI mode, the loop's milestone slog calls (`loop start`,
+	// `iter start`, ...) are duplicated as IterationStarted /
+	// IterationFinished / LoopFinished events on the channel and
+	// surfaced by panels. Pin a discard logger on the Loop so those
+	// duplicate messages never reach stderr; otherwise they smear into
+	// the alt-screen scrollback and become visible when the program
+	// exits.
+	l.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	gate := tui.NewGate()
 	l.PauseGate = gate.Chan()
