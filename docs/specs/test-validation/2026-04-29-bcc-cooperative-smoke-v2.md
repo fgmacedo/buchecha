@@ -41,7 +41,7 @@ Same as v1. Summary:
 
 ### P2: `<HEAD>` convention in **Commits**
 
-1. [ ] In your journal entry for this iteration, the `**Commits**` field MUST use the `<HEAD>` convention for the journal commit (i.e., the line `<HEAD> <commit message>`). Earlier commits, if any, use their actual short hash. This validates that the documented convention reads naturally and that the loop tolerates it.
+1. [x] In your journal entry for this iteration, the `**Commits**` field MUST use the `<HEAD>` convention for the journal commit (i.e., the line `<HEAD> <commit message>`). Earlier commits, if any, use their actual short hash. This validates that the documented convention reads naturally and that the loop tolerates it.
 
 ### P3: Observer-driven placeholder (validates Result: review)
 
@@ -65,6 +65,21 @@ Follows the [Autonomous execution guide](../../guides/autonomous-execution.md) d
 1. **Block**: only on real tech failure or absolute-restriction temptation. NOT for placeholder items in P3 — those are review.
 
 ## Execution Journal
+
+### 2026-04-29 13:30, P2: `<HEAD>` convention in **Commits**
+
+- **Result**: ok
+- **Summary**: P2 validated by writing this journal entry with `<HEAD>` referring to the iteration's only commit (the journal commit itself). Single sub-item marked `[x]`.
+- **Commits**: <HEAD> spec(smoke-v2): complete P2 validating <HEAD> convention
+- **Decisions**: This phase has no code deliverable; the validation is the journal-entry format itself. Kept the iteration to a single commit so the `<HEAD>` reference is unambiguous.
+- **Problems**: Working tree was again NOT clean at iteration start, same set of unrelated files as iter1 (`AGENTS.md`, `docs/specs/buchecha-mvp/2026-04-29-phase-2-tui-dashboard.md`, `docs/specs/buchecha-mvp/index.md`, untracked `docs/specs/buchecha-mvp/2026-04-29-phase-3-steering.md`). Used a path-scoped `git add` so only the spec file enters the iteration commit.
+- **Notes for observer**:
+  - `BCC_JSONL_PATH` for this iteration: `/var/folders/6s/bqzmgmsn5kz7l6ny1r0k17_r0000gp/T/bcc/2026-04-29-bcc-cooperative-smoke-v2-iter2.jsonl`.
+  - All 6 expected `BCC_*` vars set and non-empty; `BCC_ITERATION=2`, `BCC_MAX_ITERATIONS=3`, `BCC_BRANCH=feat/phase-1` matched `git branch --show-current`.
+  - Prompt experience: the `<HEAD>` convention reads naturally for a single-commit iteration. The wording "this commit `<message>` or `<HEAD> <message>`" in the guide makes the alternatives explicit; chose `<HEAD>` to satisfy the phase contract.
+  - Friction: the dirty-tree-on-entry pattern repeats from iter1. `bcc` still does not enforce a clean entry tree. Reiterating the iter1 suggestion: refuse to start, or stash unrelated work before invoking the agent.
+  - Suggestions: when only the journal is the deliverable for a phase (no code), it might be worth an explicit note in the guide that the iteration commit IS the journal commit, so `<HEAD>` is the only valid reference.
+- **Next**: P3 (observer-driven placeholder; expected `Result: review`)
 
 ### 2026-04-29 13:10, P1: BCC_* env var visibility
 
