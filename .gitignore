@@ -1,0 +1,37 @@
+# Binaries
+/bcc
+/buchecha
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# Local env / secrets
+.env
+.env.local
+.env.*.local
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Build output
+/dist/
+/build/
+
+# Runtime / scratch
+/tmp/
+.bcc-cache/
