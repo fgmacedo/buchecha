@@ -100,6 +100,16 @@ store = "markdown_inspec"    # default; values: markdown_inspec | file | <future
 path  = ""                   # store-specific; e.g., explicit path for "file" store
 ```
 
+## TUI items pulled in from Phase 2
+
+These were originally scoped inside [Phase 2](./2026-04-29-phase-2-tui-dashboard.md) but cannot land without the ports defined here. They live under this spec's umbrella so the work stays in one place. Each ships as a follow-up commit after the corresponding port is in place; the bcc-markdown adapter implements the per-format details.
+
+1. [ ] **Spec parsed at startup** (was P2.9 sub-item 4). Once `SpecReader.Progress()` and `LatestSignal()` exist, dispatch them from `Model.Init()` so the progress and risk panels populate on the first render rather than waiting for the first `IterationFinished`. No-op when the adapter returns `ok=false` from `Progress()`.
+1. [ ] **Optional spec preview panel** (was P2.10 sub-item 6). The `SpecReader` port exposes an optional `Render(profile RenderProfile) (string, bool)` method (or similar). The bcc-markdown adapter implements it via `charm.land/glamour/v2`; other adapters return their own pretty-printer output or `false`. The TUI keybinding (`s`) toggles a modal viewport; absent renderers hide the binding.
+1. [ ] **Journal viewer** (was P2.11 sub-item 4). The `[j]` binding uses `JournalStore.Latest()` to fetch the most recent entry, then renders it through the adapter's `Render` (markdown_bcc → glamour; other adapters → text). The viewer respects `--no-color`.
+1. [ ] **Edit-spec post-edit refresh** (was P2.11 sub-item 6). After the user returns from `$EDITOR`, the menu's data is refreshed by re-calling the `SpecReader` signals; the editor-suspension mechanics (`ReleaseTerminal` / `RestoreTerminal`) stay in `internal/tui/` and are format-neutral.
+1. [ ] **Edit-spec end-to-end smoke** (was P2.12 sub-item 11). End-to-end test: edit the spec from the session menu, confirm the journal viewer reflects the edited content. Depends on the journal viewer above.
+
 ## Implementation plan
 
 Items are intentionally not numbered as P-X.Y; this spec stands on its own.
