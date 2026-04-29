@@ -50,14 +50,6 @@ func DisableColor() {
 	lipgloss.SetColorProfile(termenv.Ascii)
 }
 
-// panelTitle renders the bracketed heading every panel prints on its
-// first line (e.g. "[ now ]"). Subsequent lines are the body. The
-// substring matched by tui_test.TestView_FivePanelTitlesPresent is
-// the inner name.
-func panelTitle(name string) string {
-	return theme.title.Render("[ " + name + " ]")
-}
-
 // formatDuration renders a short human-readable duration: 12s,
 // 1m32s, 14m, 1h23m. Negative or zero d is "0s".
 func formatDuration(d time.Duration) string {

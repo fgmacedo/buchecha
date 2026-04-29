@@ -81,11 +81,10 @@ func (r *riskPanel) onIterStarted(idx int) {
 	r.journalKnown = false
 }
 
-// view renders the panel body.
-func (r riskPanel) view(now time.Time) string {
+// view renders the panel body. width is reserved for future width-aware
+// rendering; the lines are naturally short (counts + glyphs).
+func (r riskPanel) view(now time.Time, _ int) string {
 	var b strings.Builder
-	b.WriteString(panelTitle("if you close now"))
-	b.WriteByte('\n')
 
 	commits := ""
 	if r.commitsKnown {

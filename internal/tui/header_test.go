@@ -6,42 +6,54 @@ import (
 	"time"
 )
 
-func TestHeader_view_RendersCoreFields(t *testing.T) {
+func TestHeader_titleText_ContainsBranchIterAndElapsed(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 32, 30, 0, time.UTC)
 	h := header{
-		specPath:  "docs/specs/foo.md",
 		branch:    "feat/x",
 		iter:      3,
 		maxIter:   5,
 		startedAt: now.Add(-90 * time.Second),
-		lastEvent: now.Add(-10 * time.Second),
 	}
-	out := h.view(now)
-	want := []string{"feat/x", "iter 3/5", "1m30s", "docs/specs/foo.md"}
-	for _, w := range want {
-		if !strings.Contains(out, w) {
-			t.Errorf("header missing %q\n%s", w, out)
+	got := h.titleText(now)
+	for _, w := range []string{"feat/x", "iter 3/5", "1m30s"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("titleText missing %q\n%s", w, got)
 		}
 	}
 }
 
-func TestHeader_view_BlankBranchRendersDash(t *testing.T) {
+func TestHeader_titleText_BlankBranchRendersDash(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 0, 0, 0, time.UTC)
-	h := header{specPath: "x.md", iter: 1, maxIter: 1, startedAt: now}
-	out := h.view(now)
-	if !strings.Contains(out, "bcc -") {
-		t.Errorf("blank branch should render dash; got %q", out)
+	h := header{iter: 1, maxIter: 1, startedAt: now}
+	got := h.titleText(now)
+	if !strings.Contains(got, "bcc -") {
+		t.Errorf("blank branch should render dash; got %q", got)
+	}
+}
+
+func TestHeader_view_ContainsSpecPathAndAliveDot(t *testing.T) {
+	now := time.Date(2026, 4, 29, 14, 32, 30, 0, time.UTC)
+	h := header{
+		specPath:  "docs/specs/foo.md",
+		lastEvent: now.Add(-10 * time.Second),
+	}
+	got := h.view(now, 80)
+	if !strings.Contains(got, "docs/specs/foo.md") {
+		t.Errorf("view missing spec path: %q", got)
+	}
+	if !strings.Contains(got, "●") {
+		t.Errorf("view missing alive dot glyph: %q", got)
 	}
 }
 
 func TestHeader_view_PausedTagOnlyWhenPaused(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 0, 0, 0, time.UTC)
-	h := header{branch: "x", iter: 1, maxIter: 1, startedAt: now}
-	if strings.Contains(h.view(now), "[paused]") {
+	h := header{specPath: "x.md"}
+	if strings.Contains(h.view(now, 80), "[paused]") {
 		t.Errorf("unpaused header should not contain [paused]")
 	}
 	h.paused = true
-	if !strings.Contains(h.view(now), "[paused]") {
+	if !strings.Contains(h.view(now, 80), "[paused]") {
 		t.Errorf("paused header should contain [paused]")
 	}
 }

@@ -10,10 +10,10 @@ package tui
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/spec"
@@ -48,6 +48,7 @@ type Model struct {
 
 	// Live state.
 	width, height  int
+	layout         layout // recomputed on tea.WindowSizeMsg
 	paused         bool
 	helpVisible    bool   // true while the ? overlay is up
 	runBaselineSHA string // captured from the first IterationStarted
@@ -127,6 +128,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.layout = computeLayout(m.width)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -242,6 +244,11 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 // View renders the dashboard. Terminal states bypass panel rendering
 // and emit a one-line summary. The help overlay (toggled by `?`)
 // replaces the panels with a keybinding listing.
+//
+// Layout per the dashboard mockup: header (full width), then a
+// two-column row pairing now (wider) with health (narrower), then
+// progress, risk, and recent actions each as full-width rows, then
+// the keybinding footer below.
 func (m Model) View() string {
 	if m.finished && m.cancelled {
 		return "bcc: cancelled\n"
@@ -254,17 +261,41 @@ func (m Model) View() string {
 		return renderHelp()
 	}
 
+	lay := m.activeLayout()
 	now := time.Now()
-	var b strings.Builder
-	b.WriteString(m.header.view(now))
-	b.WriteByte('\n')
-	b.WriteString(m.now.view(now))
-	b.WriteString(m.health.view(now))
-	b.WriteString(m.progress.view())
-	b.WriteString(m.risk.view(now))
-	b.WriteString(m.actions.view())
-	b.WriteString("[q]uit  [space]pause  [?]help\n")
-	return b.String()
+
+	headerBox := box(
+		m.header.titleText(now),
+		m.header.view(now, lay.headerW),
+		lay.headerW,
+	)
+	nowBox := box("now", m.now.view(now, lay.nowW), lay.nowW)
+	healthBox := box("health", m.health.view(now, lay.healthW), lay.healthW)
+	nowHealth := lipgloss.JoinHorizontal(lipgloss.Top, nowBox, healthBox)
+	progressBox := box("progress", m.progress.view(lay.progressW), lay.progressW)
+	riskBox := box("if you close now", m.risk.view(now, lay.riskW), lay.riskW)
+	actionsBox := box("recent actions", m.actions.view(lay.actionsW), lay.actionsW)
+	footer := "[q]uit  [space]pause  [?]help"
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		headerBox,
+		nowHealth,
+		progressBox,
+		riskBox,
+		actionsBox,
+		footer,
+	) + "\n"
+}
+
+// activeLayout returns the cached layout when a tea.WindowSizeMsg has
+// been processed, otherwise a default 80-column layout. The default
+// keeps tests that don't send a size message rendering something
+// reasonable instead of zero-width content.
+func (m Model) activeLayout() layout {
+	if m.layout.headerW > 0 {
+		return m.layout
+	}
+	return computeLayout(80)
 }
 
 // --- internal tea.Msg / tea.Cmd plumbing -----------------------------

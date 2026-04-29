@@ -61,11 +61,12 @@ func (n *nowPanel) tick() {
 	n.spinnerFrame = (n.spinnerFrame + 1) % len(spinnerFrames)
 }
 
-// view renders the panel body (header line is added by the Model).
-func (n nowPanel) view(now time.Time) string {
+// view renders the panel body. width is the total column the box
+// wrapper will allocate; long content (assistant text especially) is
+// truncated to fit so the rendered lines never overflow the box.
+func (n nowPanel) view(now time.Time, width int) string {
+	max := bodyMax(width)
 	var b strings.Builder
-	b.WriteString(panelTitle("now"))
-	b.WriteByte('\n')
 
 	if n.currentTool == nil {
 		b.WriteString("  ")
@@ -76,7 +77,11 @@ func (n nowPanel) view(now time.Time) string {
 		b.WriteString("  ")
 		b.WriteString(theme.ok.Render(spin))
 		b.WriteByte(' ')
-		b.WriteString(formatToolHeadline(*n.currentTool))
+		headline := formatToolHeadline(*n.currentTool)
+		if room := max - 4; room > 0 { // 2 indent + spinner + space
+			headline = truncate(headline, room)
+		}
+		b.WriteString(headline)
 		if !n.currentToolAt.IsZero() {
 			elapsed := formatDuration(now.Sub(n.currentToolAt))
 			b.WriteString("  ")
@@ -86,11 +91,29 @@ func (n nowPanel) view(now time.Time) string {
 	}
 
 	if n.lastAssistant != "" {
+		room := max - 4 // 2 indent + "» "
+		if room <= 0 {
+			room = 1
+		}
 		b.WriteString("  ")
-		b.WriteString(theme.subtle.Render("» " + truncate(n.lastAssistant, 80)))
+		b.WriteString(theme.subtle.Render("» " + truncate(n.lastAssistant, room)))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// bodyMax returns the maximum visible width a single body line may
+// occupy inside the box wrapper. width is the box's total width
+// (borders included). Below the bordered threshold the body uses the
+// full width; otherwise the two border columns are subtracted.
+func bodyMax(width int) int {
+	if width <= 0 {
+		return 0
+	}
+	if width < boxThreshold {
+		return width
+	}
+	return width - 2
 }
 
 // formatToolHeadline renders a one-line label for a tool call. The

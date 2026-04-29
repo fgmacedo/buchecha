@@ -70,11 +70,11 @@ func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
 	}
 }
 
-// view renders the panel body (heartbeat, rates, totals).
-func (h healthPanel) view(now time.Time) string {
+// view renders the panel body (heartbeat, rates, totals). width is
+// reserved for future per-panel sizing; the rows are naturally short
+// (a single label + value) so no truncation is currently needed.
+func (h healthPanel) view(now time.Time, _ int) string {
 	var b strings.Builder
-	b.WriteString(panelTitle("health"))
-	b.WriteByte('\n')
 
 	heartbeat := "..."
 	if !h.lastEvent.IsZero() {

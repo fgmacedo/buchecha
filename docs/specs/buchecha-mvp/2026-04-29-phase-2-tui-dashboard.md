@@ -47,9 +47,11 @@ A third use case is structural: when `bcc` itself is invoked by another agent, b
 - [ ] Claude adapter: parses Claude Code's `--output-format stream-json` into normalized events. Persists raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` for audit. (Raw agent log is per-adapter and distinct from the loop-level NDJSON of `--output json`.)
 - [ ] 5-panel TUI layout: header, now/health, progress, risk, recent actions.
 - [ ] Visual polish: lipgloss colors, spinner on active tool, progress bar (items checked / total), ETA (rolling iteration time).
-- [ ] Controls in TUI: `q` / Ctrl+C (graceful shutdown), `space` (pause between iterations), `?` (help overlay).
+- [ ] Controls in TUI: `q` / Ctrl+C (graceful shutdown), `space` (pause between iterations), `?` (help overlay), mouse wheel scroll on history panels.
 - [ ] Loop-suspect heuristic: 7-of-last-10 same `(tool, primary_arg)` flags warning row.
 - [ ] Graceful resize, no terminal corruption on exit (panic / signal / kill).
+- [ ] Live-update contract: tokens, cost, heartbeat, plan progress, and the run-local commit count change in real time during an iteration, not only at iteration boundaries. A panel that stays visibly empty during work in progress is a bug.
+- [ ] Charm v2 stack: `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `charm.land/bubbles/v2` (with `charm.land/glamour/v2` for the optional spec preview). No v1 imports; greenfield project pins to current latest stable.
 
 ### Non-goals
 
@@ -351,7 +353,44 @@ bcc run <spec> [flags]
 1. [ ] Manual visual review at 80x24, 120x40, 200x60 terminal sizes.
 1. [x] Terminal restoration on panic: deferred `program.ReleaseTerminal()` plus SIGTERM signal handler.
 
-### P2.8: end-to-end validation
+### P2.8: panel layout and visual fidelity
+
+The dashboard renders panels as bordered boxes laid out per the [Layout (TUI mode)](#layout-tui-mode) mockup: a full-width header box on top, then a two-column row pairing `now` (wider) with `health` (narrower), then `progress`, `risk`, and `recent actions` each as full-width boxes, with the keybinding footer below. Width comes from `tea.WindowSizeMsg` and the layout is recomputed on resize.
+
+1. [x] `internal/tui/box.go`: `func box(title, body string, width int) string` builds a lipgloss bordered box (rounded corners) with `title` embedded in the top border per the mockup. Below a low-width threshold (e.g., 40 cols), the wrapper falls back to a plain `[ title ]` line + body so narrow terminals stay readable.
+1. [x] Refactor each panel: drop the `panelTitle("name")` prefix from `view*` so each method returns body content only. The Model wraps the body with `box(name, body, width)` at composition time. `panelTitle` either becomes the box title source or is removed.
+1. [x] `Model.View()`: replace string concatenation with `lipgloss.JoinVertical(lipgloss.Left, ...)` over the header box, the now+health row, the remaining full-width boxes (`progress`, `risk`, `recent actions`), and the footer. The now+health row uses `lipgloss.JoinHorizontal(lipgloss.Top, nowBox, healthBox)`.
+1. [x] Width allocation: header / progress / risk / actions span full `m.width`; the now+health row splits ~60/40 (now wider). The split lives in code, not in config, but is a named constant so future tuning is one edit.
+1. [x] Header reshape: render the header as a two-line bordered box per the mockup — branch + iter `n/N` + elapsed in the top-border title; spec path + alive marker on the body line. Receives the layout's full width.
+1. [x] Layout cache on resize: `tea.WindowSizeMsg` recomputes a `layout` struct (`headerW`, `nowW`, `healthW`, `progressW`, `riskW`, `actionsW`) on the Model. Panels and the box wrapper read precomputed widths.
+1. [x] Tests: render the Model at 80, 120, and 200 columns; assert (a) `lipgloss.Width` of every rendered line is ≤ the terminal width, (b) the now box sits to the left of the health box on the same vertical band (top-aligned), (c) the header box's title contains branch and iter, (d) below the 40-col threshold every box falls back to plain `[ name ]` and no rendered line exceeds the width.
+1. [ ] Manual visual review at 80x24, 120x40, 200x60 (supersedes the placeholder P2.7.3): observer confirms no overflow, no clipping, panels populate, `?` toggles, `--no-color` produces ASCII-only output. Mark P2.7.3 [x] in the same iteration that closes this phase.
+
+### P2.9: live data updates
+
+The dashboard answers "is it alive and what is happening" only if its panels update during an iteration, not just at iteration boundaries. This phase closes the gaps where panels render stale or empty content while data is in fact available upstream.
+
+1. [ ] Per-message token usage. The Claude stream emits `message.usage` on every `assistant` event; `parseAssistant` (`internal/executor/claude/claude.go`) currently drops it. Extend `loop.AgentEvent` so assistant text events carry the per-message `Usage` (input, output, cache_read, cache_creation), and have `healthPanel.onAgentEvent` accumulate tokens incrementally on every assistant message. The terminal `result` event remains the source of truth for cost and is reconciled at iteration end.
+1. [ ] Cache tokens in the total. `loop.ResultSummaryInfo` and the per-assistant `Usage` both expose `CacheReadInputTokens` and `CacheCreationInputTokens`. The "tokens" line on the health panel sums all four fields (input + output + cache_read + cache_creation) so the displayed value matches what the user is billed for. NDJSON: `agent_event` and `result_summary` carry the new fields as additive keys (no schema bump per the locked schema rule).
+1. [ ] Health heartbeat covers all events. `healthPanel.lastEvent` is currently stamped only by `onAgentEvent`. Route `IterationStarted`, `IterationFinished`, and `LoopFinished` through the same heartbeat sink (e.g., a new `health.onAny(at)` mirroring `header.onAny`) so the heartbeat dot in the health panel matches the header's alive dot from the first iteration onward.
+1. [ ] Spec parsed at startup, not only at iteration boundaries. `parseSpecCmd` runs today only inside the `IterationFinished` handler, so during iter 1 the progress and risk panels render "plan not parsed yet" / "0/0 items" for the entire iteration. Include `parseSpecCmd(...)` in the `tea.Batch` returned by `Init()` (no-op when `SpecReader` is nil) so panels populate immediately on launch.
+1. [ ] Git probe re-fires on baseline capture. The first `gitProbeCmd` is launched in `Init()` with `runBaselineSHA == ""`, so the run-local commit count stays unknown until the second probe tick (≥ 4s after launch). When `IterationStarted` first sets `runBaselineSHA`, dispatch an immediate `gitProbeCmd` so the parenthesised `(N commits)` appears on the next render rather than the next 2s tick.
+1. [ ] Tests: extend `health_test.go` to assert tokens accumulate across two assistant events with usage; add a `Model.Init` test that parses a spec on startup; add an `IterationStarted` test that asserts the immediate git probe is enqueued. NDJSON byte-for-byte tests gain rows for `cache_read_input_tokens` / `cache_creation_input_tokens` at info verbosity.
+
+### P2.10: richer widgets and v2 dependency stack
+
+The dashboard adopts the standard Charm component set (bubbles, lipgloss v2, optional glamour) so we stop reinventing primitives that already exist as `tea.Model`s. The single direct dependency upgrade lands in this phase to keep churn isolated; goes hand-in-hand with the layout work in P2.8.
+
+1. [ ] Migrate Charm dependencies to v2 modules: `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `charm.land/bubbles/v2`. Update import paths across `internal/tui/*.go`, `internal/cli/run.go`, and `go.mod`. The project is greenfield, no compatibility shims; no v1 imports left over. Verify `go test -race ./...`, `go vet`, `gofmt -l` clean after the swap.
+1. [ ] Replace the manual `spinnerFrames` ring in `now.go` with `bubbles/v2/spinner`. The `nowPanel` embeds a `spinner.Model` and propagates `spinner.Tick` through `Update`. Choice of frame style (`spinner.Dot`, `spinner.Line`, `spinner.MiniDot`) is a named constant. Removes `spinnerTickMsg` and `spinnerTickCmd` from `tui.go`.
+1. [ ] Replace the manual `█/░` bar in `progress.go` with `bubbles/v2/progress`. The panel embeds a `progress.Model`, calls `SetPercent(checked / total)` on every `onSpecParsed`, and the animated transitions land for free. Width comes from the layout cache (P2.8 sub-item 6).
+1. [ ] Replace the ad-hoc `internal/tui/help.go` overlay with `bubbles/v2/key` + `bubbles/v2/help`. Define a single `keyMap` with `key.Binding` entries (`Quit`, `Pause`, `Help`); `handleKey` matches via `key.Matches`; the `?` overlay renders `help.Model` in `FullHelp` mode and the footer renders the same `help.Model` in `ShortHelp` mode. Single source of truth for both the handler and the visible bindings.
+1. [ ] `actionsPanel` body wraps in `bubbles/v2/viewport` so the recent-actions list scrolls with mouse wheel and arrow keys. The 5-entry cap stays as the visible default; viewport extends history beyond the visible window when the user scrolls. `tea.NewProgram(... tea.WithMouseCellMotion())` enables wheel input.
+1. [ ] Optional: add a "spec" panel toggled by a key (e.g., `s`) that renders the spec via `charm.land/glamour/v2` inside a `bubbles/v2/viewport`. The panel sits in place of the dashboard when toggled (modal style, like the help overlay) so the rest of the layout stays put. Theme follows `--no-color` (Glamour `notty` style) and the lipgloss color profile.
+1. [ ] Drop `--no-color`'s `lipgloss.SetColorProfile(termenv.Ascii)` call and use the v2 lipgloss `WithColorProfile` / `Renderer` API per the v2 migration guide. `termenv` becomes an indirect dependency only.
+1. [ ] Tests: panel-level tests stay green after the component swaps; new tests assert `keyMap.FullHelp()` lists every binding the model handles, and that `actionsPanel` scrolls past the 5-entry visible window when more events arrive.
+
+### P2.11: end-to-end validation
 
 1. [ ] Run `bcc run` on a real one-phase spec with `--output tui`. Confirm panels populate and iteration completes.
 1. [ ] Same spec with `--output text`: confirm slog output is readable and exit code matches TUI mode.
@@ -361,7 +400,9 @@ bcc run <spec> [flags]
 1. [ ] Trigger loop-suspect by having the agent grep the same file 8 times; confirm warning appears in TUI.
 1. [ ] Synthetic rate-limit event injected via fake executor; confirm red row in TUI and corresponding NDJSON event.
 1. [ ] Ctrl+C mid-iteration: confirm clean terminal restore in TUI, no garbage characters; exit code reflects user-cancelled in all three modes.
-1. [ ] Resize while running TUI: no clipping or overflow.
+1. [ ] Resize while running TUI: no clipping or overflow at any width above the 40-col threshold.
+1. [ ] Live tokens / cost sanity: at the second assistant event of a real iteration, the health panel shows non-zero tokens; final value at `iter_finished` matches the `result.usage` totals (input + output + cache_read + cache_creation).
+1. [ ] Mouse wheel scrolls the actions panel through events older than the visible window.
 
 ## Autonomous execution
 
@@ -371,12 +412,12 @@ This spec follows the [Autonomous execution guide](../../guides/autonomous-execu
 
 Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 
-1. Manual visual review at 3 terminal sizes confirms no overflow or clipping.
-1. End-to-end test in P2.8 succeeds across all three `--output` modes.
+1. Manual visual review at 3 terminal sizes confirms no overflow or clipping (P2.8 sub-item 8).
+1. End-to-end test in P2.11 succeeds across all three `--output` modes.
 
 ### Stop criteria
 
-1. **Success**: P2.1 through P2.8 all `[x]` and end-to-end review passes.
+1. **Success**: P2.1 through P2.11 all `[x]` and end-to-end review passes.
 1. **Block**: bubbletea API surprise (terminal restoration, signal handling, channel-into-`tea.Cmd`) that needs design rethink.
 1. **Human decision**: layout choices that affect UX (panel ordering, color palette, exact ETA formula). The NDJSON event schema is locked at the start of P2.3 and any change there requires human sign-off.
 
@@ -391,16 +432,30 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 | Pause semantics confusing (between vs during iter) | Low | Low | UI label says "pause after this iter"; documented in `?` help |
 | Stdin contention (TUI reads keys, agent subprocess inherits stdin) | Low | Medium | Adapter explicitly disconnects subprocess stdin (`cmd.Stdin = nil`); TUI owns os.Stdin |
 | Large iterations overrun event channel buffer | Low | Low | Channel buffered to 256; on overflow, drop with `slog.Warn` |
+| Charm v2 import path migration drift (`charm.land/<pkg>/v2` is recent) | Low | Medium | Pin exact tags in `go.mod`; run `go mod verify` in CI; v2 migration lives in P2.10 as a single atomic change |
+| Per-message `usage` semantics differ from terminal `result.usage` | Medium | Low | Reconcile to `result.usage` at iteration end (P2.9 sub-item 1); panel may show small live/final delta during the run, that is acceptable |
+| `bubbles/v2` API drift between minor versions | Low | Low | Pin exact tags; component swaps (P2.10) covered by panel-level tests so a regression is caught at `go test` time |
 
 ## References
 
-- bubbletea: `github.com/charmbracelet/bubbletea`
-- lipgloss: `github.com/charmbracelet/lipgloss`
-- bubbles: `github.com/charmbracelet/bubbles` (`progress`, `viewport`, `help`, `spinner`)
+- bubbletea v2: `charm.land/bubbletea/v2` (runtime, `tea.Model` / `tea.Cmd` / `tea.Msg`, alt-screen, mouse motion, context wiring)
+- lipgloss v2: `charm.land/lipgloss/v2` (`Border`, `JoinHorizontal`/`Vertical`, `Place`, `Width`/`Height`, color profiles)
+- bubbles v2: `charm.land/bubbles/v2` (`spinner`, `progress`, `viewport`, `key`, `help`; `table` reserved for future panels)
+- huh v2: `charm.land/huh/v2` (used by the `bcc init` wizard rework, separate spec)
+- glamour v2: `charm.land/glamour/v2` (Markdown rendering inside the optional spec panel)
 - Claude Code stream-json format: `claude --output-format stream-json` reference
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 17:10, P2.8 panel layout and visual fidelity (7/8)
+
+- **Result**: partial
+- **Summary**: Closed P2.8.1 through P2.8.7 in this iteration; P2.8.8 (manual visual review at 80x24, 120x40, 200x60) is observer-driven and remains `[ ]`. P2.7.3 also stays `[ ]` per the spec rule that closing P2.8 marks both. New `internal/tui/box.go` exposes `box(title, body, width)` which renders a rounded-border lipgloss box (corners `╭╮╰╯`, side `│`, top embeds " title " after the opening corner with the rest of the top border filled by `─`). Below the `boxThreshold` (40 cols) the wrapper degrades to a `plainBox(title, body, width)` that emits "[ title ]" + body lines, each truncated via a new ANSI-aware `truncateVisible(s, width)` so the narrow-terminal contract holds. Each panel (`now`, `health`, `progress`, `risk`, `actions`) had its `view*` rewritten to drop the `panelTitle("name")` prefix and accept `width` (signature now `view(width int)` or `view(now, width int)`); body content is unchanged otherwise. The `now` panel uses `bodyMax(width)` to truncate the tool headline and assistant text to fit inside the box. `header` was split into `titleText(now)` (returns the top-border string `bcc <branch>  iter n/N  <elapsed>`) and `view(now, width)` (returns the body line with spec path + alive dot + optional `[paused]` tag). `internal/tui/layout.go` introduces the `layout` struct (`headerW`, `nowW`, `healthW`, `progressW`, `riskW`, `actionsW`) and `computeLayout(width)`, with the now/health split governed by `nowSplitPercent = 60`. The Model embeds `layout` and recomputes it on `tea.WindowSizeMsg`; `View()` reads the cache via `activeLayout()` (which falls back to `computeLayout(80)` when no size message has arrived, so tests that omit it still produce sensible output). `View()` no longer concatenates strings: `lipgloss.JoinHorizontal(lipgloss.Top, nowBox, healthBox)` builds the now+health row, and `lipgloss.JoinVertical(lipgloss.Left, ...)` stacks header / nowHealth / progress / risk / actions / footer. `internal/tui/theme.go` lost the `panelTitle` helper (no longer used). New `internal/tui/layout_test.go` covers (a) `lipgloss.Width` of every rendered line is ≤ the terminal width at 80, 120, 200 cols; (b) the now box sits to the left of the health box on the same band (single line containing both " now " and " health " titles); (c) the header box's top border embeds branch + iter `n/N`; (d) at width 30 the wrapper emits no rounded-border glyphs, every panel name appears as `[ name ]`, and no line exceeds 30 cells. Existing panel tests were updated to pass `width` and to drop the now-redundant `panelTitle` substring assertions; `header_test.go` was rewritten so the title-vs-body responsibilities are tested on `titleText(now)` and `view(now, width)` separately. `gofmt -l`, `go vet`, `go test -race ./...`, `go build` all clean.
+- **Commits**: this commit `tui: bordered-box panel wrapper + lipgloss layout cache (P2.8.1-7)`
+- **Decisions**: P2.7.3 stayed `[ ]` rather than being marked `[x]` in this iteration: the spec couples P2.7.3 with P2.8.8 ("Mark P2.7.3 [x] in the same iteration that closes this phase"), and that iteration is the one in which the observer performs the manual visual review. Marking it now would jump the gate. Picked P2.8 over P2.7 as the next pending phase: the strict "first phase with `[ ]`" reading is P2.7, but the spec rewrite added P2.8 with seven implementable sub-items and explicitly declared P2.8.8 to *supersede* P2.7.3, so treating P2.7 as the gate would freeze the loop on observer review forever even though new implementable work is sitting in the plan; respecting the rewritten spec means proceeding with P2.8 and folding the manual review into a single observer pass. The `box` wrapper does the bordering itself instead of relying purely on `lipgloss.Style.Border(...)` for the top border: lipgloss has no first-class title-in-border API, so the function uses lipgloss to render the body+border, then patches the first line with a manually-built `╭─ title ─...─╮` sized to total width. `truncateVisible` is hand-rolled (state machine over CSI escapes) rather than pulled from `muesli/reflow` because the only consumer is the narrow-fallback path and adding a new dependency for a 40-line helper would be excessive. Each panel takes `width` as the *total* allocated cells (border included); panels compute their own inner cap via `bodyMax(width)` (full width below threshold, `width-2` above). This keeps the contract uniform across panels even though only `now` actually trims today; `health`, `progress`, `risk`, and `actions` accept `width` as a no-op so the future can tighten them without re-threading the API. `nowSplitPercent = 60` is a package constant rather than `.bcc.toml` config because the spec says "in code, not in config, but a named constant so future tuning is one edit". `lipgloss.JoinVertical` pads each block to the widest one in the join, but since all bordered boxes have width = `headerW = width` (and the now+health row also sums to `width` by `computeLayout` design), no implicit padding happens at width ≥ 40. At width < 40 the panels are joined too, and each `plainBox` truncates its lines so the widest is at most `width`; JoinVertical may still pad, but the pad target stays ≤ `width`, so the contract holds. The Model.activeLayout() default of 80 cols means tests that omit `tea.WindowSizeMsg` (e.g. `TestView_PausedTagAppearsInHeader`) keep producing meaningful output; the alternative (render nothing or panic) would have forced rewriting those tests.
+- **Next**: P2.8 (P2.8.8 manual visual review by observer; closes P2.7.3 in the same edit) → P2.9 (live data updates)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter1.jsonl. P2.8.8 needs you: rebuild (`go install ./cmd/bcc`), then run `bcc run <some-spec> --output tui` at 80x24, 120x40, 200x60 (resize the terminal between runs or use tmux panes). Confirm no panel overflow, no clipping of bordered boxes, every panel populates with content (not blank inside the borders), `?` toggles the help overlay, `--no-color` produces ASCII-only output (no ANSI escapes). When satisfied, edit the spec to mark BOTH P2.8.8 and P2.7.3 as `[x]` in the same edit (per the spec's coupling rule), then re-trigger; the next iteration moves to P2.9 (live data updates). If the bordered layout has a visual problem you would rather fix first, file it as a new `[ ]` sub-item in P2.8 before re-triggering so the loop has a programmatic next step. Unrelated user edits sitting in the working tree at iteration end (`docs/specs/buchecha-mvp/2026-04-29-phase-4-execution-tuning.md`, `docs/specs/buchecha-mvp/index.md`, and the new untracked `docs/specs/buchecha-mvp/2026-04-29-phase-5-init-wizard.md`) are NOT part of this commit; they are yours to handle.
 
 ### 2026-04-29 16:30, P2.7.3 manual visual review (no-op review checkpoint)
 

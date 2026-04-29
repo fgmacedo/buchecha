@@ -37,26 +37,30 @@ func (h *header) onAny(at time.Time) {
 	h.lastEvent = at
 }
 
-// view renders the single-line header. now is injected so tests are
-// deterministic; production passes time.Now().
-func (h header) view(now time.Time) string {
+// titleText is the string the box wrapper embeds in the header's top
+// border per the dashboard mockup: branch, iter n/N, elapsed.
+func (h header) titleText(now time.Time) string {
 	elapsed := "0s"
 	if !h.startedAt.IsZero() {
 		elapsed = formatDuration(now.Sub(h.startedAt))
 	}
+	return fmt.Sprintf("bcc %s  iter %d/%d  %s",
+		trimEmpty(h.branch), h.iter, h.maxIter, elapsed)
+}
+
+// view renders the header body line: spec path, alive dot, and the
+// optional [paused] tag. now is injected so tests are deterministic;
+// production passes time.Now(). width is provided for symmetry with
+// other panels and reserved for future use (the body is naturally
+// short).
+func (h header) view(now time.Time, _ int) string {
 	dot := aliveDot(h.lastEvent, now)
 	pauseTag := ""
 	if h.paused {
 		pauseTag = " " + theme.warn.Render("[paused]")
 	}
-	return fmt.Sprintf("bcc %s  iter %d/%d  %s  %s%s  %s",
-		trimEmpty(h.branch),
-		h.iter, h.maxIter,
-		elapsed,
-		dot,
-		pauseTag,
-		theme.subtle.Render(h.specPath),
-	)
+	return fmt.Sprintf("%s  %s%s",
+		theme.subtle.Render(h.specPath), dot, pauseTag)
 }
 
 // aliveDot maps the time since the last event to a coloured glyph.

@@ -11,8 +11,8 @@ import (
 
 func TestRisk_view_BeforeAnyParse_RendersUnknowns(t *testing.T) {
 	r := riskPanel{currentIter: 1}
-	out := r.view(time.Now())
-	for _, w := range []string{"if you close now", "committed:", "uncommitted:", "journal:"} {
+	out := r.view(time.Now(), 80)
+	for _, w := range []string{"committed:", "uncommitted:", "journal:"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing %q\n%s", w, out)
 		}
@@ -30,7 +30,7 @@ func TestRisk_onSpecParsed_ReflectsItemsAndJournal(t *testing.T) {
 	plan := samplePlan() // 3 [x] / 3 [ ]
 	r.onSpecParsed(plan, spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
 
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "3/6 items") {
 		t.Errorf("missing 3/6 items: %q", out)
 	}
@@ -42,7 +42,7 @@ func TestRisk_onSpecParsed_ReflectsItemsAndJournal(t *testing.T) {
 func TestRisk_onSpecParsed_UnknownResultFlagsWarn(t *testing.T) {
 	r := riskPanel{currentIter: 1}
 	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "yolo", Result: spec.ResultUnknown}, true)
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "yolo") || !strings.Contains(out, "unknown") {
 		t.Errorf("unknown result not surfaced: %q", out)
 	}
@@ -51,7 +51,7 @@ func TestRisk_onSpecParsed_UnknownResultFlagsWarn(t *testing.T) {
 func TestRisk_onDirtyFileCount_RendersFiles(t *testing.T) {
 	r := riskPanel{}
 	r.onDirtyFileCount(3)
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "3 files") {
 		t.Errorf("dirty file count not rendered: %q", out)
 	}
@@ -61,7 +61,7 @@ func TestRisk_onCommitCount_RendersCountWhenKnown(t *testing.T) {
 	r := riskPanel{}
 	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
 	r.onCommitCount(12)
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "(12 commits)") {
 		t.Errorf("expected '(12 commits)' on committed line: %q", out)
 	}
@@ -71,7 +71,7 @@ func TestRisk_onCommitCount_SingularOnOne(t *testing.T) {
 	r := riskPanel{}
 	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
 	r.onCommitCount(1)
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "(1 commit)") {
 		t.Errorf("expected '(1 commit)' singular form: %q", out)
 	}
@@ -80,7 +80,7 @@ func TestRisk_onCommitCount_SingularOnOne(t *testing.T) {
 func TestRisk_view_OmitsCommitCountWhenUnknown(t *testing.T) {
 	r := riskPanel{}
 	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	// The "committed:" label is unconditional; the parenthesised "(N
 	// commit[s])" appears only after a successful CommitsSince probe.
 	if strings.Contains(out, " commits)") || strings.Contains(out, " commit)") {
@@ -92,7 +92,7 @@ func TestRisk_onCommitCount_ZeroStillRenders(t *testing.T) {
 	r := riskPanel{}
 	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
 	r.onCommitCount(0)
-	out := r.view(time.Now())
+	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "(0 commits)") {
 		t.Errorf("zero commit count must still render to distinguish 'probed' from 'unknown': %q", out)
 	}

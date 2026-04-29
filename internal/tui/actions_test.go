@@ -10,10 +10,7 @@ import (
 
 func TestActions_view_EmptyState(t *testing.T) {
 	a := actionsPanel{}
-	out := a.view()
-	if !strings.Contains(out, "recent actions") {
-		t.Errorf("missing title: %q", out)
-	}
+	out := a.view(80)
 	if !strings.Contains(out, "no tool calls yet") {
 		t.Errorf("empty state hint missing: %q", out)
 	}
@@ -32,7 +29,7 @@ func TestActions_onAgentEvent_KeepsLastFiveNewestFirst(t *testing.T) {
 	if len(a.entries) != actionsCap {
 		t.Fatalf("entries len = %d, want %d", len(a.entries), actionsCap)
 	}
-	out := a.view()
+	out := a.view(80)
 	// f6.go (latest) must appear; f0/f1 dropped.
 	if !strings.Contains(out, "f6.go") {
 		t.Errorf("latest event missing in view: %q", out)
@@ -62,7 +59,7 @@ func TestActions_view_RendersTimestamp(t *testing.T) {
 		Kind: loop.KindToolUse, At: at,
 		Tool: &loop.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}},
 	})
-	out := a.view()
+	out := a.view(80)
 	if !strings.Contains(out, "14:30:05") {
 		t.Errorf("missing HH:MM:SS timestamp in %q", out)
 	}

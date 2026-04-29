@@ -37,11 +37,11 @@ func (a *actionsPanel) onAgentEvent(ev loop.AgentEvent) {
 	}
 }
 
-// view renders the panel body, newest first.
-func (a actionsPanel) view() string {
+// view renders the panel body, newest first. width is reserved for
+// future per-row truncation; the formatted lines are naturally short
+// (HH:MM:SS + tool headline) at typical terminal widths.
+func (a actionsPanel) view(_ int) string {
 	var b strings.Builder
-	b.WriteString(panelTitle("recent actions"))
-	b.WriteByte('\n')
 
 	if len(a.entries) == 0 {
 		b.WriteString("  ")

@@ -46,11 +46,12 @@ func (p *progressPanel) onIterationFinished(d time.Duration) {
 	}
 }
 
-// view renders the panel body.
-func (p progressPanel) view() string {
+// view renders the panel body. width is reserved for future width-aware
+// layout; the bar uses a fixed cell count and the phase row wraps via
+// natural content length (callers that need a tighter rendering can
+// pass a shorter width once panels truncate on it).
+func (p progressPanel) view(_ int) string {
 	var b strings.Builder
-	b.WriteString(panelTitle("progress"))
-	b.WriteByte('\n')
 
 	if len(p.plan.Phases) == 0 {
 		b.WriteString("  ")

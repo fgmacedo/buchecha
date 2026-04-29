@@ -40,8 +40,8 @@ func TestProgress_view_RendersCheckboxesAndCounts(t *testing.T) {
 	p := progressPanel{currentPhaseIdx: -1}
 	p.onSpecParsed(samplePlan())
 
-	out := p.view()
-	for _, w := range []string{"progress", "P1", "P2", "P3", "3/6 items"} {
+	out := p.view(80)
+	for _, w := range []string{"P1", "P2", "P3", "3/6 items"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing %q in view\n%s", w, out)
 		}

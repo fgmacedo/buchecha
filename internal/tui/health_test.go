@@ -45,8 +45,8 @@ func TestHealth_view_RendersAllRows(t *testing.T) {
 		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
 	}})
 
-	out := h.view(now)
-	for _, w := range []string{"health", "heartbeat", "tools/min", "errors", "rate", "tokens", "cost"} {
+	out := h.view(now, 40)
+	for _, w := range []string{"heartbeat", "tools/min", "errors", "rate", "tokens", "cost"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("missing label %q\n%s", w, out)
 		}
@@ -109,7 +109,7 @@ func TestHealth_view_LoopSuspectRowAppearsWhenTriggered(t *testing.T) {
 			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
 		})
 	}
-	if got := h.view(now); strings.Contains(got, "loop-suspect") {
+	if got := h.view(now, 40); strings.Contains(got, "loop-suspect") {
 		t.Errorf("loop-suspect row should be hidden below threshold; got\n%s", got)
 	}
 
@@ -127,7 +127,7 @@ func TestHealth_view_LoopSuspectRowAppearsWhenTriggered(t *testing.T) {
 			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
 		})
 	}
-	out := h.view(now)
+	out := h.view(now, 40)
 	if !strings.Contains(out, "loop-suspect") {
 		t.Errorf("loop-suspect row missing when triggered: %q", out)
 	}

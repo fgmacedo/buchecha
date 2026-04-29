@@ -46,10 +46,7 @@ func TestNow_onAgentEvent_RecordsLatestAssistantText(t *testing.T) {
 
 func TestNow_view_IdleWhenNoTool(t *testing.T) {
 	n := nowPanel{}
-	out := n.view(time.Now())
-	if !strings.Contains(out, "now") {
-		t.Errorf("missing panel title: %q", out)
-	}
+	out := n.view(time.Now(), 80)
 	if !strings.Contains(out, "idle") {
 		t.Errorf("idle state not rendered: %q", out)
 	}
@@ -62,7 +59,7 @@ func TestNow_view_RendersToolHeadline(t *testing.T) {
 		currentToolAt: now.Add(-10 * time.Second),
 		lastAssistant: "Adjusting parser",
 	}
-	out := n.view(now)
+	out := n.view(now, 80)
 	if !strings.Contains(out, "Bash") {
 		t.Errorf("missing tool name in view: %q", out)
 	}
