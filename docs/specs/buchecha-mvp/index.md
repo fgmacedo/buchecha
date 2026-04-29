@@ -157,6 +157,6 @@ Most recent entries on top. Contract in [Autonomous execution guide](../../guide
 
 - **Result**: ok
 - **Summary**: Repo skeleton, cobra-wired CLI stubs (`run`, `init`, `watch`), English-adapted doc templates, autonomous-execution guide, this initiative, and detailed specs for Phase 1 and Phase 2 written. `bcc --help` builds and runs. Done by hand (no `bcc` to run yet).
-- **Commits**: (forthcoming) init: repo skeleton + initiative + Phase 1/2 specs
+- **Commits**: c203021 init: repo skeleton, cobra-wired CLI stubs, initiative and Phase 1/2 specs
 - **Decisions**: Adopted cobra after initial preference for stdlib `flag` (3+ subcommands + interactive wizard make cobra the right call). Single binary output via `go build -o bcc .`; `cmd/bcc/main.go` arrangement deferred. License MIT. Dev language English; localization is a runtime feature via `.bcc.toml`. Repo stays local until 4-week dogfooding period passes.
 - **Next**: Phase 1 (bash parity)
