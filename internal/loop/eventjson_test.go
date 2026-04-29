@@ -1,0 +1,182 @@
+package loop_test
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/spec"
+)
+
+func TestMarshalJSONEvent_IterStarted(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
+	ev := loop.IterationStarted{Index: 3, MaxIter: 20, At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:00Z","index":3,"level":"info","max_iter":20,"type":"iter_started"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_IterFinished(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
+	ev := loop.IterationFinished{
+		Index:        3,
+		Result:       spec.ResultPartial,
+		HEADAdvanced: true,
+		NewlyChecked: 2,
+		DurationMS:   420000,
+		LogPath:      ".bcc/logs/foo-iter3.jsonl",
+		At:           at,
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:35:00Z","duration_ms":420000,"head_advanced":true,"index":3,"level":"info","log_path":".bcc/logs/foo-iter3.jsonl","newly_checked":2,"result":"partial","type":"iter_finished"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_LoopFinishedOK(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 40, 0, 0, time.UTC)
+	ev := loop.LoopFinished{Reason: "spec done", ExitCode: 0, At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:40:00Z","exit_code":0,"level":"info","reason":"spec done","type":"loop_finished"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_LoopFinishedNonZeroIsError(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 40, 0, 0, time.UTC)
+	ev := loop.LoopFinished{Reason: "blocked", ExitCode: 1, At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(got), `"level":"error"`) {
+		t.Errorf("expected level=error, got: %s", got)
+	}
+}
+
+func TestMarshalJSONEvent_AgentToolUse(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 5, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindToolUse,
+		At:   at,
+		Tool: &loop.ToolCallInfo{
+			ID:   "toolu_01",
+			Name: "Edit",
+			Args: map[string]any{"file_path": "internal/spec/plan.go"},
+		},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:05Z","kind":"tool_use","level":"info","tool":{"args":{"file_path":"internal/spec/plan.go"},"id":"toolu_01","name":"Edit"},"type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentToolResult(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 6, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindToolResult,
+		At:   at,
+		Tool: &loop.ToolCallInfo{ID: "toolu_01", IsError: false, Summary: "file edited"},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:06Z","kind":"tool_result","level":"debug","tool":{"id":"toolu_01","is_error":false,"summary":"file edited"},"type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentResultSummary(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindResultSummary,
+		At:   at,
+		Done: &loop.ResultSummaryInfo{
+			NumTurns:     12,
+			TotalCostUSD: 0.34,
+			InputTokens:  12000,
+			OutputTokens: 2300,
+			DurationMS:   42100,
+		},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:35:00Z","done":{"duration_ms":42100,"input_tokens":12000,"num_turns":12,"output_tokens":2300,"total_cost_usd":0.34},"kind":"result_summary","level":"info","type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentThinkingIsTrace(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindThinking,
+		At:   at,
+		Text: "Adjusting parser...",
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:00Z","kind":"thinking","level":"trace","text":"Adjusting parser...","type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentRateLimitWarn(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
+	reset := time.Date(2026, 4, 29, 15, 0, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindRateLimit,
+		At:   at,
+		Rate: &loop.RateLimitInfo{Status: "warning", ResetAt: reset},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:00Z","kind":"rate_limit","level":"warn","rate":{"reset_at":"2026-04-29T15:00:00Z","status":"warning"},"type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentInit(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindInit,
+		At:   at,
+		Init: &loop.InitInfo{SessionID: "s1", Model: "claude-sonnet-4", CWD: "/tmp"},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:00Z","init":{"cwd":"/tmp","model":"claude-sonnet-4","session_id":"s1"},"kind":"init","level":"debug","type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}

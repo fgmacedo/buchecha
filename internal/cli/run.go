@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +27,8 @@ var (
 	runExtra      string
 	runConfigPath string
 	runAllowDirty bool
+	runOutput     string
+	runVerbosity  string
 )
 
 var runCmd = &cobra.Command{
@@ -47,10 +50,31 @@ func init() {
 	runCmd.Flags().StringVar(&runExtra, "extra", "", "additional instructions appended to the prompt")
 	runCmd.Flags().StringVar(&runConfigPath, "config", "", "path to .bcc.toml (overrides discovery)")
 	runCmd.Flags().BoolVarP(&runAllowDirty, "allow-dirty", "d", false, "skip the pre-flight clean-tree check (the agent will see the dirty tree)")
+	runCmd.Flags().StringVar(&runOutput, "output", OutputTUI, "render backend: tui|text|json")
+	runCmd.Flags().StringVar(&runVerbosity, "verbosity", loop.LevelInfo.String(), "event level low-water mark: error|warn|info|debug|trace")
 	rootCmd.AddCommand(runCmd)
 }
 
 func runSpec(ctx context.Context, specPath string) error {
+	verbosity, err := loop.ParseLevel(runVerbosity)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+	if !validOutputMode(runOutput) {
+		ExitCode = loop.ExitInvalid
+		return fmt.Errorf("unknown --output %q (want tui|text|json)", runOutput)
+	}
+
+	// In text mode the user expects events at their level on stderr.
+	// Reconfigure the default slog handler so debug/trace events are
+	// not swallowed; loop diagnostics share the same handler.
+	if runOutput == OutputText {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slogLevelOf(verbosity),
+		})))
+	}
+
 	if _, err := os.Stat(specPath); err != nil {
 		ExitCode = loop.ExitInvalid
 		return fmt.Errorf("spec %s: %w", specPath, err)
@@ -154,21 +178,24 @@ func runSpec(ctx context.Context, specPath string) error {
 		SingleShot: runSingleShot,
 	}
 
-	// Drain events in a goroutine so the loop never blocks on a
-	// full channel. P2.3 will replace this no-op drain with the
-	// tui/text/json render backends.
-	events := make(chan loop.Event, 256)
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		for range events {
-		}
-	}()
+	events, drained, err := dispatchEvents(runOutput, verbosity)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
 
 	code, runErr := l.Run(ctx, events)
 	<-drained
 	ExitCode = code
 	return runErr
+}
+
+func validOutputMode(s string) bool {
+	switch s {
+	case OutputTUI, OutputText, OutputJSON:
+		return true
+	}
+	return false
 }
 
 // readPreviousResult returns the raw Result string of the latest journal
