@@ -58,7 +58,7 @@ This is not a typical autonomous run. The goals are NOT just to deliver the impl
 ### P1: Smoke round-trip
 
 1. [x] Read this repository's `README.md` and write a 3-sentence summary of what `buchecha` is, in plain English, to `testdata/bcc-validation/summary.md`. The summary should be understandable to someone who has never seen the project.
-1. [ ] Add a `**Notes for observer**` section to your journal entry as described in the cooperative protocol above. Be specific; vague feedback is worse than no feedback.
+1. [x] Add a `**Notes for observer**` section to your journal entry as described in the cooperative protocol above. Be specific; vague feedback is worse than no feedback.
 
 ### P2: Observer-driven iteration
 
@@ -85,4 +85,24 @@ Follows the [Autonomous execution guide](../../guides/autonomous-execution.md) d
 
 ## Execution Journal
 
-(empty until first iteration)
+### 2026-04-29 12:50, P1: Smoke round-trip
+
+- **Result**: ok
+- **Summary**: Wrote a 3-sentence plain-English description of buchecha to `testdata/bcc-validation/summary.md` derived from `README.md`, then journaled this iteration with observer notes. Both P1 sub-items now `[x]`.
+- **Commits**: 7791e93 test: write 3-sentence buchecha summary for cooperative smoke; this commit docs(spec): journal P1 of cooperative smoke with observer notes
+- **Decisions**: Split the phase into two small commits along the two sub-items rather than bundling, matching the granularity of recent commits on `feat/phase-1` (e.g., `cli/run:`, `cli/init:`, `executor/claude:`). The journal entry's `Commits` line names the second commit by description because its hash is only known after the commit lands.
+- **Problems**: (none)
+- **Next**: P2: Observer-driven iteration (still a placeholder; observer should fill before the next run, or the next agent will block on the placeholder sub-item).
+- **Notes for observer**:
+  - **Prompt experience**: The launch prompt was clear and tightly scoped. The strict rules block (do not mark `[x]` partially, the binary "implement now or add a `[ ]` sub-item" rule, the strict `**Result**` values) was easy to follow because the spec body restates the same contract. Two minor frictions: (1) the prompt told me the JSONL path is "printed at start" per the guide, but I'm running inside the iteration so I never see that printout, which means I cannot mention the JSONL location in this journal entry as a breadcrumb for the observer; (2) the prompt does not say which iteration index this is, so the journal heading timestamp is the only ordinal I can offer.
+  - **Env / config**: `pwd` is `/Users/fernando.macedo/projects/buchecha` as expected. `CLAUDE_CONFIG_DIR=/Users/fernando.macedo/.claude-pessoal`, which is non-default (the conventional path is `~/.claude`); I assume this is intentional and reflects an isolated profile the user runs `bcc` under, but worth confirming. `ANTHROPIC_API_KEY` is unset, so auth flows through the Claude profile in `CLAUDE_CONFIG_DIR`. The only Claude-related env vars present are `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CONFIG_DIR`, `CLAUDECODE`. There is no `BCC_*` env var: the agent has no machine-readable signal that it is running under bcc, no iteration index, no spec path, no JSONL path.
+  - **Friction**:
+    1. No `BCC_ITERATION` / `BCC_SPEC_PATH` / `BCC_JSONL_PATH` exposed to the agent. I have to recover them from the prompt body or from `date`. Self-locating env vars would let the agent log them in the journal and self-check (e.g., refuse to act if it does not see them).
+    2. The prompt asks the agent to "Read the entire spec, especially '## Implementation Plan' and '## Execution Journal'." For tiny specs that's fine, but it does not scale; a hint to read selectively (front matter, plan headings, current phase, journal head) would help on larger specs.
+    3. The `**Commits**` requirement is awkward when an iteration has multiple commits and the journal entry itself is in the last commit: the last commit's hash is not knowable at write time. I'm working around it with the literal `this commit`, but a documented convention (or a post-commit hook that rewrites `<HEAD>` placeholders) would be cleaner.
+  - **Suggestions for bcc**:
+    1. Set `BCC_ITERATION`, `BCC_SPEC_PATH`, `BCC_JSONL_PATH`, `BCC_BRANCH`, `BCC_RUNNING=1` in the agent subprocess environment. Cheap, lets the agent self-verify and breadcrumb.
+    2. Print the JSONL path inside the launch prompt (or via stderr that the agent sees) so the agent can include it in `**Notes for observer**`. Helps the observer locate the right log file.
+    3. In `docs/guides/autonomous-execution.md`, add a one-line convention for the `**Commits**` field when the journal lives in the final commit of the iteration (e.g., literal `this commit` or `<HEAD>` and the loop tolerates it).
+    4. Consider a pre-flight assertion in the prompt: "the working tree is clean" plus "you must end clean too." The guide implies it; making it explicit at the prompt boundary catches lazy iterations.
+    5. Long-term: an opt-in journal stub the loop can pre-write (heading + `Result: blocked` placeholder) so a crashed iteration leaves the loop in a recoverable state instead of a missing entry.
