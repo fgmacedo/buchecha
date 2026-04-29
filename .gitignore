@@ -21,6 +21,10 @@ go.work.sum
 .env.local
 .env.*.local
 
+# Local bcc config (contains absolute paths and machine-specific env vars).
+# Each contributor runs `bcc init` to create their own.
+.bcc.toml
+
 # Editor / IDE
 .idea/
 .vscode/
