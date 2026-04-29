@@ -29,7 +29,8 @@ Default: **phase-by-phase loop** (Ralph-style). `bcc` invokes a fresh instance o
 The outer loop reads `Result` from the latest entry and decides:
 
 1. `ok` or `partial` → next iteration.
-1. `blocked` → stop, return non-zero exit, requires human review.
+1. `blocked` → stop, exit 1, requires a tech fix before re-running.
+1. `review` → stop, exit 6, the observer must edit the spec (placeholder phase, observer-driven gate) and re-trigger.
 1. `done` → stop, exit 0, spec complete.
 
 Safety signal: if `HEAD` did not advance during the iteration (the agent did not commit), the loop aborts. Prevents infinite loops when a child fails to write or commit.
@@ -107,8 +108,9 @@ Each iteration ends with a `Result` value in the journal. The outer loop acts on
 |---|---|---|
 | `ok` | Phase complete: every sub-item of the current phase is `[x]` AND any discovered work was implemented or became a new `[ ]` sub-item in a future phase | Next iteration |
 | `partial` | Phase made real progress but a `[ ]` sub-item from it remains (e.g., 4 of 6 delivered), or new `[ ]` sub-items appeared in the current phase that go to the next iteration | Next iteration |
-| `done` | Zero `[ ]` sub-items in the entire plan. The outer loop verifies and aborts if any `[ ]` remains | Stop, success |
-| `blocked` | Technical block (3 consecutive validation failures after `git revert`), real human decision (undocumented ambiguity, non-trivial trade-off), temptation to violate an absolute restriction, or explicit "stop for human review" point in the plan with items still pending | Stop, requires human review |
+| `done` | Zero `[ ]` sub-items in the entire plan. The outer loop verifies and aborts if any `[ ]` remains | Stop, success (exit 0) |
+| `review` | Recoverable observer checkpoint: a phase has only placeholder items waiting on the observer to fill, or the spec explicitly declares an observer-driven gate. The agent did not invent content; the human must edit and re-trigger | Stop, exit 6 |
+| `blocked` | Unrecoverable without a tech fix: 3 consecutive validation failures after `git revert`, undocumented ambiguity that needs a developer, or temptation to violate an absolute restriction | Stop, exit 1, requires human action |
 
 The journal entry **must** record:
 
@@ -140,7 +142,7 @@ Strict rules:
 
 1. `**Result**:` is on its own line, value without quotes, no extra text on the same line. The loop uses regex; any noise becomes "unknown result" and the loop aborts for safety.
 1. `**Decisions**` is the technical handoff between iterations. Record: names of created modules/adapters, chosen schemas when alternatives existed, applied conventions, taken shortcuts that need undoing later. **Not** the place to defer spec-covered work; that goes as a new `[ ]` sub-item per [Discovered work](#discovered-work). Without `Decisions`, the next iteration reinvents.
-1. `**Commits**` lists every commit in the iteration, not only the last.
+1. `**Commits**` lists every commit in the iteration, not only the last. The journal entry itself sits in the final commit, whose hash is unknowable at write time. Refer to that commit as `this commit <message>` or `<HEAD> <message>` (the loop tolerates both); list earlier commits with their actual short hash.
 1. When the iteration adds new `[ ]` sub-items to the plan (discovered work), explicitly cite in `**Decisions**` or `**Problems**`: "added sub-item `<description>` to P<n>".
 
 The author reads top to bottom in the morning to understand what happened overnight.
@@ -174,6 +176,17 @@ Behavior:
 1. Exit codes: `0` done, `1` blocked, `2` unknown result, `3` `HEAD` did not advance, `4` iteration cap reached, `5` `done` declared with `[ ]` items still in the plan.
 
 **Account configuration.** `bcc` does not export agent-specific env vars by default. If your agent needs `CLAUDE_CONFIG_DIR`, `OPENAI_API_KEY`, or similar, configure them in the `[env]` section of `.bcc.toml` or in a loaded `.env` file.
+
+**`BCC_*` env vars in the agent subprocess.** `bcc` sets the following vars before each invocation; the agent is expected to use them for breadcrumbs in the journal and for self-checking:
+
+| Var | Value |
+|---|---|
+| `BCC_RUNNING` | `1` (presence confirms the agent is running under bcc) |
+| `BCC_ITERATION` | 1-based index of the current iteration |
+| `BCC_MAX_ITERATIONS` | iteration cap configured for this run |
+| `BCC_SPEC_PATH` | absolute path of the spec being implemented |
+| `BCC_JSONL_PATH` | absolute path of this iteration's raw event log |
+| `BCC_BRANCH` | current git branch (best-effort; may be empty in detached HEAD) |
 
 ## When not to use
 

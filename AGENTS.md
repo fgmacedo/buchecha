@@ -238,8 +238,7 @@ gofmt -w .                                    # apply formatting
 # run
 ./bcc --help
 ./bcc init
-./bcc run docs/specs/<spec>.md
-./bcc watch docs/specs/<spec>.md              # Phase 2
+./bcc run docs/specs/<spec>.md                # opens live TUI by default; --no-tui for plain log
 
 # release (Phase 3+)
 goreleaser release --snapshot --clean         # local snapshot
@@ -251,9 +250,23 @@ git tag -a v0.1.0 -m '...' && goreleaser release
 - **Never log env-var values.** Adapters must enforce this. Names only, in any output.
 - **Never write to user `.env` files** from `bcc`. Reading is fine where the user opted in via `[env].files`.
 - **Subprocess args**: pass as a slice, never as a shell string. Avoid `bash -c`; use the agent binary directly.
-- **`--dangerously-skip-permissions`** on Claude is the user's choice in their config, not our default. The wizard suggests it but does not force.
 - **No telemetry.** No phone-home. No update check. The user runs the binary; the binary does its job and exits.
 - **Versioned dependencies** in `go.mod`. We pin `cobra`, `bubbletea`, etc. to known-good versions; we audit upgrades.
+
+## Autonomy and the permission contract
+
+`bcc run` invokes the agent in non-interactive print mode. To complete a phase end to end, the agent must execute file reads/writes/edits and shell commands without prompting the human for each one. Without that, the loop stalls.
+
+`[executor].skip_permissions` (default `true`) controls this:
+
+- **`true`**: the adapter passes the agent's "skip permission prompts" flag (claude maps this to `--dangerously-skip-permissions`; codex/gemini map to their own equivalents). The agent runs reads, writes, edits, and shell commands inside the project directory autonomously. The user accepts that risk.
+- **`false`**: explicit opt-out. `bcc run` still launches the agent, but in `-p` mode without the flag any tool call that would have prompted is either aborted or skipped. The loop is unlikely to converge. Useful for dry-runs, for prompt inspection, or for agents that have no permission system. The user accepts the degraded behavior.
+
+`bcc run` prints a loud warning on stderr at startup describing which mode is active and what the user is accepting. The wizard (`bcc init`) presents the same trade-off and requires an explicit choice; the default is `true` for autonomous mode.
+
+Adapters are responsible for translating the generic `SkipPermissions bool` to their concrete agent flag. New executor adapters MUST honor the field; if the upstream agent has no permission system, the field is a no-op and the adapter logs that on first invocation.
+
+The absolute restrictions in [docs/guides/autonomous-execution.md](docs/guides/autonomous-execution.md#absolute-restrictions) (no `git push`, no force operations, no touching credentials, etc.) are independent of this flag and cannot be relaxed by it.
 
 ## Language
 
@@ -264,6 +277,8 @@ git tag -a v0.1.0 -m '...' && goreleaser release
 
 ## For the assistant (Claude Code, agents in autonomous execution)
 
+- This is a solo project (one author plus you). Until `bcc` reaches the target shape, do not be conservative about existing designs: when a better port shape, type, layout, or naming choice emerges, propose the breaking change directly and ship it. No backwards-compatibility shims, deprecation aliases, or parallel old-and-new APIs unless explicitly requested. Compatibility scaffolding only matters once external users exist.
+- **Specs are normative, not historical.** Describe what to build, not how the spec got here. When refining a spec, rewrite the affected text in place. Do not narrate the change with "the previous version did X", "after the prior draft", "REMOVED:", "now we changed to Y", or "Breaking changes from previous spec". Each rewrite must read as if the doc were always this way. Design history belongs in commit messages and in the spec's Execution Journal, not in the body. Same rule applies to ADRs, PRDs, initiative docs, and any other design doc under `docs/`. Apply it equally to your own first drafts: write the target state directly, never the diff.
 - Before touching any package, scan the existing tests to understand the contract.
 - Respect layer boundaries: never import an adapter from `internal/loop/` or `internal/spec/` or `internal/config/`. Wire adapters at `cmd/`.
 - Never put a god `util` or `helpers` package. If a helper is small and obvious, inline it; if it is reused, it has a real home.

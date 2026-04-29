@@ -198,34 +198,38 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 
 ### P1.1: config + spec parsers (no I/O on agent)
 
-1. [ ] `internal/config/config.go`: `Config` struct mirroring TOML schema; `Load(path) (*Config, error)`; `Discover(cwd) (*Config, error)` (walks up).
-1. [ ] `internal/config/defaults.go`: `applyDefaults(c *Config)` filling missing values per `project.language`.
-1. [ ] `internal/config/env.go`: `(c *Config) ApplyEnv(extraFlags []string) error` resolving precedence and exporting to `os.Setenv`. No values logged.
-1. [ ] `internal/spec/headings.go`, `plan.go`, `journal.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
-1. [ ] `go test ./internal/config/... ./internal/spec/...` zero failures.
+1. [x] `internal/config/config.go`: `Config` struct mirroring TOML schema; types and validation only (Load/Discover live in `configloader/toml/` per layout). Stdlib-only.
+1. [x] `internal/config/defaults.go`: `applyDefaults(c *Config)` filling missing values per `project.language`.
+1. [x] `internal/config/env.go`: `(c *Config) ApplyEnv(extraFlags []string) error` resolving precedence and exporting to `os.Setenv`. No values logged.
+1. [x] `internal/configloader/toml/toml.go`: `Load(path) (*config.Config, error)`; `Discover(cwd) (*config.Config, error)` (walks up). Uses `BurntSushi/toml`; applies defaults after parse.
+1. [x] `internal/spec/headings.go`, `plan.go`, `journal.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
+1. [x] `go test -race ./internal/config/... ./internal/configloader/... ./internal/spec/...` zero failures.
 
 ### P1.2: executor adapter with JSONL streaming
 
-1. [ ] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, jsonlPath) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
-1. [ ] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout to the JSONL file via `io.MultiWriter`, propagating exit code.
-1. [ ] Cancellation via `context.Context` (Ctrl+C in foreground). On cancel, send SIGINT to the subprocess, drain stdout, write a final `{"type":"interrupted"}` line.
-1. [ ] Fake executor under `internal/executor/fake/` for tests: replays a scripted JSONL fixture. Used by loop tests in P1.3.
+1. [x] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, jsonlOut) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
+1. [x] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout directly to `jsonlOut` (`cmd.Stdout = jsonlOut`), propagating exit code.
+1. [x] Cancellation via `context.Context`. `cmd.Cancel` sends SIGINT; `cmd.WaitDelay` (default 5s) escalates to SIGKILL; a final `{"type":"interrupted"}` line is appended to `jsonlOut`. Run returns `ctx.Err()` so callers can `errors.Is` it.
+1. [x] Fake executor under `internal/executor/fake/` for tests: replays a scripted sequence of `Step{JSONL, ExitCode, Err}`; records prompts received. Used by loop tests in P1.3.
 
 ### P1.3: loop controller
 
-1. [ ] `internal/loop/loop.go`: `Loop.Run(ctx, spec, cfg) (exitCode int, err error)` implementing the bash decision table: per iteration, capture HEAD before; build prompt; invoke executor; capture HEAD after; parse latest `Result`; switch on value. Depends only on the ports defined in `ports.go`.
-1. [ ] `internal/loop/exitcodes.go`: constants 0..5 with comments matching the table.
-1. [ ] `internal/loop/prompt.go`: build prompts via `text/template`, parameterized by spec path, guide path, vocabulary, optional `--extra`.
-1. [ ] `internal/loop/decider.go`: pure `Decider` function `(LatestResult, HEADAdvanced, UncheckedCount) → (Action, ExitCode)`. Trivially testable.
-1. [ ] Single-shot mode: same logic, max-iterations forced to 1, prompt template variant.
-1. [ ] Table-driven tests for the decider; loop tests using `executor/fake` and a temporary git repo.
+1. [x] `internal/loop/loop.go`: `Loop.Run(ctx) (exitCode int, err error)` implementing the bash decision table: per iteration, capture HEAD before; build prompt once; invoke executor; capture HEAD after; reload spec, parse plan + latest Result; pass to Decide; act. Depends only on the ports defined in `ports.go`. Uses `log/slog` for milestone logging.
+1. [x] `internal/loop/exitcodes.go`: constants 0..5 with comments matching the bash contract.
+1. [x] `internal/loop/prompt.go`: `BuildPromptLoop` and `BuildPromptSingleShot` via `text/template`, parameterized by spec path, guide path, full localized vocabulary (plan/journal headings, Result keyword, four Result values), and an optional `Extra` block.
+1. [x] `internal/loop/decider.go`: pure `Decide(DeciderInput) Decision`. HEADAdvanced checked first; switch on Result; `done` with leftovers maps to ExitDoneWithLeftovers.
+1. [x] Single-shot mode: max iterations forced to 1; uses the single-shot prompt template variant.
+1. [x] Table-driven tests for the decider (8 cases); loop tests in external `loop_test` package using `executor/fake` + scripted `GitProbe` + scripted `SpecReader` (12 cases covering all decision branches, single-shot cap, pt-BR localization, port-error propagation, JSONL file emission).
 
 ### P1.4: cobra wiring + end-to-end
 
-1. [ ] `cmd/run.go`: parse flags, load config via `configloader/toml`, apply env, instantiate `executor/claude` and `git/cli` and `specreader/markdown`, build `Loop`, invoke. Translate Go error to exit code.
-1. [ ] `cmd/init.go`: linear stdin wizard, write `.bcc.toml`. `--force` and `--language` honored.
-1. [ ] `cmd/watch.go`: print "not implemented yet (Phase 2)" and return exit 2.
-1. [ ] End-to-end smoke test: a small spec in `testdata/specs/sample-en.md` driven by `executor/fake` that simulates two iterations (`partial`, `done`); verifies exit 0 and correct file outputs.
+1. [x] `internal/git/cli/cli.go`: implements `loop.GitProbe` via `os/exec` (HeadSHA, CurrentBranch, IsClean). Discovered as required by the package layout but missing from earlier sub-items.
+1. [x] `internal/specreader/markdown/markdown.go`: implements `loop.SpecReader` via `os.ReadFile`. Discovered, same reason.
+1. [x] `cmd.ExitCode` package-level int + main.go threading: lets RunE handlers set the bash-compatible exit code; main.go reads it after Execute. Discovered while wiring `cmd/run`.
+1. [x] `cmd/run.go`: parse flags, load config via `configloader/toml` (`--config` overrides Discover), apply env (`--env` overrides everything), instantiate `executor/claude` + `git/cli` + `specreader/markdown`, build `Loop`, invoke. SIGINT/SIGTERM handled via `signal.NotifyContext`. Sets `cmd.ExitCode`.
+1. [x] `cmd/init.go`: linear stdin wizard with pure `WriteConfigTOML(path, initInput)` underneath (testable). `--force` and `--language` honored.
+1. [x] `cmd/watch.go`: stub from Phase 0 returns "not implemented yet (Phase 2)"; kept as-is.
+1. [x] End-to-end smoke test (`internal/loop/integration_test.go`): real git repo + real `specreader/markdown` + a wrapper around `executor/fake` that mutates the spec and commits between iterations. Two scenarios: two-iter to done with exit 0 and JSONL files emitted; HEAD-stuck on no-commit returns exit 3.
 
 ### P1.5: validation against `condo-fiscal`
 
@@ -264,4 +268,38 @@ In addition to the guide defaults:
 
 ## Execution Journal
 
-(empty until Phase 1 is run)
+### 2026-04-29 15:00, P1.4: cobra wiring and end-to-end
+
+- **Result**: ok
+- **Summary**: Wired everything together. Implemented two adapters that the layout required but earlier sub-items did not list (`internal/git/cli` for `loop.GitProbe`, `internal/specreader/markdown` for `loop.SpecReader`), plus the exit-code threading from `cmd` to `main`. `cmd/run.go` loads config, applies env, instantiates the three adapters, builds Loop, runs under `signal.NotifyContext` for SIGINT/SIGTERM. `cmd/init.go` is a linear stdin wizard with a pure `WriteConfigTOML` underneath; tests verify TOML round-trips through `configloader/toml`. Integration tests in `internal/loop/integration_test.go` run a real git repo + real markdown reader + a wrapper around the fake executor that mutates the spec and commits between iterations: covers two-iter-to-done (exit 0, JSONL files written) and HEAD-stuck-on-no-commit (exit 3). 9 packages green under `go test -race`.
+- **Commits**: 933dd8a git/cli: GitProbe via os/exec (P1.4 discovered); 1274db1 specreader/markdown: SpecReader on disk (P1.4 discovered); 9d75d0e cmd: thread exit codes through cmd.ExitCode (P1.4 discovered); 2cfacf1 cmd/run: wire adapters into Loop (P1.4); 6aedfe1 cmd/init: wizard with pure WriteConfigTOML (P1.4); b1a56f2 loop: integration tests with real git + fake editing executor (P1.4); a08ec24 docs: mark P1.4 [x] and add journal entry
+- **Decisions**: (1) Three sub-items discovered and added to P1.4 plan in the same iteration that delivers them: `internal/git/cli`, `internal/specreader/markdown`, and `cmd.ExitCode` threading. The original P1.4 sub-list named the cobra commands but did not list the adapters they instantiate; I treated this as "implementation detail of the layout" and registered explicit sub-items for traceability. (2) `cmd.ExitCode` is a package-level int set by RunE handlers and read by main.go after Execute. Cobra's default error→exit-1 is preserved when a handler does not set ExitCode. This is simpler than threading a custom error type through cobra. (3) `cmd/run.go` uses `signal.NotifyContext(SIGINT, SIGTERM)`; the user can Ctrl+C to abort and the executor's cancel chain (cmd.Cancel → SIGINT subprocess → 5s grace → SIGKILL) takes over. (4) `cmd/init.go` is split: pure `WriteConfigTOML(path, initInput) error` (exported, tested) plus the wizard `runInitWizard(stdin, stdout, target)` (interactive glue). Tests cover the pure half and skip the interactive half; `--force` is checked against existing files before prompting. (5) Integration test wraps `executor/fake` with an `editingExec` that runs scripted hooks before each fake.Run call; hook 1 commits "[x] [ ] / Result: ok", hook 2 commits "[x] [x] / Result: done". Validates the full Loop with real adapters end-to-end without touching a real claude binary. (6) `gitcli` and `markdown` use stdlib only (os/exec, os.ReadFile). They live under `internal/git/cli` and `internal/specreader/markdown` so future siblings (e.g., `internal/git/jj` for jujutsu) drop in without renaming.
+- **Problems**: none. The integration test design did require an inline `editingExec` wrapper because `fake.Step` does not have a per-step hook; if this pattern repeats, we may add `Step.OnRun func()` later.
+- **Next**: P1.5 (manual validation against `condo-fiscal`)
+
+### 2026-04-29 14:00, P1.3: loop controller
+
+- **Result**: ok
+- **Summary**: Built the loop orchestration layer end to end. `internal/loop/exitcodes.go` declares the bash-compatible 0..5 constants. `internal/loop/decider.go` is the pure decision function (HEADAdvanced first, then Result-based dispatch with `done`+leftovers → exit 5). `internal/loop/prompt.go` renders loop-mode and single-shot prompts via `text/template` with full localized vocabulary. `internal/loop/loop.go` ties it together: opens per-iteration JSONL files under `JSONLDir`, calls Executor → SpecReader → Git → Decide, logs milestones via `log/slog`. Single-shot mode forces max iterations to 1. 12 loop test cases cover every decision branch including pt-BR localization, port error propagation, single-shot cap, and JSONL file emission. Total: 7 packages green under `go test -race`.
+- **Commits**: aa067ad config: add ResultKeyword to Specs (discovered during P1.3); 771db5c loop: exit codes and pure decider (P1.3); 57f4d16 loop: prompt templates with localization (P1.3); 0ef6720 loop: orchestrator with port wiring (P1.3); 2737697 docs: mark P1.3 [x] and add journal entry
+- **Decisions**: (1) Discovered work registered: added `ResultKeyword` field to `config.Specs` (toml tag `result_keyword`, defaults `Result` for en, `Resultado` for pt-BR). Missed in P1.1 because the journal parser already accepted the keyword as a parameter; the gap was on the config side. Tests in `internal/config/defaults_test.go` updated for both languages. (2) `loop_test.go` lives in the external `package loop_test` to avoid an import cycle (the fake executor imports `loop` to satisfy the `loop.Executor` interface; tests import both fake and loop). `decider_test.go` and `prompt_test.go` stay in `package loop` because they only use exported types from their own package and adding `loop.` prefixes everywhere is needless churn. (3) Loop owns the JSONL file lifecycle (Create/Close per iteration); the Executor only writes to the provided io.Writer. Filename pattern: `<slug>-iter<N>.jsonl` under `JSONLDir`. (4) Loop fields hold the wired ports (`Executor`, `Git`, `SpecReader`); `Run(ctx)` takes only the cancellation context. Construction is done at the cmd boundary; tests bypass cmd and build the Loop directly. Validates AGENTS.md's "wire adapters at cmd, ports in consumer" rule. (5) Decider is pure (no I/O, no time): trivially testable, easy to extend later for new heuristics (loop-suspect detector in Phase 2). (6) Stop reasons logged with structured kv pairs (`reason=done|blocked|head_stuck|...`) so `bcc watch` can render them later without parsing prose. (7) Loop returns `(ExitInvalid, ctx.Err())` on cancel and on any port error; cmd/run.go in P1.4 will translate this to os.Exit(2) and stderr.
+- **Problems**: First pass had `package loop` for `loop_test.go` which created an import cycle with `executor/fake` (fake imports loop for the interface assertion). Fixed by switching to external `package loop_test`. Easier to spot once Go printed "import cycle not allowed in test"; the rule is not obvious for first-time hexagonal-in-Go layouts.
+- **Next**: P1.4 (cobra wiring + end-to-end smoke)
+
+### 2026-04-29 13:00, P1.2: executor adapter with JSONL streaming
+
+- **Result**: ok
+- **Summary**: Defined the three loop ports (`Executor`, `GitProbe`, `SpecReader`) in `internal/loop/ports.go`. Implemented `internal/executor/claude` invoking `claude -p --output-format stream-json --verbose [...] <prompt>`, streaming stdout directly to the writer, with graceful cancellation (SIGINT via `cmd.Cancel`, SIGKILL escalation via `cmd.WaitDelay`) and an `{"type":"interrupted"}` terminator on cancel. Implemented `internal/executor/fake` as a scripted Executor for loop tests. Tests cover: stream capture, non-zero exit propagation, missing binary error, context-deadline cancel + terminator emission, arg ordering, `--model` omission when empty, and stderr wiring.
+- **Commits**: 9c8519e loop: define Executor/GitProbe/SpecReader ports (P1.2); 976fd5d executor/claude: subprocess streaming with graceful cancel (P1.2); 0095c59 executor/fake: scripted Executor for loop tests (P1.2); b2b9f00 docs: mark P1.2 [x] and add journal entry
+- **Decisions**: (1) Streaming via `cmd.Stdout = jsonlOut` instead of the `io.MultiWriter` mentioned in the spec text. The MultiWriter pattern only matters when there are two sinks; for P1.2 there is only one (the JSONL file), so direct assignment is simpler and avoids a goroutine. If P2 needs a live tee for the dashboard, we can add MultiWriter at the call site without touching the executor. (2) Ports live in `internal/loop/ports.go` (the consumer), per AGENTS.md's "interfaces in the consumer" rule. The adapter `internal/executor/claude` imports `internal/loop` to satisfy the contract; `internal/loop` does not import any adapter. Compile-time `var _ loop.Executor = (*Executor)(nil)` checks the contract on every build. (3) Graceful cancel uses Go 1.20+ `cmd.Cancel`/`cmd.WaitDelay` (we are on 1.24). SIGINT first, SIGKILL after 5s by default; configurable via `Config.CancelGrace`. We do NOT set up process groups; if claude spawns helpers, they may briefly leak after cancel. Acceptable for Phase 1; revisit if it becomes a problem. (4) On cancel, Run returns `(exitCode, ctx.Err())` so callers can `errors.Is(err, context.Canceled)`. On natural non-zero exit, returns `(exitCode, nil)`: a non-zero exit from the agent is a normal control signal, not a Run failure. Only invocation failures (binary missing, etc.) return `(-1, error)`. (5) Test fixtures are bash scripts under `internal/executor/claude/testdata/`, marked executable in git. Linux/macOS only; Windows would need a Go-built fake (out of scope for MVP).
+- **Problems**: none.
+- **Next**: P1.3 (loop controller and decider)
+
+### 2026-04-29 12:00, P1.1: config + spec parsers
+
+- **Result**: ok
+- **Summary**: Implemented `internal/spec` (types, plan parser, journal parser, fixtures, table-driven tests covering en + pt-BR + edge cases) and `internal/config` (types with TOML tags, defaults per `project.language`, env merging with documented precedence and stdlib-only .env loader). Adapter `internal/configloader/toml` wraps BurntSushi/toml with `Load` and `Discover` (walks up). All P1.1 sub-items `[x]`. `gofmt`, `go vet`, `go test -race ./...`, `go build` all green. `bcc --help` builds and runs.
+- **Commits**: 50c19bd spec: types and plan/journal parsers (P1.1); 68c664f config: types, defaults, and env precedence (P1.1); 7898758 configloader/toml: Load and Discover (P1.1); ca3859d docs: mark P1.1 [x], record journal entry, clean lingering "diary" refs
+- **Decisions**: (1) Adjusted P1.1 plan to make `internal/configloader/toml/` a separate sub-item (was implicit in original P1.1.1, conflicted with the package layout). Hexagonal layout enforced: `internal/config` is stdlib-only, `internal/configloader/toml` is the only package importing `BurntSushi/toml`. (2) Did NOT add `joho/godotenv` even though the spec mentions it; the .env subset we need (KEY=VALUE, comments, optional quotes, `${VAR}` expansion via `os.ExpandEnv`) is small enough that ~30 lines of stdlib parser in `internal/config/env.go` suffices. If we ever need `export` keyword, multi-line values, or command substitution, swap in godotenv there. (3) `Result` is an `int` enum, not a string, with `ResultUnknown` as zero value to make uninitialized states explicit. `ResultVocab` decouples the typed enum from localized surface strings. (4) Plan parser models an "implicit phase" (Title="", Line=0) for items appearing before any H3 inside the plan section, so callers do not need a special-case path. (5) Journal parser stops scanning when it finds any `- **<keyword>**: ...` matching the configured Result keyword; first match wins, matching the bash awk's behavior of taking the latest entry (top of section).
+- **Problems**: cobra command long descriptions and README still mentioned "diary" after the prior rename; caught at the end of the iteration (visible in `bcc --help`) and fixed in the same commit batch.
+- **Next**: P1.2 (executor adapter with JSONL streaming)
