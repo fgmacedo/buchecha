@@ -238,8 +238,7 @@ gofmt -w .                                    # apply formatting
 # run
 ./bcc --help
 ./bcc init
-./bcc run docs/specs/<spec>.md
-./bcc watch docs/specs/<spec>.md              # Phase 2
+./bcc run docs/specs/<spec>.md                # opens live TUI by default; --no-tui for plain log
 
 # release (Phase 3+)
 goreleaser release --snapshot --clean         # local snapshot
@@ -278,6 +277,8 @@ The absolute restrictions in [docs/guides/autonomous-execution.md](docs/guides/a
 
 ## For the assistant (Claude Code, agents in autonomous execution)
 
+- This is a solo project (one author plus you). Until `bcc` reaches the target shape, do not be conservative about existing designs: when a better port shape, type, layout, or naming choice emerges, propose the breaking change directly and ship it. No backwards-compatibility shims, deprecation aliases, or parallel old-and-new APIs unless explicitly requested. Compatibility scaffolding only matters once external users exist.
+- **Specs are normative, not historical.** Describe what to build, not how the spec got here. When refining a spec, rewrite the affected text in place. Do not narrate the change with "the previous version did X", "after the prior draft", "REMOVED:", "now we changed to Y", or "Breaking changes from previous spec". Each rewrite must read as if the doc were always this way. Design history belongs in commit messages and in the spec's Execution Journal, not in the body. Same rule applies to ADRs, PRDs, initiative docs, and any other design doc under `docs/`. Apply it equally to your own first drafts: write the target state directly, never the diff.
 - Before touching any package, scan the existing tests to understand the contract.
 - Respect layer boundaries: never import an adapter from `internal/loop/` or `internal/spec/` or `internal/config/`. Wire adapters at `cmd/`.
 - Never put a god `util` or `helpers` package. If a helper is small and obvious, inline it; if it is reused, it has a real home.
