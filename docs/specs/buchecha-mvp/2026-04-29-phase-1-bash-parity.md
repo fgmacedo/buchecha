@@ -52,33 +52,43 @@ The current shell wrapper works but is opaque, bash-bound, and project-specific.
 
 ### Package layout
 
+Layered following ports-and-adapters per [AGENTS.md](../../../AGENTS.md). Domain packages (`spec`, `config`, `loop`) have no adapter imports; adapter packages implement ports defined in `loop`.
+
 ```
 buchecha/
 ├── main.go                       # cobra entry
-├── cmd/                          # cobra commands
+├── cmd/                          # cobra commands; wires adapters into loop
 │   ├── root.go
 │   ├── run.go
 │   ├── init.go
 │   └── watch.go                  # stub until Phase 2
 ├── internal/
-│   ├── config/
-│   │   ├── config.go             # Config struct, LoadOrDefault, Discover
-│   │   ├── defaults.go           # defaults per project.language
-│   │   └── env.go                # apply [env] (files + vars), precedence
-│   ├── spec/
-│   │   ├── spec.go               # Spec, Phase, Item, DiaryEntry types
+│   ├── config/                   # domain: typed Config, defaults, env merge
+│   │   ├── config.go
+│   │   ├── defaults.go
+│   │   └── env.go
+│   ├── spec/                     # domain: pure parsers, value objects
+│   │   ├── spec.go               # Spec, Phase, Item, DiaryEntry, Result
 │   │   ├── plan.go               # ParsePlan, CountChecked, CountUnchecked
 │   │   ├── diary.go              # ParseLatestResult
 │   │   └── headings.go           # FindHeading, SectionBetween
-│   ├── loop/
+│   ├── loop/                     # domain: orchestration + ports
 │   │   ├── loop.go               # Loop.Run; decision table
-│   │   ├── prompt.go             # buildPromptLoop, buildPromptSingleShot
+│   │   ├── ports.go              # Executor, GitProbe, SpecReader interfaces
+│   │   ├── prompt.go             # build prompts via text/template
 │   │   └── exitcodes.go          # constants 0..5
-│   ├── executor/
-│   │   ├── executor.go           # Executor interface
-│   │   └── claude.go             # ClaudeExecutor (streams JSONL)
-│   └── git/
-│       └── git.go                # HeadSHA, IsClean, CurrentBranch
+│   ├── executor/                 # adapters
+│   │   └── claude/
+│   │       └── claude.go         # implements loop.Executor (JSONL stream)
+│   ├── git/                      # adapters
+│   │   └── cli/
+│   │       └── cli.go            # implements loop.GitProbe via os/exec
+│   ├── specreader/               # adapters
+│   │   └── markdown/
+│   │       └── markdown.go       # implements loop.SpecReader on disk
+│   └── configloader/             # adapters
+│       └── toml/
+│           └── toml.go           # reads .bcc.toml into config.Config
 └── testdata/
     ├── specs/
     │   ├── sample-en.md
@@ -197,27 +207,28 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 1. [ ] `internal/spec/headings.go`, `plan.go`, `diary.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
 1. [ ] `go test ./internal/config/... ./internal/spec/...` zero failures.
 
-### P1.2: executor with JSONL streaming
+### P1.2: executor adapter with JSONL streaming
 
-1. [ ] `internal/executor/executor.go`: `Executor` interface (`Run(ctx, prompt, jsonlPath) (exitCode int, err error)`).
-1. [ ] `internal/executor/claude.go`: `ClaudeExecutor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout to the JSONL file via `io.MultiWriter`, propagating exit code.
+1. [ ] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, jsonlPath) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
+1. [ ] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout to the JSONL file via `io.MultiWriter`, propagating exit code.
 1. [ ] Cancellation via `context.Context` (Ctrl+C in foreground). On cancel, send SIGINT to the subprocess, drain stdout, write a final `{"type":"interrupted"}` line.
-1. [ ] Test with a fake binary script in `testdata/` that emits a known JSONL sequence.
+1. [ ] Fake executor under `internal/executor/fake/` for tests: replays a scripted JSONL fixture. Used by loop tests in P1.3.
 
 ### P1.3: loop controller
 
-1. [ ] `internal/loop/loop.go`: `Loop.Run(ctx, spec, cfg) (exitCode int, err error)` implementing the bash decision table: per iteration, capture HEAD before; build prompt; invoke executor; capture HEAD after; parse latest `Result`; switch on value.
+1. [ ] `internal/loop/loop.go`: `Loop.Run(ctx, spec, cfg) (exitCode int, err error)` implementing the bash decision table: per iteration, capture HEAD before; build prompt; invoke executor; capture HEAD after; parse latest `Result`; switch on value. Depends only on the ports defined in `ports.go`.
 1. [ ] `internal/loop/exitcodes.go`: constants 0..5 with comments matching the table.
 1. [ ] `internal/loop/prompt.go`: build prompts via `text/template`, parameterized by spec path, guide path, vocabulary, optional `--extra`.
+1. [ ] `internal/loop/decider.go`: pure `Decider` function `(LatestResult, HEADAdvanced, UncheckedCount) → (Action, ExitCode)`. Trivially testable.
 1. [ ] Single-shot mode: same logic, max-iterations forced to 1, prompt template variant.
-1. [ ] Unit tests for the decision table using a stub executor.
+1. [ ] Table-driven tests for the decider; loop tests using `executor/fake` and a temporary git repo.
 
 ### P1.4: cobra wiring + end-to-end
 
-1. [ ] `cmd/run.go`: parse flags, load config (`--config` or discovery), apply env, build `Loop`, invoke. Translate Go error to exit code.
+1. [ ] `cmd/run.go`: parse flags, load config via `configloader/toml`, apply env, instantiate `executor/claude` and `git/cli` and `specreader/markdown`, build `Loop`, invoke. Translate Go error to exit code.
 1. [ ] `cmd/init.go`: linear stdin wizard, write `.bcc.toml`. `--force` and `--language` honored.
 1. [ ] `cmd/watch.go`: print "not implemented yet (Phase 2)" and return exit 2.
-1. [ ] End-to-end smoke test: a small spec in `testdata/specs/sample-en.md` with a fake executor binary that simulates two iterations (`partial`, `done`), verifies exit 0 and correct file outputs.
+1. [ ] End-to-end smoke test: a small spec in `testdata/specs/sample-en.md` driven by `executor/fake` that simulates two iterations (`partial`, `done`); verifies exit 0 and correct file outputs.
 
 ### P1.5: validation against `condo-fiscal`
 
