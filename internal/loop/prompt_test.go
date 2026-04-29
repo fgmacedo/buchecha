@@ -16,6 +16,7 @@ func englishPromptInput() PromptInput {
 		ResultPartial:  "partial",
 		ResultDone:     "done",
 		ResultBlocked:  "blocked",
+		ResultReview:   "review",
 	}
 }
 
@@ -30,9 +31,14 @@ func TestBuildPromptLoop_IncludesAllVocab(t *testing.T) {
 		"## Implementation Plan",
 		"## Execution Journal",
 		"**Result**",
-		"ok", "partial", "done", "blocked",
+		"ok", "partial", "done", "blocked", "review",
 		"loop-by-phase",
 		"ONE pending phase",
+		"BCC_RUNNING",
+		"BCC_ITERATION",
+		"BCC_JSONL_PATH",
+		"placeholder",
+		"<HEAD>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prompt missing %q\n--- prompt ---\n%s", want, out)
