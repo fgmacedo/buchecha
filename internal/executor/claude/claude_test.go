@@ -89,9 +89,10 @@ func TestRun_ContextCancelInterrupts(t *testing.T) {
 
 func TestRun_PromptIsLastArg(t *testing.T) {
 	e := New(Config{
-		Binary:    fixture(t, "fake-claude-echo-args.sh"),
-		Model:     "test-model",
-		ExtraArgs: []string{"--foo", "--bar"},
+		Binary:          fixture(t, "fake-claude-echo-args.sh"),
+		Model:           "test-model",
+		ExtraArgs:       []string{"--foo", "--bar"},
+		SkipPermissions: true,
 	})
 	var buf bytes.Buffer
 	if _, err := e.Run(context.Background(), "the prompt", &buf); err != nil {
@@ -125,6 +126,34 @@ func TestRun_OmitsModelWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "--model") {
 		t.Errorf("--model should be omitted when Model is empty: %q", buf.String())
+	}
+}
+
+func TestRun_OmitsSkipPermissionsWhenFalse(t *testing.T) {
+	e := New(Config{
+		Binary:          fixture(t, "fake-claude-echo-args.sh"),
+		SkipPermissions: false,
+	})
+	var buf bytes.Buffer
+	if _, err := e.Run(context.Background(), "p", &buf); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(buf.String(), "--dangerously-skip-permissions") {
+		t.Errorf("--dangerously-skip-permissions should be omitted when SkipPermissions=false: %q", buf.String())
+	}
+}
+
+func TestRun_AddsSkipPermissionsWhenTrue(t *testing.T) {
+	e := New(Config{
+		Binary:          fixture(t, "fake-claude-echo-args.sh"),
+		SkipPermissions: true,
+	})
+	var buf bytes.Buffer
+	if _, err := e.Run(context.Background(), "p", &buf); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(buf.String(), "--dangerously-skip-permissions") {
+		t.Errorf("--dangerously-skip-permissions should appear when SkipPermissions=true: %q", buf.String())
 	}
 }
 

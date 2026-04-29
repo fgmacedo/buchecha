@@ -29,9 +29,15 @@ type Config struct {
 	Model string
 
 	// ExtraArgs are appended to the command line after --model and before
-	// the prompt positional argument. Useful for, e.g.,
-	// "--dangerously-skip-permissions".
+	// the prompt positional argument. Reserve for ad-hoc additions.
 	ExtraArgs []string
+
+	// SkipPermissions, when true, adds --dangerously-skip-permissions to
+	// the args so claude does not stall the loop with confirmation
+	// prompts. This is the documented contract of bcc's autonomous mode.
+	// When false (explicit user opt-out via .bcc.toml), the loop is
+	// likely to hang on the first tool call; the user accepts that.
+	SkipPermissions bool
 
 	// Stderr, when non-nil, receives the subprocess stderr verbatim.
 	// Default (nil) discards stderr; callers wanting it should pipe to a
@@ -72,16 +78,20 @@ func New(cfg Config) *Executor {
 // from the agent itself). Returns (exitCode, ctx.Err()) when canceled.
 // Returns (-1, err) when invocation itself failed (e.g., binary missing).
 func (e *Executor) Run(ctx context.Context, prompt string, jsonlOut io.Writer) (int, error) {
-	// bcc only runs the agent in autonomous mode; permission prompts
-	// would stall the loop forever. --dangerously-skip-permissions is
-	// part of the contract, not a user opt-in. Same reason -p,
-	// --output-format stream-json, and --verbose are hardcoded: they
-	// are required for the loop to function.
+	// -p, --output-format stream-json, and --verbose are required for
+	// the loop to function (line-by-line JSONL events). They are not
+	// configurable.
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--dangerously-skip-permissions",
+	}
+	// --dangerously-skip-permissions is the precondition for autonomous
+	// mode; without it claude prompts on every tool use. Users who set
+	// skip_permissions=false in .bcc.toml accept that the loop will
+	// stall on the first prompt.
+	if e.cfg.SkipPermissions {
+		args = append(args, "--dangerously-skip-permissions")
 	}
 	if e.cfg.Model != "" {
 		args = append(args, "--model", e.cfg.Model)
