@@ -36,8 +36,8 @@ Same as v1. Summary:
 
 ### P1: BCC_* env var visibility
 
-1. [ ] Read all `BCC_*` env vars present in your subprocess and write them to `testdata/bcc-validation/bcc-env-iter1.txt`, one per line as `KEY=VALUE`. If any expected var (BCC_RUNNING, BCC_ITERATION, BCC_MAX_ITERATIONS, BCC_SPEC_PATH, BCC_JSONL_PATH, BCC_BRANCH) is missing, list it as `MISSING_<NAME>` so the observer sees the gap.
-1. [ ] In your `**Notes for observer**`, cite `BCC_JSONL_PATH` (its value) so the observer can correlate the journal entry with the raw event log.
+1. [x] Read all `BCC_*` env vars present in your subprocess and write them to `testdata/bcc-validation/bcc-env-iter1.txt`, one per line as `KEY=VALUE`. If any expected var (BCC_RUNNING, BCC_ITERATION, BCC_MAX_ITERATIONS, BCC_SPEC_PATH, BCC_JSONL_PATH, BCC_BRANCH) is missing, list it as `MISSING_<NAME>` so the observer sees the gap.
+1. [x] In your `**Notes for observer**`, cite `BCC_JSONL_PATH` (its value) so the observer can correlate the journal entry with the raw event log.
 
 ### P2: `<HEAD>` convention in **Commits**
 
@@ -66,4 +66,18 @@ Follows the [Autonomous execution guide](../../guides/autonomous-execution.md) d
 
 ## Execution Journal
 
-(empty until first iteration)
+### 2026-04-29 13:10, P1: BCC_* env var visibility
+
+- **Result**: ok
+- **Summary**: Captured all 6 expected `BCC_*` env vars from the subprocess and wrote them to `testdata/bcc-validation/bcc-env-iter1.txt`. None missing, so no `MISSING_<NAME>` lines were needed. Both P1 items are `[x]`.
+- **Commits**: <HEAD> spec(smoke-v2): complete P1 with BCC_* env capture
+- **Decisions**: Used the `<HEAD>` convention for the journal commit even though P2 is the phase that explicitly validates it; reads naturally and matches the documented contract.
+- **Problems**: Working tree was NOT clean at iteration start. Pre-existing modifications (`AGENTS.md`, `docs/specs/buchecha-mvp/2026-04-29-phase-2-tui-dashboard.md`, `docs/specs/buchecha-mvp/index.md`) and one untracked file (`docs/specs/buchecha-mvp/2026-04-29-phase-3-steering.md`) were present and unrelated to this spec. I left them untouched and used specific paths in `git add` so the iteration commit only carries P1 work. → Observer should be aware that the "clean tree on entry" invariant in the autonomous-execution guide was not held by `bcc` here.
+- **Notes for observer**:
+  - `BCC_JSONL_PATH` for this iteration: `/var/folders/6s/bqzmgmsn5kz7l6ny1r0k17_r0000gp/T/bcc/2026-04-29-bcc-cooperative-smoke-v2-iter1.jsonl`.
+  - All 6 expected vars (`BCC_RUNNING`, `BCC_ITERATION`, `BCC_MAX_ITERATIONS`, `BCC_SPEC_PATH`, `BCC_JSONL_PATH`, `BCC_BRANCH`) were set and non-empty. `BCC_BRANCH=feat/phase-1` matched `git branch --show-current`.
+  - Prompt experience: the procedure's step 4 (placeholder pre-check) was clear; for P1 there are no placeholders so it was a no-op. The breadcrumb instruction to cite `BCC_JSONL_PATH` was easy to satisfy.
+  - Friction: the dirty working tree on entry was the only surprise. It would help if `bcc` either refused to start with a dirty tree or staged-and-stashed the unrelated work before invoking the agent.
+  - Suggestions: consider printing the resolved `BCC_*` values once at startup (names + values, since these are non-secret bcc-controlled vars) so the observer can confirm they match what each iteration records.
+- **Next**: P2 (`<HEAD>` convention in **Commits**)
+
