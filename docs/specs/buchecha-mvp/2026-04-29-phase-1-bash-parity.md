@@ -214,12 +214,12 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 
 ### P1.3: loop controller
 
-1. [ ] `internal/loop/loop.go`: `Loop.Run(ctx, spec, cfg) (exitCode int, err error)` implementing the bash decision table: per iteration, capture HEAD before; build prompt; invoke executor; capture HEAD after; parse latest `Result`; switch on value. Depends only on the ports defined in `ports.go`.
-1. [ ] `internal/loop/exitcodes.go`: constants 0..5 with comments matching the table.
-1. [ ] `internal/loop/prompt.go`: build prompts via `text/template`, parameterized by spec path, guide path, vocabulary, optional `--extra`.
-1. [ ] `internal/loop/decider.go`: pure `Decider` function `(LatestResult, HEADAdvanced, UncheckedCount) → (Action, ExitCode)`. Trivially testable.
-1. [ ] Single-shot mode: same logic, max-iterations forced to 1, prompt template variant.
-1. [ ] Table-driven tests for the decider; loop tests using `executor/fake` and a temporary git repo.
+1. [x] `internal/loop/loop.go`: `Loop.Run(ctx) (exitCode int, err error)` implementing the bash decision table: per iteration, capture HEAD before; build prompt once; invoke executor; capture HEAD after; reload spec, parse plan + latest Result; pass to Decide; act. Depends only on the ports defined in `ports.go`. Uses `log/slog` for milestone logging.
+1. [x] `internal/loop/exitcodes.go`: constants 0..5 with comments matching the bash contract.
+1. [x] `internal/loop/prompt.go`: `BuildPromptLoop` and `BuildPromptSingleShot` via `text/template`, parameterized by spec path, guide path, full localized vocabulary (plan/journal headings, Result keyword, four Result values), and an optional `Extra` block.
+1. [x] `internal/loop/decider.go`: pure `Decide(DeciderInput) Decision`. HEADAdvanced checked first; switch on Result; `done` with leftovers maps to ExitDoneWithLeftovers.
+1. [x] Single-shot mode: max iterations forced to 1; uses the single-shot prompt template variant.
+1. [x] Table-driven tests for the decider (8 cases); loop tests in external `loop_test` package using `executor/fake` + scripted `GitProbe` + scripted `SpecReader` (12 cases covering all decision branches, single-shot cap, pt-BR localization, port-error propagation, JSONL file emission).
 
 ### P1.4: cobra wiring + end-to-end
 
@@ -264,6 +264,15 @@ In addition to the guide defaults:
 | Cobra flag handling diverges from bash flag order | Low | Low | Document flag mapping in README; tests cover all flags |
 
 ## Execution Journal
+
+### 2026-04-29 14:00, P1.3: loop controller
+
+- **Result**: ok
+- **Summary**: Built the loop orchestration layer end to end. `internal/loop/exitcodes.go` declares the bash-compatible 0..5 constants. `internal/loop/decider.go` is the pure decision function (HEADAdvanced first, then Result-based dispatch with `done`+leftovers → exit 5). `internal/loop/prompt.go` renders loop-mode and single-shot prompts via `text/template` with full localized vocabulary. `internal/loop/loop.go` ties it together: opens per-iteration JSONL files under `JSONLDir`, calls Executor → SpecReader → Git → Decide, logs milestones via `log/slog`. Single-shot mode forces max iterations to 1. 12 loop test cases cover every decision branch including pt-BR localization, port error propagation, single-shot cap, and JSONL file emission. Total: 7 packages green under `go test -race`.
+- **Commits**: (forthcoming) config: add ResultKeyword to Specs (discovered during P1.3); loop: exit codes and pure decider (P1.3); loop: prompt templates with localization (P1.3); loop: orchestrator with port wiring (P1.3); docs: mark P1.3 [x] and journal entry
+- **Decisions**: (1) Discovered work registered: added `ResultKeyword` field to `config.Specs` (toml tag `result_keyword`, defaults `Result` for en, `Resultado` for pt-BR). Missed in P1.1 because the journal parser already accepted the keyword as a parameter; the gap was on the config side. Tests in `internal/config/defaults_test.go` updated for both languages. (2) `loop_test.go` lives in the external `package loop_test` to avoid an import cycle (the fake executor imports `loop` to satisfy the `loop.Executor` interface; tests import both fake and loop). `decider_test.go` and `prompt_test.go` stay in `package loop` because they only use exported types from their own package and adding `loop.` prefixes everywhere is needless churn. (3) Loop owns the JSONL file lifecycle (Create/Close per iteration); the Executor only writes to the provided io.Writer. Filename pattern: `<slug>-iter<N>.jsonl` under `JSONLDir`. (4) Loop fields hold the wired ports (`Executor`, `Git`, `SpecReader`); `Run(ctx)` takes only the cancellation context. Construction is done at the cmd boundary; tests bypass cmd and build the Loop directly. Validates AGENTS.md's "wire adapters at cmd, ports in consumer" rule. (5) Decider is pure (no I/O, no time): trivially testable, easy to extend later for new heuristics (loop-suspect detector in Phase 2). (6) Stop reasons logged with structured kv pairs (`reason=done|blocked|head_stuck|...`) so `bcc watch` can render them later without parsing prose. (7) Loop returns `(ExitInvalid, ctx.Err())` on cancel and on any port error; cmd/run.go in P1.4 will translate this to os.Exit(2) and stderr.
+- **Problems**: First pass had `package loop` for `loop_test.go` which created an import cycle with `executor/fake` (fake imports loop for the interface assertion). Fixed by switching to external `package loop_test`. Easier to spot once Go printed "import cycle not allowed in test"; the rule is not obvious for first-time hexagonal-in-Go layouts.
+- **Next**: P1.4 (cobra wiring + end-to-end smoke)
 
 ### 2026-04-29 13:00, P1.2: executor adapter with JSONL streaming
 
