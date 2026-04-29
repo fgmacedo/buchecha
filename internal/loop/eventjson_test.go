@@ -22,6 +22,22 @@ func TestMarshalJSONEvent_IterStarted(t *testing.T) {
 	}
 }
 
+func TestMarshalJSONEvent_IterStartedWithBaseline(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
+	ev := loop.IterationStarted{
+		Index: 1, MaxIter: 20, At: at,
+		BaselineSHA: "abc123def456",
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:32:00Z","baseline_sha":"abc123def456","index":1,"level":"info","max_iter":20,"type":"iter_started"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
 func TestMarshalJSONEvent_IterFinished(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
 	ev := loop.IterationFinished{

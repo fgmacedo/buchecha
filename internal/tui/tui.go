@@ -47,8 +47,9 @@ type Model struct {
 	actions  actionsPanel
 
 	// Live state.
-	width, height int
-	paused        bool
+	width, height  int
+	paused         bool
+	runBaselineSHA string // captured from the first IterationStarted
 
 	// Terminal state.
 	finished  bool // true once the loop emitted LoopFinished or events closed
@@ -112,7 +113,7 @@ func (m Model) Init() tea.Cmd {
 	}
 	cmds = append(cmds, spinnerTickCmd())
 	if m.gitProbe != nil {
-		cmds = append(cmds, gitProbeCmd(m.gitCtx, m.gitProbe))
+		cmds = append(cmds, gitProbeCmd(m.gitCtx, m.gitProbe, m.runBaselineSHA))
 	}
 	return tea.Batch(cmds...)
 }
@@ -145,13 +146,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, spinnerTickCmd()
 
 	case gitProbeMsg:
-		if msg.err == nil {
-			m.risk.onDirtyFileCount(msg.count)
+		if msg.dirtyKnown {
+			m.risk.onDirtyFileCount(msg.dirtyCount)
+		}
+		if msg.commitsKnown {
+			m.risk.onCommitCount(msg.commitCount)
 		}
 		if m.finished || m.gitProbe == nil {
 			return m, nil
 		}
-		return m, gitProbeCmd(m.gitCtx, m.gitProbe)
+		return m, gitProbeCmd(m.gitCtx, m.gitProbe, m.runBaselineSHA)
 
 	case specParsedMsg:
 		if msg.ok {
@@ -196,6 +200,14 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.now.onIterStarted()
 		m.risk.onIterStarted(e.Index)
 		m.header.onAny(e.At)
+		// Treat the first iteration's BaselineSHA as the run-local baseline
+		// so the risk panel can show how many commits the run has produced
+		// (computed via GitProbe.CommitsSince in the next tick). Subsequent
+		// IterationStarted events keep their own per-iter baseline; only
+		// the first is preserved here.
+		if m.runBaselineSHA == "" && e.BaselineSHA != "" {
+			m.runBaselineSHA = e.BaselineSHA
+		}
 	case loop.IterationFinished:
 		m.progress.onIterationFinished(time.Duration(e.DurationMS) * time.Millisecond)
 		m.header.onAny(e.At)
@@ -257,16 +269,32 @@ func spinnerTickCmd() tea.Cmd {
 	})
 }
 
-// gitProbeMsg carries the result of a single dirty-file probe.
+// gitProbeMsg carries the periodic git-state snapshot the risk panel
+// consumes: dirty-file count and the run-local commit count (number of
+// commits HEAD is ahead of the run's baseline SHA). Either piece may be
+// missing on a given tick (the baseline is unknown until the first
+// IterationStarted, and individual git calls may fail).
 type gitProbeMsg struct {
-	count int
-	err   error
+	dirtyCount   int
+	dirtyKnown   bool
+	commitCount  int
+	commitsKnown bool
 }
 
-func gitProbeCmd(ctx context.Context, probe GitProbe) tea.Cmd {
+func gitProbeCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea.Cmd {
 	return tea.Tick(gitProbeInterval, func(time.Time) tea.Msg {
-		n, err := probe.DirtyFileCount(ctx)
-		return gitProbeMsg{count: n, err: err}
+		var msg gitProbeMsg
+		if n, err := probe.DirtyFileCount(ctx); err == nil {
+			msg.dirtyCount = n
+			msg.dirtyKnown = true
+		}
+		if baselineSHA != "" {
+			if n, err := probe.CommitsSince(ctx, baselineSHA); err == nil {
+				msg.commitCount = n
+				msg.commitsKnown = true
+			}
+		}
+		return msg
 	})
 }
 

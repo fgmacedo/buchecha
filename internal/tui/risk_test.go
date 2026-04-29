@@ -57,6 +57,47 @@ func TestRisk_onDirtyFileCount_RendersFiles(t *testing.T) {
 	}
 }
 
+func TestRisk_onCommitCount_RendersCountWhenKnown(t *testing.T) {
+	r := riskPanel{}
+	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
+	r.onCommitCount(12)
+	out := r.view(time.Now())
+	if !strings.Contains(out, "(12 commits)") {
+		t.Errorf("expected '(12 commits)' on committed line: %q", out)
+	}
+}
+
+func TestRisk_onCommitCount_SingularOnOne(t *testing.T) {
+	r := riskPanel{}
+	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
+	r.onCommitCount(1)
+	out := r.view(time.Now())
+	if !strings.Contains(out, "(1 commit)") {
+		t.Errorf("expected '(1 commit)' singular form: %q", out)
+	}
+}
+
+func TestRisk_view_OmitsCommitCountWhenUnknown(t *testing.T) {
+	r := riskPanel{}
+	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
+	out := r.view(time.Now())
+	// The "committed:" label is unconditional; the parenthesised "(N
+	// commit[s])" appears only after a successful CommitsSince probe.
+	if strings.Contains(out, " commits)") || strings.Contains(out, " commit)") {
+		t.Errorf("commit count should not appear before any probe: %q", out)
+	}
+}
+
+func TestRisk_onCommitCount_ZeroStillRenders(t *testing.T) {
+	r := riskPanel{}
+	r.onSpecParsed(samplePlan(), spec.LatestResult{Raw: "ok", Result: spec.ResultOK}, true)
+	r.onCommitCount(0)
+	out := r.view(time.Now())
+	if !strings.Contains(out, "(0 commits)") {
+		t.Errorf("zero commit count must still render to distinguish 'probed' from 'unknown': %q", out)
+	}
+}
+
 func TestRisk_onAgentEvent_TracksLastEditOnlyForWriteTools(t *testing.T) {
 	r := riskPanel{}
 	at := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)

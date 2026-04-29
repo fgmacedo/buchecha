@@ -70,3 +70,12 @@ func trimEmpty(s string) string {
 	}
 	return s
 }
+
+// pluralize renders "<n> <singular>" when n == 1 and "<n> <plural>"
+// otherwise. Used for short panel labels like "1 commit" / "12 commits".
+func pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, singular)
+	}
+	return fmt.Sprintf("%d %s", n, plural)
+}

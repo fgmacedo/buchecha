@@ -20,6 +20,9 @@ type riskPanel struct {
 	dirtyKnown     bool
 	lastEditAt     time.Time
 
+	runCommitCount int
+	commitsKnown   bool
+
 	currentIter   int
 	journalRaw    string
 	journalResult spec.Result
@@ -40,6 +43,15 @@ func (r *riskPanel) onSpecParsed(plan spec.Plan, latest spec.LatestResult, lates
 func (r *riskPanel) onDirtyFileCount(n int) {
 	r.dirtyFileCount = n
 	r.dirtyKnown = true
+}
+
+// onCommitCount records the run-local commit count probed via
+// GitProbe.CommitsSince(BaselineSHA). It is the number of commits HEAD
+// is ahead of the run's baseline; zero is a meaningful value (the agent
+// has not committed yet this run).
+func (r *riskPanel) onCommitCount(n int) {
+	r.runCommitCount = n
+	r.commitsKnown = true
 }
 
 // onAgentEvent watches for write-shaped tool calls so the panel can
@@ -75,8 +87,12 @@ func (r riskPanel) view(now time.Time) string {
 	b.WriteString(panelTitle("if you close now"))
 	b.WriteByte('\n')
 
-	b.WriteString(fmt.Sprintf("  %s committed: %d/%d items\n",
-		theme.ok.Render("✓"), r.checked, r.totalItems))
+	commits := ""
+	if r.commitsKnown {
+		commits = theme.subtle.Render(fmt.Sprintf(" (%s)", pluralize(r.runCommitCount, "commit", "commits")))
+	}
+	b.WriteString(fmt.Sprintf("  %s committed: %d/%d items%s\n",
+		theme.ok.Render("✓"), r.checked, r.totalItems, commits))
 
 	uncommitted := "..."
 	if r.dirtyKnown {

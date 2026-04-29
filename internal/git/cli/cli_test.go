@@ -165,6 +165,55 @@ func TestProbe_DirtyFileCount_CountsUntrackedAndModified(t *testing.T) {
 	}
 }
 
+func TestProbe_CommitsSince_ZeroOnSameSHA(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+
+	p := New(dir)
+	sha, err := p.HeadSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := p.CommitsSince(context.Background(), sha)
+	if err != nil {
+		t.Fatalf("CommitsSince: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("count = %d, want 0 when HEAD == baseline", n)
+	}
+}
+
+func TestProbe_CommitsSince_CountsAdvances(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+
+	p := New(dir)
+	baseline, err := p.HeadSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAndCommit(t, dir, "b.txt", "world", "second")
+	writeAndCommit(t, dir, "c.txt", "again", "third")
+
+	n, err := p.CommitsSince(context.Background(), baseline)
+	if err != nil {
+		t.Fatalf("CommitsSince: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("count = %d, want 2 commits since baseline", n)
+	}
+}
+
+func TestProbe_CommitsSince_EmptySHARejected(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+
+	p := New(dir)
+	if _, err := p.CommitsSince(context.Background(), ""); err == nil {
+		t.Errorf("expected error for empty baseline sha")
+	}
+}
+
 func TestProbe_HeadSHA_NoCommits(t *testing.T) {
 	dir := initRepo(t)
 	// no commits yet

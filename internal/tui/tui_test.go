@@ -269,10 +269,33 @@ func TestUpdate_SpinnerTickAdvancesAndReschedules(t *testing.T) {
 
 func TestUpdate_GitProbeMsgFeedsRiskPanel(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
-	got, _ := m.Update(gitProbeMsg{count: 4})
+	got, _ := m.Update(gitProbeMsg{
+		dirtyCount: 4, dirtyKnown: true,
+		commitCount: 12, commitsKnown: true,
+	})
 	mm := got.(Model)
 	if !mm.risk.dirtyKnown || mm.risk.dirtyFileCount != 4 {
-		t.Errorf("gitProbeMsg not folded into risk panel: %+v", mm.risk)
+		t.Errorf("gitProbeMsg dirty leg not folded into risk panel: %+v", mm.risk)
+	}
+	if !mm.risk.commitsKnown || mm.risk.runCommitCount != 12 {
+		t.Errorf("gitProbeMsg commits leg not folded into risk panel: %+v", mm.risk)
+	}
+}
+
+func TestUpdate_FirstIterationStartedCapturesBaselineSHA(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	got, _ := m.Update(eventMsg{ev: loop.IterationStarted{
+		Index: 1, MaxIter: 5, BaselineSHA: "abc123",
+	}})
+	mm := got.(Model)
+	if mm.runBaselineSHA != "abc123" {
+		t.Errorf("runBaselineSHA = %q, want abc123", mm.runBaselineSHA)
+	}
+	got2, _ := mm.Update(eventMsg{ev: loop.IterationStarted{
+		Index: 2, MaxIter: 5, BaselineSHA: "def456",
+	}})
+	if got2.(Model).runBaselineSHA != "abc123" {
+		t.Errorf("runBaselineSHA changed on iter 2; want stable at abc123")
 	}
 }
 

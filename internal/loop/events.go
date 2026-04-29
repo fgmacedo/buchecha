@@ -83,11 +83,15 @@ type ExecResult struct {
 // marker so consumers can switch over a closed set.
 type Event interface{ isLoopEvent() }
 
-// IterationStarted marks the beginning of one iteration.
+// IterationStarted marks the beginning of one iteration. BaselineSHA is
+// the HEAD SHA captured immediately before the executor runs; consumers
+// (e.g., the TUI) treat the first iteration's value as the run-local
+// baseline for counting commits made during the run.
 type IterationStarted struct {
-	Index   int
-	MaxIter int
-	At      time.Time
+	Index       int
+	MaxIter     int
+	BaselineSHA string
+	At          time.Time
 }
 
 func (IterationStarted) isLoopEvent() {}

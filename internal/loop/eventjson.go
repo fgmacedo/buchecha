@@ -21,13 +21,17 @@ func jsonPayload(ev Event) map[string]any {
 	level := LevelOf(ev).String()
 	switch e := ev.(type) {
 	case IterationStarted:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "iter_started",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"index":    e.Index,
 			"max_iter": e.MaxIter,
 		}
+		if e.BaselineSHA != "" {
+			out["baseline_sha"] = e.BaselineSHA
+		}
+		return out
 	case IterationFinished:
 		return map[string]any{
 			"type":          "iter_finished",

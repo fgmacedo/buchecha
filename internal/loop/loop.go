@@ -167,16 +167,17 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 		iterStart := time.Now()
 		logger.Info("iter start", "iter", iter, "max", maxIter)
 
-		emit(events, IterationStarted{
-			Index:   iter,
-			MaxIter: maxIter,
-			At:      iterStart,
-		})
-
 		headBefore, err := l.Git.HeadSHA(ctx)
 		if err != nil {
 			return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("git head before iter %d: %w", iter, err)
 		}
+
+		emit(events, IterationStarted{
+			Index:       iter,
+			MaxIter:     maxIter,
+			BaselineSHA: headBefore,
+			At:          iterStart,
+		})
 
 		jsonlPath := filepath.Join(jsonlDir, fmt.Sprintf("%s-iter%d.jsonl", slug, iter))
 

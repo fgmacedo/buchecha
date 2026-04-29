@@ -336,7 +336,7 @@ bcc run <spec> [flags]
 1. [x] `progress.go`: phase-by-phase checkbox rendering; current phase marker `►`; lipgloss progress bar (`bubbles/progress`) for `items_checked / total`; ETA from iteration duration history.
 1. [x] `risk.go`: committed (spec checkbox count from periodic re-parse), uncommitted (file count from `git status --porcelain` via `GitProbe.DirtyFileCount`, polled every 2s), journal status (latest `**Result**` parsed vs not).
 1. [x] `actions.go`: last 5 tool calls with timestamps, color-coded by tool kind.
-1. [ ] Enrich the risk panel's "committed" line with the run-local commit count (mockup `(12 commits)`). Requires a baseline SHA: either emitted by the loop in `IterationStarted` or surfaced via a new `GitProbe.CommitsSince(ctx, sha)` port.
+1. [x] Enrich the risk panel's "committed" line with the run-local commit count (mockup `(12 commits)`). Requires a baseline SHA: either emitted by the loop in `IterationStarted` or surfaced via a new `GitProbe.CommitsSince(ctx, sha)` port.
 
 ### P2.6: heuristics
 
@@ -401,6 +401,15 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 15:02, P2.5.7 run-local commit count
+
+- **Result**: ok
+- **Summary**: Closed the last `[ ]` in P2.5 by surfacing the run-local commit count on the risk panel's "committed" line. The loop now reads `headBefore` immediately before emitting `IterationStarted` and includes it in the new `BaselineSHA` field of that event; `eventjson.go` adds an optional `baseline_sha` to the `iter_started` NDJSON shape (additive, omitted when empty). The TUI captures the first iteration's `BaselineSHA` as the run-local baseline (subsequent `IterationStarted` events keep their own per-iter baseline but the model preserves the first only). The shared 2-second git probe `tea.Cmd` now also calls `CommitsSince(ctx, baselineSHA)` whenever the baseline is known and folds the result into a richer `gitProbeMsg{dirtyCount,dirtyKnown,commitCount,commitsKnown}`. `riskPanel` gained `runCommitCount`/`commitsKnown` and renders the parenthesised `(N commit[s])` (singular at 1, omitted entirely until a successful probe) on the existing committed line. `internal/git/cli` gained `CommitsSince(ctx, sha) (int, error)` shelling out to `git rev-list --count <sha>..HEAD`; `internal/tui.GitProbe` extended with the same method via structural typing so `gitcli.Probe` continues to satisfy both ports without import dependencies. Added `pluralize` helper to `theme.go`. New tests: gitcli `CommitsSince_ZeroOnSameSHA` / `CountsAdvances` / `EmptySHARejected`; loop `MarshalJSONEvent_IterStartedWithBaseline`; risk panel `onCommitCount_RendersCountWhenKnown` / `_SingularOnOne` / `_ZeroStillRenders` / `view_OmitsCommitCountWhenUnknown`; tui `Update_GitProbeMsgFeedsRiskPanel` extended for the commits leg, plus new `Update_FirstIterationStartedCapturesBaselineSHA`. `gofmt -l`, `go vet`, `go test -race ./...`, `go build` all clean.
+- **Commits**: this commit `tui: run-local commit count on risk panel via IterationStarted.BaselineSHA + GitProbe.CommitsSince`
+- **Decisions**: Both options proposed in the deferred sub-item are now used together: `IterationStarted.BaselineSHA` carries the SHA, and `GitProbe.CommitsSince` answers the count. The baseline lives on the loop event (single source of truth) and the count is recomputed on every probe (so the TUI sees commits as the agent makes them, not only at iteration boundaries). The loop reorders `headBefore` to before `emit(IterationStarted)`; this changes the event sequence on git failures (no IterationStarted before the LoopFinished/fatal terminate) but no test depends on that ordering. The NDJSON `baseline_sha` field is omitted when empty so existing test fixtures that built `IterationStarted{Index, MaxIter, At}` (no baseline) keep their byte-for-byte output. `gitProbeMsg` was renamed from `{count,err}` to `{dirtyCount,dirtyKnown,commitCount,commitsKnown}`: dropping the err field is intentional, errors collapse to the corresponding `*Known=false` and the panel keeps the previous value (no flashing). `runCommitCount=0` still renders `(0 commits)` to distinguish "probed but nothing yet" from "not yet probed". `pluralize(n, singular, plural)` lives in `theme.go` next to `formatDuration` because both are display-time formatters used across panels.
+- **Next**: P2.6 (heuristics)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter2.jsonl. No new `[ ]` sub-items added. P2.5 is now fully `[x]`; the next pending phase is P2.6 (loop-suspect heuristic, error-rate counter, tools/min rate). Visual review at multiple terminal sizes is still part of P2.7.
 
 ### 2026-04-29 14:53, P2.5 panels
 

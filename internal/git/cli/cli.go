@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
@@ -62,6 +63,26 @@ func (p *Probe) DirtyFileCount(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	return strings.Count(out, "\n") + 1, nil
+}
+
+// CommitsSince returns the number of commits between sha and HEAD,
+// counted as `git rev-list --count <sha>..HEAD`. The TUI feeds this with
+// the BaselineSHA from the first IterationStarted event so the "if you
+// close now" panel can show how many commits the run produced. When
+// HEAD == sha, the count is zero.
+func (p *Probe) CommitsSince(ctx context.Context, sha string) (int, error) {
+	if sha == "" {
+		return 0, fmt.Errorf("git rev-list: empty baseline sha")
+	}
+	out, err := p.run(ctx, "rev-list", "--count", sha+"..HEAD")
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list --count %s..HEAD: parse %q: %w", sha, out, err)
+	}
+	return n, nil
 }
 
 func (p *Probe) run(ctx context.Context, args ...string) (string, error) {
