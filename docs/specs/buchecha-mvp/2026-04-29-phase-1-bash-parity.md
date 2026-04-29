@@ -207,10 +207,10 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 
 ### P1.2: executor adapter with JSONL streaming
 
-1. [ ] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, jsonlPath) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
-1. [ ] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout to the JSONL file via `io.MultiWriter`, propagating exit code.
-1. [ ] Cancellation via `context.Context` (Ctrl+C in foreground). On cancel, send SIGINT to the subprocess, drain stdout, write a final `{"type":"interrupted"}` line.
-1. [ ] Fake executor under `internal/executor/fake/` for tests: replays a scripted JSONL fixture. Used by loop tests in P1.3.
+1. [x] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, jsonlOut) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
+1. [x] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout directly to `jsonlOut` (`cmd.Stdout = jsonlOut`), propagating exit code.
+1. [x] Cancellation via `context.Context`. `cmd.Cancel` sends SIGINT; `cmd.WaitDelay` (default 5s) escalates to SIGKILL; a final `{"type":"interrupted"}` line is appended to `jsonlOut`. Run returns `ctx.Err()` so callers can `errors.Is` it.
+1. [x] Fake executor under `internal/executor/fake/` for tests: replays a scripted sequence of `Step{JSONL, ExitCode, Err}`; records prompts received. Used by loop tests in P1.3.
 
 ### P1.3: loop controller
 
@@ -264,6 +264,15 @@ In addition to the guide defaults:
 | Cobra flag handling diverges from bash flag order | Low | Low | Document flag mapping in README; tests cover all flags |
 
 ## Execution Journal
+
+### 2026-04-29 13:00, P1.2: executor adapter with JSONL streaming
+
+- **Result**: ok
+- **Summary**: Defined the three loop ports (`Executor`, `GitProbe`, `SpecReader`) in `internal/loop/ports.go`. Implemented `internal/executor/claude` invoking `claude -p --output-format stream-json --verbose [...] <prompt>`, streaming stdout directly to the writer, with graceful cancellation (SIGINT via `cmd.Cancel`, SIGKILL escalation via `cmd.WaitDelay`) and an `{"type":"interrupted"}` terminator on cancel. Implemented `internal/executor/fake` as a scripted Executor for loop tests. Tests cover: stream capture, non-zero exit propagation, missing binary error, context-deadline cancel + terminator emission, arg ordering, `--model` omission when empty, and stderr wiring.
+- **Commits**: (forthcoming) loop: define Executor/GitProbe/SpecReader ports (P1.2); executor/claude: subprocess streaming and graceful cancel (P1.2); executor/fake: scripted Executor for loop tests (P1.2); docs: mark P1.2 [x] and journal entry
+- **Decisions**: (1) Streaming via `cmd.Stdout = jsonlOut` instead of the `io.MultiWriter` mentioned in the spec text. The MultiWriter pattern only matters when there are two sinks; for P1.2 there is only one (the JSONL file), so direct assignment is simpler and avoids a goroutine. If P2 needs a live tee for the dashboard, we can add MultiWriter at the call site without touching the executor. (2) Ports live in `internal/loop/ports.go` (the consumer), per AGENTS.md's "interfaces in the consumer" rule. The adapter `internal/executor/claude` imports `internal/loop` to satisfy the contract; `internal/loop` does not import any adapter. Compile-time `var _ loop.Executor = (*Executor)(nil)` checks the contract on every build. (3) Graceful cancel uses Go 1.20+ `cmd.Cancel`/`cmd.WaitDelay` (we are on 1.24). SIGINT first, SIGKILL after 5s by default; configurable via `Config.CancelGrace`. We do NOT set up process groups; if claude spawns helpers, they may briefly leak after cancel. Acceptable for Phase 1; revisit if it becomes a problem. (4) On cancel, Run returns `(exitCode, ctx.Err())` so callers can `errors.Is(err, context.Canceled)`. On natural non-zero exit, returns `(exitCode, nil)`: a non-zero exit from the agent is a normal control signal, not a Run failure. Only invocation failures (binary missing, etc.) return `(-1, error)`. (5) Test fixtures are bash scripts under `internal/executor/claude/testdata/`, marked executable in git. Linux/macOS only; Windows would need a Go-built fake (out of scope for MVP).
+- **Problems**: none.
+- **Next**: P1.3 (loop controller and decider)
 
 ### 2026-04-29 12:00, P1.1: config + spec parsers
 
