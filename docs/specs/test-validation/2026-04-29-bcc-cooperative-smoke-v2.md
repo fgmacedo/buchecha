@@ -66,6 +66,21 @@ Follows the [Autonomous execution guide](../../guides/autonomous-execution.md) d
 
 ## Execution Journal
 
+### 2026-04-29 13:14, P3: observer-driven placeholder
+
+- **Result**: review
+- **Summary**: P3 contains a single placeholder item explicitly marked "DO NOT IMPLEMENT" pending the observer. Per the procedure (step 4) and the spec's stop criteria, I did not invent content; left the `[ ]` as-is and exited with `Result: review`.
+- **Commits**: <HEAD> spec(smoke-v2): record P3 review checkpoint
+- **Decisions**: Did not modify the P3 plan item, did not check the box, did not write any code. The phase's only deliverable is the human edit that turns the placeholder into a real, actionable sub-item (or removes the phase). Per the cooperative protocol the observer fills before the next iteration; loop exit code 6 is the expected outcome.
+- **Problems**: Working tree was again NOT clean at iteration start (same set as iter1/iter2: `AGENTS.md`, `docs/specs/buchecha-mvp/2026-04-29-phase-2-tui-dashboard.md`, `docs/specs/buchecha-mvp/index.md`, untracked `docs/specs/buchecha-mvp/2026-04-29-phase-3-steering.md`). Used a path-scoped `git add` of the spec file only.
+- **Notes for observer**:
+  - `BCC_JSONL_PATH` for this iteration: `/var/folders/6s/bqzmgmsn5kz7l6ny1r0k17_r0000gp/T/bcc/2026-04-29-bcc-cooperative-smoke-v2-iter3.jsonl`.
+  - All 6 expected `BCC_*` vars set; `BCC_ITERATION=3`, `BCC_MAX_ITERATIONS=3`, `BCC_BRANCH=feat/phase-1` matched `git branch --show-current`. Note that `BCC_ITERATION` equals `BCC_MAX_ITERATIONS`, but the loop should still stop on `Result: review` (exit 6) before reaching the cap (exit 4); validating that precedence is part of what this iteration exercises.
+  - Prompt experience: the placeholder pre-check (procedure step 4) made the decision unambiguous. The phrase "set 'Result: review', record what you need from the observer in **Decisions**, and exit" mapped one-to-one to what I did. Strong improvement vs. v1 where the natural temptation would have been `blocked`.
+  - Friction: the dirty-tree-on-entry pattern repeats for the third iteration in a row. Reiterating the suggestion from iter1/iter2: `bcc` should refuse to start (or auto-stash) when the tree carries unrelated changes; otherwise every iteration must hand-curate `git add` paths.
+  - Suggestions: when the observer re-triggers after editing P3, it would be useful for `bcc run` to print the previous iteration's `Result` and the reason the loop stopped (e.g., "previous run stopped on `review` at P3"), so the human knows why the new invocation exists. Today the env vars cover the current iteration but not the prior loop's outcome.
+- **Next**: P3 (observer must edit the placeholder to a concrete sub-item, then re-trigger; loop exits 6 here)
+
 ### 2026-04-29 13:30, P2: `<HEAD>` convention in **Commits**
 
 - **Result**: ok
