@@ -32,12 +32,14 @@ type Executor struct {
 	ExtraArgs []string `toml:"extra_args"`
 }
 
-// Specs holds spec discovery and parsing keywords. Heading strings are
-// localized; they default by Project.Language when zero.
+// Specs holds spec discovery and parsing keywords. Heading strings and
+// the Result field name are localized; they default by Project.Language
+// when zero.
 type Specs struct {
 	Dir            string `toml:"dir"`
 	PlanHeading    string `toml:"plan_heading"`
 	JournalHeading string `toml:"journal_heading"`
+	ResultKeyword  string `toml:"result_keyword"`
 }
 
 // Loop configures the iteration loop and the localized Result vocabulary.

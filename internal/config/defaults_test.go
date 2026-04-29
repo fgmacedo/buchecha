@@ -15,6 +15,9 @@ func TestApplyDefaults_EnglishDefault(t *testing.T) {
 	if c.Specs.JournalHeading != "## Execution Journal" {
 		t.Errorf("JournalHeading = %q", c.Specs.JournalHeading)
 	}
+	if c.Specs.ResultKeyword != "Result" {
+		t.Errorf("ResultKeyword = %q", c.Specs.ResultKeyword)
+	}
 	if c.Loop.Results.OK != "ok" {
 		t.Errorf("Results.OK = %q", c.Loop.Results.OK)
 	}
@@ -43,6 +46,9 @@ func TestApplyDefaults_PtBR(t *testing.T) {
 	}
 	if c.Specs.JournalHeading != "## Diário de execução" {
 		t.Errorf("JournalHeading = %q", c.Specs.JournalHeading)
+	}
+	if c.Specs.ResultKeyword != "Resultado" {
+		t.Errorf("ResultKeyword = %q", c.Specs.ResultKeyword)
 	}
 	if c.Loop.Results.Partial != "parcial" {
 		t.Errorf("Partial = %q", c.Loop.Results.Partial)

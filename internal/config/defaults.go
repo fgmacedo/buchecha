@@ -50,6 +50,9 @@ func applyDefaultsEn(c *Config) {
 	if c.Specs.JournalHeading == "" {
 		c.Specs.JournalHeading = "## Execution Journal"
 	}
+	if c.Specs.ResultKeyword == "" {
+		c.Specs.ResultKeyword = "Result"
+	}
 	if c.Loop.Results.OK == "" {
 		c.Loop.Results.OK = "ok"
 	}
@@ -70,6 +73,9 @@ func applyDefaultsPtBR(c *Config) {
 	}
 	if c.Specs.JournalHeading == "" {
 		c.Specs.JournalHeading = "## Diário de execução"
+	}
+	if c.Specs.ResultKeyword == "" {
+		c.Specs.ResultKeyword = "Resultado"
 	}
 	if c.Loop.Results.OK == "" {
 		c.Loop.Results.OK = "ok"
