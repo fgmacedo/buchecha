@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/fgmacedo/buchecha/internal/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/spec"
 	"github.com/fgmacedo/buchecha/internal/specreader/markdown"
+	"github.com/fgmacedo/buchecha/internal/tui"
 )
 
 var (
@@ -39,7 +41,7 @@ var runCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		return runSpec(ctx, args[0])
+		return runSpec(ctx, cancel, args[0])
 	},
 }
 
@@ -55,7 +57,7 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 }
 
-func runSpec(ctx context.Context, specPath string) error {
+func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) error {
 	verbosity, err := loop.ParseLevel(runVerbosity)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
@@ -178,6 +180,10 @@ func runSpec(ctx context.Context, specPath string) error {
 		SingleShot: runSingleShot,
 	}
 
+	if runOutput == OutputTUI {
+		return runWithTUI(ctx, cancel, l, specPath, branchHint, verbosity)
+	}
+
 	events, drained, err := dispatchEvents(runOutput, verbosity)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
@@ -188,6 +194,62 @@ func runSpec(ctx context.Context, specPath string) error {
 	<-drained
 	ExitCode = code
 	return runErr
+}
+
+// runWithTUI inverts the foreground/background relationship for TUI
+// mode: bubbletea owns the main goroutine (it must, to read keys and
+// drive renders), and the loop runs in a goroutine. The loop's events
+// flow into the bubbletea program via the bridge tea.Cmd.
+//
+// The pause gate is wired here so a single source-of-truth lives in
+// the TUI Model: the user toggles paused via the keyboard, the gate
+// posts release tokens, and the Loop blocks on PauseGate before each
+// iteration after the first.
+func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, specPath, branch string, verbosity loop.Level) error {
+	// The TUI ignores --verbosity per the Phase 2 spec ("TUI panels are
+	// already curated"); raw is consumed directly. The verbosity arg is
+	// kept on the function signature so callers do not branch.
+	_ = verbosity
+	raw := make(chan loop.Event, 256)
+
+	gate := tui.NewGate()
+	l.PauseGate = gate.Chan()
+
+	model := tui.New(tui.Options{
+		Events:   raw,
+		Cancel:   cancel,
+		Gate:     gate,
+		SpecPath: specPath,
+		Branch:   branch,
+		MaxIter:  l.Config.Loop.MaxIterations,
+	})
+	// WithoutSignalHandler: signal.NotifyContext in RunE owns SIGINT /
+	// SIGTERM; bubbletea must not install a competing handler.
+	program := tea.NewProgram(model,
+		tea.WithAltScreen(),
+		tea.WithContext(ctx),
+		tea.WithoutSignalHandler(),
+	)
+
+	type runResult struct {
+		code int
+		err  error
+	}
+	runCh := make(chan runResult, 1)
+	go func() {
+		code, err := l.Run(ctx, raw)
+		runCh <- runResult{code: code, err: err}
+	}()
+
+	if _, err := program.Run(); err != nil {
+		cancel()
+		<-runCh
+		return err
+	}
+
+	res := <-runCh
+	ExitCode = res.code
+	return res.err
 }
 
 func validOutputMode(s string) bool {

@@ -322,11 +322,11 @@ bcc run <spec> [flags]
 
 ### P2.4: bubbletea skeleton
 
-1. [ ] `internal/tui/tui.go`: `Model` struct holding panel state; `Init()`, `Update(msg)`, `View()`.
-1. [ ] Bridge: `tea.Cmd` that reads from `chan loop.Event` and emits a `tea.Msg` per event.
-1. [ ] `q` and Ctrl+C cancel the loop ctx, then exit bubbletea cleanly via `tea.Quit`.
-1. [ ] `space` toggles a `paused` flag; loop reads a `<-chan struct{}` from TUI before starting next iteration.
-1. [ ] Window resize handled (`tea.WindowSizeMsg`). Empty placeholders rendered for all panels.
+1. [x] `internal/tui/tui.go`: `Model` struct holding panel state; `Init()`, `Update(msg)`, `View()`.
+1. [x] Bridge: `tea.Cmd` that reads from `chan loop.Event` and emits a `tea.Msg` per event.
+1. [x] `q` and Ctrl+C cancel the loop ctx, then exit bubbletea cleanly via `tea.Quit`.
+1. [x] `space` toggles a `paused` flag; loop reads a `<-chan struct{}` from TUI before starting next iteration.
+1. [x] Window resize handled (`tea.WindowSizeMsg`). Empty placeholders rendered for all panels.
 
 ### P2.5: panels
 
@@ -400,6 +400,15 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 19:50, P2.4 bubbletea skeleton
+
+- **Result**: ok
+- **Summary**: Added the `internal/tui` package with the bubbletea skeleton: `Model` (Init/Update/View) holding header context, iter index, paused flag, last event, and finished/cancelled latches; `bridge.go` with the `readEventCmd(events)` `tea.Cmd` that turns each `loop.Event` into a tagged `eventMsg` (with `closed: true` on channel close); `gate.go` exposing a capacity-1 `chan struct{}` shared with the Loop. `Loop` gained a `PauseGate <-chan struct{}` field and consults it before every iteration after the first (with a `ctx.Done()` escape that surfaces `ExitInvalid`). `cmd/run.go` grew a `runWithTUI` path that runs bubbletea on the main goroutine and the loop in a background goroutine, so Ctrl+C / SIGINT (caught by `signal.NotifyContext` in RunE) cancels both legs cleanly; the TUI launches with `tea.WithAltScreen`, `tea.WithContext`, and `tea.WithoutSignalHandler` so it does not fight the outer signal handler. `View` renders one line per panel placeholder ("now", "health", "progress", "if you close now", "recent actions") plus the keybinding footer (`[q]uit  [space]pause  [?]help`), enough to verify layout shape before P2.5 fills the bodies.
+- **Commits**: this commit `tui: bubbletea skeleton + Loop.PauseGate for cooperative pause`
+- **Decisions**: TUI does NOT apply `--verbosity` per the spec ("TUI panels are already curated"); `runWithTUI` consumes the raw events channel directly and the verbosity argument is intentionally a no-op there. The pause channel is owned by the TUI: `tui.NewGate()` returns a buffered cap-1 channel; `IterDone()` posts a token after each `IterationFinished` (no-op when paused); `SetPaused(false)` posts immediately so a resumed iteration runs without waiting for the next IterDone. The Loop never gates the first iteration (otherwise nothing would unblock the very first run). The `?` key (help overlay) is intentionally NOT wired in this skeleton; it lands in P2.7 where the help modal is themed. `lipgloss` and `bubbles` are already on `go.mod` for use in P2.5/P2.7. The existing `dispatchEvents` no-op TUI branch stays as the placeholder it always was; production never reaches it now (TUI mode bypasses dispatchEvents) but `TestDispatchEvents_DrainsCleanlyOnChannelClose` still exercises the structural drain wiring across all three mode names.
+- **Next**: P2.5 (panel bodies)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter4.jsonl. AGENTS.md and Makefile have unrelated user-edited changes that were already in the working tree at iteration start; they are not part of this commit.
 
 ### 2026-04-29 18:40, P2.3 text and json output modes
 

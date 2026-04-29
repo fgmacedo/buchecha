@@ -228,7 +228,8 @@ mise install                                  # installs Go from .mise.toml
 go mod download
 
 # develop
-go build -o bcc .                             # local binary
+go build -o bcc ./cmd/bcc                     # local binary
+go install ./cmd/bcc                          # install to $GOBIN
 go test ./...                                 # all tests
 go test -race ./...                           # with race detector
 go vet ./...                                  # static checks

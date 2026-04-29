@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fgmacedo/buchecha/internal/config"
 	"github.com/fgmacedo/buchecha/internal/executor/fake"
@@ -564,6 +565,77 @@ func TestRun_LoopFinishedCarriesExitCode(t *testing.T) {
 	}
 	if last.Reason != "done" {
 		t.Errorf("LoopFinished.Reason = %q, want %q", last.Reason, "done")
+	}
+}
+
+// TestRun_PauseGateBlocksBetweenIterations asserts the contract the
+// TUI relies on: when PauseGate is set, the loop blocks before each
+// iteration after the first until a token is posted. The first
+// iteration is never gated (it would deadlock on first run).
+func TestRun_PauseGateBlocksBetweenIterations(t *testing.T) {
+	cfg := newTestConfig()
+	exec := fake.New(
+		fake.Step{ExitCode: 0},
+		fake.Step{ExitCode: 0},
+	)
+	git := &fakeGit{heads: []string{"A", "B", "B", "C"}}
+	reader := &stepfulSpecReader{contents: []string{
+		specWith([]string{"[x]", "[ ]", "[ ]"}, "ok"),
+		specWith([]string{"[x]", "[x]", "[x]"}, "done"),
+	}}
+	gate := make(chan struct{}, 1)
+	l := &loop.Loop{
+		SpecPath:   "x.md",
+		Config:     cfg,
+		Executor:   exec,
+		Git:        git,
+		SpecReader: reader,
+		JSONLDir:   t.TempDir(),
+		PauseGate:  gate,
+	}
+	events := make(chan loop.Event, 1024)
+	doneCh := make(chan int, 1)
+	go func() {
+		code, _ := l.Run(context.Background(), events)
+		doneCh <- code
+	}()
+
+	// Wait until the first IterationFinished arrives, then confirm the
+	// loop is parked on the gate (no IterationStarted for iter 2 yet).
+	sawFinish := false
+	deadline := time.After(2 * time.Second)
+	for !sawFinish {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				t.Fatalf("events closed before iter 1 finished")
+			}
+			if _, ok := ev.(loop.IterationFinished); ok {
+				sawFinish = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for IterationFinished")
+		}
+	}
+	// Drain a short window to confirm iter 2 has not started.
+	select {
+	case ev := <-events:
+		if _, ok := ev.(loop.IterationStarted); ok {
+			t.Fatalf("loop advanced to iter 2 without gate token")
+		}
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Release the gate and confirm the loop terminates with done.
+	gate <- struct{}{}
+	for ev := range events {
+		_ = ev
+	}
+	if got := <-doneCh; got != loop.ExitDone {
+		t.Errorf("exit = %d, want %d (ExitDone)", got, loop.ExitDone)
+	}
+	if exec.CallCount() != 2 {
+		t.Errorf("executor called %d times, want 2", exec.CallCount())
 	}
 }
 

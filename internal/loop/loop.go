@@ -50,6 +50,13 @@ type Loop struct {
 	// forced to 1 and the single-shot prompt template is used.
 	SingleShot bool
 
+	// PauseGate, when non-nil, gates iterations beyond the first. The
+	// loop receives one value from PauseGate before starting iteration
+	// n+1. The TUI is the canonical sender: it pushes a token after each
+	// iteration finishes (when not paused) and stops while the user has
+	// paused the run. nil disables gating entirely (text/json modes).
+	PauseGate <-chan struct{}
+
 	// Logger receives milestone messages. Defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -149,6 +156,14 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 	)
 
 	for iter := 1; iter <= maxIter; iter++ {
+		if iter > 1 && l.PauseGate != nil {
+			select {
+			case <-l.PauseGate:
+			case <-ctx.Done():
+				return l.terminate(events, "user cancelled", ExitInvalid), ctx.Err()
+			}
+		}
+
 		iterStart := time.Now()
 		logger.Info("iter start", "iter", iter, "max", maxIter)
 
