@@ -72,7 +72,17 @@ func New(cfg Config) *Executor {
 // from the agent itself). Returns (exitCode, ctx.Err()) when canceled.
 // Returns (-1, err) when invocation itself failed (e.g., binary missing).
 func (e *Executor) Run(ctx context.Context, prompt string, jsonlOut io.Writer) (int, error) {
-	args := []string{"-p", "--output-format", "stream-json", "--verbose"}
+	// bcc only runs the agent in autonomous mode; permission prompts
+	// would stall the loop forever. --dangerously-skip-permissions is
+	// part of the contract, not a user opt-in. Same reason -p,
+	// --output-format stream-json, and --verbose are hardcoded: they
+	// are required for the loop to function.
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--dangerously-skip-permissions",
+	}
 	if e.cfg.Model != "" {
 		args = append(args, "--model", e.cfg.Model)
 	}

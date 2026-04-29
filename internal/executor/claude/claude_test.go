@@ -102,6 +102,7 @@ func TestRun_PromptIsLastArg(t *testing.T) {
 
 	want := []string{
 		"-p", "--output-format", "stream-json", "--verbose",
+		"--dangerously-skip-permissions",
 		"--model", "test-model",
 		"--foo", "--bar",
 		"the prompt",
