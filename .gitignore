@@ -25,6 +25,9 @@ go.work.sum
 # Each contributor runs `bcc init` to create their own.
 .bcc.toml
 
+# Per-iteration raw stream-json audit logs written by executor adapters.
+.bcc/
+
 # Editor / IDE
 .idea/
 .vscode/

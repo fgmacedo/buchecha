@@ -305,10 +305,9 @@ bcc run <spec> [flags]
 
 ### P2.2: claude adapter emits typed events
 
-1. [ ] `internal/executor/claude/claude.go`: parse stream-json line-by-line into `AgentEvent`. Map every Claude event subtype to a `Kind`.
-1. [ ] `internal/executor/claude/log.go`: persist raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` as the parser reads it. `ExecResult.LogPath` returns the path.
-1. [ ] Tests: replay a captured stream-json fixture (`testdata/full-iter.jsonl`) and assert the produced `AgentEvent` sequence.
-1. [ ] Smoke: run a one-phase spec end-to-end with `--output text`.
+1. [x] `internal/executor/claude/claude.go`: parse stream-json line-by-line into `AgentEvent`. Map every Claude event subtype to a `Kind`.
+1. [x] `internal/executor/claude/log.go`: persist raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` as the parser reads it. `ExecResult.LogPath` returns the path.
+1. [x] Tests: replay a captured stream-json fixture (`testdata/full-iter.jsonl`) and assert the produced `AgentEvent` sequence.
 
 ### P2.3: text and json output modes
 
@@ -401,6 +400,15 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 14:05, P2.2 claude adapter emits typed events
+
+- **Result**: ok
+- **Summary**: Claude adapter now parses `claude --output-format stream-json` line-by-line into `loop.AgentEvent` while persisting the raw line to `BCC_JSONL_PATH`. `Run` switches to `cmd.StdoutPipe` + a scanner goroutine that, for each line, writes the line verbatim to the audit log and forwards every parsed `AgentEvent` on the events channel. `parseLine` handles `system/init`, `assistant` (one event per `content` item: thinking, text, tool_use), `user/tool_result` (string and structured-array content), `rate_limit_event`, and `result`. The default `JSONLDir` moved from `os.TempDir()/bcc` to `.bcc/logs` (project-relative; created lazily by the adapter) so audit logs live next to the project they describe; `.bcc/` is now `.gitignore`d. New unit tests (`parse_test.go`) cover every event kind plus the captured `testdata/full-iter.jsonl` fixture; an end-to-end Run test (`TestRun_StreamsEventsFromFixture`) exercises the streaming pipe path and asserts both the AgentEvent sequence and the audit-log line equivalence.
+- **Commits**: this commit `executor/claude: parse stream-json into AgentEvent and persist raw audit log`
+- **Decisions**: Removed sub-item "Smoke: run a one-phase spec end-to-end with `--output text`" from P2.2 in this rewrite: `--output text` is born in P2.3 and end-to-end smoke across all output modes is already covered by P2.8 (sub-items 1-3); duplicating it inside P2.2 forced a circular dependency. Parser drops unknown top-level event types silently (forward-compatibility) and drops empty-`thinking` assistant chunks (Claude emits these as signature-only placeholders). `summarizeToolResult` flattens the heterogeneous `content` shape (string or `[{type:"text", text:"..."}]` array) into a plain string with no truncation; downstream renderers (P2.3+) will trim for display. The new audit-log default uses a project-relative path so each project's logs stay co-located; `.gitignore` was updated to keep them out of version control.
+- **Next**: P2.3 (text and json output modes)
+- **Notes for observer**: BCC_JSONL_PATH=/var/folders/6s/bqzmgmsn5kz7l6ny1r0k17_r0000gp/T/bcc/2026-04-29-phase-2-tui-dashboard-iter2.jsonl
 
 ### 2026-04-29 17:30, P2.1 event types and Executor contract
 

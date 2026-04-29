@@ -196,3 +196,64 @@ func TestRun_AddsSkipPermissionsWhenTrue(t *testing.T) {
 		t.Errorf("--dangerously-skip-permissions should appear when SkipPermissions=true: %q", out)
 	}
 }
+
+func TestRun_StreamsEventsFromFixture(t *testing.T) {
+	logPath := withLogPath(t)
+	e := New(Config{Binary: fixture(t, "fake-claude-fixture.sh")})
+
+	events := make(chan loop.AgentEvent, 64)
+	var got []loop.AgentEvent
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for ev := range events {
+			got = append(got, ev)
+		}
+	}()
+
+	res, err := e.Run(context.Background(), "p", events)
+	close(events)
+	<-drained
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("exit = %d, want 0", res.ExitCode)
+	}
+	if res.LogPath != logPath {
+		t.Errorf("LogPath = %q, want %q", res.LogPath, logPath)
+	}
+
+	wantKinds := []loop.AgentEventKind{
+		loop.KindInit,
+		loop.KindRateLimit,
+		loop.KindThinking,
+		loop.KindToolUse,
+		loop.KindToolResult,
+		loop.KindToolUse,
+		loop.KindToolResult,
+		loop.KindAssistantText,
+		loop.KindResultSummary,
+	}
+	if len(got) != len(wantKinds) {
+		t.Fatalf("event count = %d, want %d:\n got=%+v", len(got), len(wantKinds), got)
+	}
+	for i, k := range wantKinds {
+		if got[i].Kind != k {
+			t.Errorf("event[%d].Kind = %q, want %q", i, got[i].Kind, k)
+		}
+	}
+
+	// Raw log should mirror the fixture line-for-line.
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	wantBytes, err := os.ReadFile(fixture(t, "full-iter.jsonl"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if !strings.EqualFold(string(logBytes), string(wantBytes)) {
+		t.Errorf("raw log differs from fixture:\n got=%q\nwant=%q", logBytes, wantBytes)
+	}
+}

@@ -40,10 +40,10 @@ type Loop struct {
 	Extra string
 
 	// JSONLDir is the directory where per-iteration JSONL files are
-	// written by the executor adapter. Defaults to
-	// filepath.Join(os.TempDir(), "bcc") when empty. The loop sets
-	// BCC_JSONL_PATH = <JSONLDir>/<spec-slug>-iter<n>.jsonl per iteration
-	// so the agent and adapter share the path.
+	// written by the executor adapter. Defaults to ".bcc/logs"
+	// (project-relative; the adapter creates it lazily) when empty. The
+	// loop sets BCC_JSONL_PATH = <JSONLDir>/<spec-slug>-iter<n>.jsonl
+	// per iteration so the agent and adapter share the path.
 	JSONLDir string
 
 	// SingleShot, when true, runs single-shot mode: max iterations is
@@ -84,7 +84,7 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 	}
 	jsonlDir := l.JSONLDir
 	if jsonlDir == "" {
-		jsonlDir = filepath.Join(os.TempDir(), "bcc")
+		jsonlDir = filepath.Join(".bcc", "logs")
 	}
 
 	cfg := l.Config
