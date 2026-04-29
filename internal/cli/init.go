@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"bufio"
@@ -34,15 +34,16 @@ func init() {
 // initInput is the wizard's collected answers; also the input to
 // WriteConfigTOML so tests can drive it directly without stdin scripting.
 type initInput struct {
-	Language     string
-	Agent        string
-	Binary       string
-	Model        string
-	SpecsDir     string
-	Mode         string
-	MaxIter      int
-	BranchPrefix string
-	EnvFiles     []string
+	Language        string
+	Agent           string
+	Binary          string
+	Model           string
+	SpecsDir        string
+	Mode            string
+	MaxIter         int
+	BranchPrefix    string
+	EnvFiles        []string
+	SkipPermissions bool // explicit; default true by wizard
 }
 
 func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
@@ -54,13 +55,14 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 	r := bufio.NewReader(stdin)
 
 	in := initInput{
-		Language:     initLanguage,
-		Agent:        "claude",
-		Mode:         "phase",
-		MaxIter:      20,
-		BranchPrefix: "feat",
-		SpecsDir:     "docs/specs",
-		EnvFiles:     []string{".env"},
+		Language:        initLanguage,
+		Agent:           "claude",
+		Mode:            "phase",
+		MaxIter:         20,
+		BranchPrefix:    "feat",
+		SpecsDir:        "docs/specs",
+		EnvFiles:        []string{".env"},
+		SkipPermissions: true,
 	}
 
 	if in.Language == "" {
@@ -99,6 +101,28 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 	envFilesStr := ask(r, stdout, "Env files (comma-separated)", ".env")
 	in.EnvFiles = splitTrim(envFilesStr, ",")
 
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Skip agent permission prompts (autonomous mode)")
+	fmt.Fprintln(stdout, "  bcc runs the agent in print mode without a TTY. To complete a phase end")
+	fmt.Fprintln(stdout, "  to end without intervention, the agent must run shell commands, edits,")
+	fmt.Fprintln(stdout, "  and writes WITHOUT being prompted for each one.")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "  Choosing 'yes' means: you accept that the agent will read, write, edit,")
+	fmt.Fprintln(stdout, "  and execute commands inside the project directory autonomously.")
+	fmt.Fprintln(stdout, "  Choosing 'no' is an opt-out: the loop will likely stall or degrade")
+	fmt.Fprintln(stdout, "  because tool calls that need approval cannot be answered. Useful only")
+	fmt.Fprintln(stdout, "  for dry-runs or agents without a permission system.")
+	fmt.Fprintln(stdout, "")
+	skipStr := ask(r, stdout, "Skip permission prompts? [yes/no]", "yes")
+	switch strings.ToLower(strings.TrimSpace(skipStr)) {
+	case "yes", "y":
+		in.SkipPermissions = true
+	case "no", "n":
+		in.SkipPermissions = false
+	default:
+		return fmt.Errorf("invalid answer %q (use yes or no)", skipStr)
+	}
+
 	if err := WriteConfigTOML(target, in); err != nil {
 		return err
 	}
@@ -119,7 +143,12 @@ func WriteConfigTOML(path string, in initInput) error {
 	if in.Model != "" {
 		sb.WriteString(fmt.Sprintf("model = %q\n", in.Model))
 	}
-	sb.WriteString("extra_args = []\n\n")
+	sb.WriteString("extra_args = []\n")
+	sb.WriteString("# skip_permissions=true tells the adapter to suppress the agent's permission\n")
+	sb.WriteString("# prompts (claude maps this to --dangerously-skip-permissions). Required for\n")
+	sb.WriteString("# the autonomous loop. Set to false for a dry-run; the loop is unlikely to\n")
+	sb.WriteString("# converge in that mode. The user accepts the trade-off either way.\n")
+	sb.WriteString(fmt.Sprintf("skip_permissions = %t\n\n", in.SkipPermissions))
 
 	sb.WriteString("[specs]\n")
 	sb.WriteString(fmt.Sprintf("dir = %q\n\n", in.SpecsDir))

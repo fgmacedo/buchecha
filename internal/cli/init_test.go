@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"os"
@@ -13,15 +13,16 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
-		Language:     "en",
-		Agent:        "claude",
-		Binary:       "/usr/bin/claude",
-		Model:        "claude-opus-4-7",
-		SpecsDir:     "docs/specs",
-		Mode:         "phase",
-		MaxIter:      15,
-		BranchPrefix: "feat",
-		EnvFiles:     []string{".env", ".env.local"},
+		Language:        "en",
+		Agent:           "claude",
+		Binary:          "/usr/bin/claude",
+		Model:           "claude-opus-4-7",
+		SpecsDir:        "docs/specs",
+		Mode:            "phase",
+		MaxIter:         15,
+		BranchPrefix:    "feat",
+		EnvFiles:        []string{".env", ".env.local"},
+		SkipPermissions: true,
 	}
 	if err := WriteConfigTOML(path, in); err != nil {
 		t.Fatalf("WriteConfigTOML: %v", err)
@@ -51,6 +52,35 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 	// Defaults are applied during Load: en plan heading should be filled.
 	if cfg.Specs.PlanHeading != "## Implementation Plan" {
 		t.Errorf("PlanHeading default not applied: %q", cfg.Specs.PlanHeading)
+	}
+	if !cfg.Executor.ShouldSkipPermissions() {
+		t.Errorf("SkipPermissions should be true after round-trip")
+	}
+}
+
+func TestWriteConfigTOML_SkipPermissionsFalseRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	in := initInput{
+		Language:        "en",
+		Agent:           "claude",
+		Binary:          "/usr/bin/claude",
+		SpecsDir:        "docs/specs",
+		Mode:            "phase",
+		MaxIter:         5,
+		BranchPrefix:    "feat",
+		EnvFiles:        []string{".env"},
+		SkipPermissions: false,
+	}
+	if err := WriteConfigTOML(path, in); err != nil {
+		t.Fatalf("WriteConfigTOML: %v", err)
+	}
+	cfg, err := configloader.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Executor.ShouldSkipPermissions() {
+		t.Errorf("SkipPermissions should be false after explicit opt-out")
 	}
 }
 
