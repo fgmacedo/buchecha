@@ -26,6 +26,10 @@ func ApplyDefaults(c *Config) {
 	if c.Executor.Binary == "" {
 		c.Executor.Binary = "claude"
 	}
+	if c.Executor.SkipPermissions == nil {
+		v := true
+		c.Executor.SkipPermissions = &v
+	}
 	if c.Specs.Dir == "" {
 		c.Specs.Dir = "docs/specs"
 	}

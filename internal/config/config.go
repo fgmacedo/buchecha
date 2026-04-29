@@ -30,6 +30,29 @@ type Executor struct {
 	Binary    string   `toml:"binary"`
 	Model     string   `toml:"model"`
 	ExtraArgs []string `toml:"extra_args"`
+
+	// SkipPermissions, when true (the default), instructs the adapter to
+	// suppress the agent's interactive permission prompts so the loop
+	// can run end to end without human intervention. Each adapter maps
+	// this to its own flag (claude: --dangerously-skip-permissions;
+	// codex/gemini: TBD).
+	//
+	// This is a tristate via pointer: nil means "absent in TOML, use
+	// default"; the default is true. Setting `skip_permissions = false`
+	// in .bcc.toml is an explicit opt-out and the user accepts that
+	// the loop will stall on prompts.
+	//
+	// Use ShouldSkipPermissions() to read; never dereference directly.
+	SkipPermissions *bool `toml:"skip_permissions"`
+}
+
+// ShouldSkipPermissions returns the effective value of the
+// SkipPermissions tristate, applying the default (true) when absent.
+func (e Executor) ShouldSkipPermissions() bool {
+	if e.SkipPermissions == nil {
+		return true
+	}
+	return *e.SkipPermissions
 }
 
 // Specs holds spec discovery and parsing keywords. Heading strings and

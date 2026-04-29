@@ -27,6 +27,9 @@ func TestApplyDefaults_EnglishDefault(t *testing.T) {
 	if c.Executor.Agent != "claude" {
 		t.Errorf("Executor.Agent = %q", c.Executor.Agent)
 	}
+	if !c.Executor.ShouldSkipPermissions() {
+		t.Errorf("ShouldSkipPermissions = false, want true (default)")
+	}
 	if c.Loop.MaxIterations != 20 {
 		t.Errorf("MaxIterations = %d", c.Loop.MaxIterations)
 	}
@@ -90,5 +93,23 @@ func TestApplyDefaults_UnknownLanguageFallsBackToEn(t *testing.T) {
 	ApplyDefaults(&c)
 	if c.Specs.PlanHeading != "## Implementation Plan" {
 		t.Errorf("unknown language should fall back to en, got %q", c.Specs.PlanHeading)
+	}
+}
+
+func TestApplyDefaults_SkipPermissionsExplicitFalseRespected(t *testing.T) {
+	v := false
+	c := Config{Executor: Executor{SkipPermissions: &v}}
+	ApplyDefaults(&c)
+	if c.Executor.ShouldSkipPermissions() {
+		t.Errorf("explicit false should not be overwritten by defaults")
+	}
+}
+
+func TestApplyDefaults_SkipPermissionsExplicitTrueRespected(t *testing.T) {
+	v := true
+	c := Config{Executor: Executor{SkipPermissions: &v}}
+	ApplyDefaults(&c)
+	if !c.Executor.ShouldSkipPermissions() {
+		t.Errorf("explicit true should remain true")
 	}
 }
