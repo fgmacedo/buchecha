@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -65,19 +66,37 @@ func New(cfg Config) *Executor {
 
 // Run invokes the binary with print mode and stream-json output.
 //
-// stdout is written verbatim to jsonlOut (claude emits one event per
-// line, terminated with newline; we do not parse here).
+// stdout is captured to the file at BCC_JSONL_PATH (set by the loop
+// before each iteration); claude emits one stream-json event per line,
+// terminated with newline. ExecResult.LogPath returns that path. The
+// adapter does not parse events into AgentEvent in this iteration of
+// the spec; the events channel is currently used only for cancellation
+// (P2.2 will wire up parsing).
 //
 // On context cancellation the subprocess receives SIGINT first; if it
 // fails to exit within CancelGrace it is killed via SIGKILL (handled by
 // exec.Cmd via WaitDelay). After waiting, if the cancel path was taken,
-// a terminator line {"type":"interrupted"} is appended to jsonlOut so
-// downstream parsers can detect abnormal end-of-stream.
+// a terminator line {"type":"interrupted"} is appended to the log file
+// so downstream parsers can detect abnormal end-of-stream.
 //
-// Returns (exitCode, nil) on natural completion (including non-zero exit
-// from the agent itself). Returns (exitCode, ctx.Err()) when canceled.
-// Returns (-1, err) when invocation itself failed (e.g., binary missing).
-func (e *Executor) Run(ctx context.Context, prompt string, jsonlOut io.Writer) (int, error) {
+// Returns (ExecResult{ExitCode}, nil) on natural completion (including
+// non-zero exit from the agent itself). Returns (ExecResult, ctx.Err())
+// when canceled. Returns (ExecResult{ExitCode: -1}, err) when the
+// invocation itself failed (e.g., binary missing).
+func (e *Executor) Run(ctx context.Context, prompt string, _ chan<- loop.AgentEvent) (loop.ExecResult, error) {
+	logPath := os.Getenv("BCC_JSONL_PATH")
+	var stdout io.Writer = io.Discard
+	var logFile *os.File
+	if logPath != "" {
+		f, err := os.Create(logPath)
+		if err != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("create log %s: %w", logPath, err)
+		}
+		defer f.Close()
+		logFile = f
+		stdout = f
+	}
+
 	// -p, --output-format stream-json, and --verbose are required for
 	// the loop to function (line-by-line JSONL events). They are not
 	// configurable.
@@ -100,7 +119,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, jsonlOut io.Writer) (
 	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, e.cfg.Binary, args...)
-	cmd.Stdout = jsonlOut
+	cmd.Stdout = stdout
 	if e.cfg.Stderr != nil {
 		cmd.Stderr = e.cfg.Stderr
 	}
@@ -114,23 +133,25 @@ func (e *Executor) Run(ctx context.Context, prompt string, jsonlOut io.Writer) (
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		// Best-effort terminator; ignore write failures (writer may be closed).
-		_, _ = jsonlOut.Write([]byte(`{"type":"interrupted"}` + "\n"))
+		if logFile != nil {
+			_, _ = logFile.Write([]byte(`{"type":"interrupted"}` + "\n"))
+		}
 		exitCode := -1
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		}
-		return exitCode, ctxErr
+		return loop.ExecResult{ExitCode: exitCode, LogPath: logPath}, ctxErr
 	}
 
 	if runErr == nil {
-		return 0, nil
+		return loop.ExecResult{ExitCode: 0, LogPath: logPath}, nil
 	}
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
 		// Agent exited non-zero; that is a normal control-flow signal,
 		// not a Run failure. Caller decides what to do.
-		return ee.ExitCode(), nil
+		return loop.ExecResult{ExitCode: ee.ExitCode(), LogPath: logPath}, nil
 	}
-	return -1, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
+	return loop.ExecResult{ExitCode: -1, LogPath: logPath}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
 }

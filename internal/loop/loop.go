@@ -40,7 +40,10 @@ type Loop struct {
 	Extra string
 
 	// JSONLDir is the directory where per-iteration JSONL files are
-	// written. Defaults to filepath.Join(os.TempDir(), "bcc") when empty.
+	// written by the executor adapter. Defaults to
+	// filepath.Join(os.TempDir(), "bcc") when empty. The loop sets
+	// BCC_JSONL_PATH = <JSONLDir>/<spec-slug>-iter<n>.jsonl per iteration
+	// so the agent and adapter share the path.
 	JSONLDir string
 
 	// SingleShot, when true, runs single-shot mode: max iterations is
@@ -51,13 +54,26 @@ type Loop struct {
 	Logger *slog.Logger
 }
 
-// Run drives the loop.
+// Run drives the loop, emitting Events on the provided channel.
+//
+// The events channel is owned by the loop for the duration of Run: the
+// loop sends every IterationStarted, AgentEventReceived,
+// IterationFinished, and a final LoopFinished, then closes the channel.
+// Callers consume events to drive a renderer (TUI, slog, NDJSON) and
+// observe the terminal state via LoopFinished.
 //
 // Returns one of the bash-compatible exit codes. err is non-nil on
-// invocation failures (binary missing, ctx cancellation, IO errors). When
-// err is non-nil, the returned code is meaningful: callers translate it
-// directly to os.Exit. err carries the diagnostic for stderr.
-func (l *Loop) Run(ctx context.Context) (int, error) {
+// invocation failures (binary missing, ctx cancellation, IO errors).
+// When err is non-nil, the returned code is meaningful: callers
+// translate it directly to os.Exit. err carries the diagnostic for
+// stderr.
+func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
+	defer func() {
+		if events != nil {
+			close(events)
+		}
+	}()
+
 	logger := l.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -73,10 +89,10 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 
 	cfg := l.Config
 	if cfg == nil {
-		return ExitInvalid, errors.New("loop: Config is nil")
+		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Config is nil")
 	}
 	if l.Executor == nil || l.Git == nil || l.SpecReader == nil {
-		return ExitInvalid, errors.New("loop: Executor, Git, and SpecReader are required")
+		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Executor, Git, and SpecReader are required")
 	}
 
 	maxIter := cfg.Loop.MaxIterations
@@ -84,11 +100,11 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		maxIter = 1
 	}
 	if maxIter <= 0 {
-		return ExitInvalid, fmt.Errorf("loop: max_iterations must be > 0, got %d", maxIter)
+		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: max_iterations must be > 0, got %d", maxIter)
 	}
 
 	if err := os.MkdirAll(jsonlDir, 0o755); err != nil {
-		return ExitInvalid, fmt.Errorf("create jsonl dir %s: %w", jsonlDir, err)
+		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("create jsonl dir %s: %w", jsonlDir, err)
 	}
 
 	promptInput := PromptInput{
@@ -112,7 +128,7 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		prompt, err = BuildPromptLoop(promptInput)
 	}
 	if err != nil {
-		return ExitInvalid, err
+		return l.terminate(events, "fatal", ExitInvalid), err
 	}
 
 	vocab := spec.ResultVocab{
@@ -136,24 +152,27 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		iterStart := time.Now()
 		logger.Info("iter start", "iter", iter, "max", maxIter)
 
+		emit(events, IterationStarted{
+			Index:   iter,
+			MaxIter: maxIter,
+			At:      iterStart,
+		})
+
 		headBefore, err := l.Git.HeadSHA(ctx)
 		if err != nil {
-			return ExitInvalid, fmt.Errorf("git head before iter %d: %w", iter, err)
+			return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("git head before iter %d: %w", iter, err)
 		}
 
 		jsonlPath := filepath.Join(jsonlDir, fmt.Sprintf("%s-iter%d.jsonl", slug, iter))
-		jsonlFile, err := os.Create(jsonlPath)
-		if err != nil {
-			return ExitInvalid, fmt.Errorf("create jsonl %s: %w", jsonlPath, err)
-		}
 
 		// Set BCC_* env vars before invoking the executor. The subprocess
 		// inherits them via exec.Cmd default env. The agent uses them to:
 		//   - confirm it is running under bcc (BCC_RUNNING=1)
 		//   - breadcrumb iteration / spec / jsonl / branch in journal entries
 		//   - self-check (refuse to proceed if expected vars are absent)
-		// Each iteration overwrites; last-write-wins is fine because these
-		// values are well-defined per iteration.
+		// The adapter reads BCC_JSONL_PATH to know where to persist the
+		// raw event log. Each iteration overwrites; last-write-wins is
+		// fine because these values are well-defined per iteration.
 		os.Setenv("BCC_RUNNING", "1")
 		os.Setenv("BCC_ITERATION", strconv.Itoa(iter))
 		os.Setenv("BCC_MAX_ITERATIONS", strconv.Itoa(maxIter))
@@ -163,29 +182,37 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 			os.Setenv("BCC_BRANCH", branch)
 		}
 
-		execCode, execErr := l.Executor.Run(ctx, prompt, jsonlFile)
-		// Always close the file; capture close error only if no other error.
-		if cerr := jsonlFile.Close(); cerr != nil && execErr == nil {
-			execErr = fmt.Errorf("close jsonl %s: %w", jsonlPath, cerr)
-		}
+		agentEvents := make(chan AgentEvent, 256)
+		pumpDone := make(chan struct{})
+		go func() {
+			defer close(pumpDone)
+			for ae := range agentEvents {
+				emit(events, AgentEventReceived{Event: ae})
+			}
+		}()
+
+		execResult, execErr := l.Executor.Run(ctx, prompt, agentEvents)
+		close(agentEvents)
+		<-pumpDone
+
 		logger.Info("iter executor returned",
 			"iter", iter,
-			"agent_exit", execCode,
-			"jsonl", jsonlPath,
+			"agent_exit", execResult.ExitCode,
+			"jsonl", execResult.LogPath,
 			"err", execErrMsg(execErr),
 		)
 		if execErr != nil {
-			return ExitInvalid, execErr
+			return l.terminate(events, "fatal", ExitInvalid), execErr
 		}
 
 		content, err := l.SpecReader.Read(l.SpecPath)
 		if err != nil {
-			return ExitInvalid, fmt.Errorf("read spec after iter %d: %w", iter, err)
+			return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("read spec after iter %d: %w", iter, err)
 		}
 
 		plan, err := spec.ParsePlan(content, cfg.Specs.PlanHeading)
 		if err != nil {
-			return ExitInvalid, fmt.Errorf("parse plan after iter %d: %w", iter, err)
+			return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("parse plan after iter %d: %w", iter, err)
 		}
 
 		latest, err := spec.ParseLatestResult(
@@ -203,7 +230,7 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 
 		headAfter, err := l.Git.HeadSHA(ctx)
 		if err != nil {
-			return ExitInvalid, fmt.Errorf("git head after iter %d: %w", iter, err)
+			return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("git head after iter %d: %w", iter, err)
 		}
 
 		decision := Decide(DeciderInput{
@@ -212,6 +239,7 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 			UncheckedAfter: plan.CountUnchecked(),
 		})
 
+		iterEnd := time.Now()
 		logger.Info("iter decision",
 			"iter", iter,
 			"result", latest.Result.String(),
@@ -221,16 +249,27 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 			"unchecked", plan.CountUnchecked(),
 			"action", decision.Action.String(),
 			"exit_if_stop", decision.ExitCode,
-			"elapsed", time.Since(iterStart).String(),
+			"elapsed", iterEnd.Sub(iterStart).String(),
 		)
 
+		emit(events, IterationFinished{
+			Index:        iter,
+			Result:       latest.Result,
+			HEADAdvanced: headAfter != headBefore,
+			NewlyChecked: plan.CountChecked(),
+			DurationMS:   iterEnd.Sub(iterStart).Milliseconds(),
+			LogPath:      execResult.LogPath,
+			At:           iterEnd,
+		})
+
 		if decision.Action == ActionStop {
+			reason := stopReason(decision.ExitCode)
 			logger.Info("loop stop",
-				"reason", stopReason(decision.ExitCode),
+				"reason", reason,
 				"exit_code", decision.ExitCode,
 				"total_elapsed", time.Since(startedAt).String(),
 			)
-			return decision.ExitCode, nil
+			return l.terminate(events, reason, decision.ExitCode), nil
 		}
 	}
 
@@ -238,7 +277,29 @@ func (l *Loop) Run(ctx context.Context) (int, error) {
 		"max", maxIter,
 		"total_elapsed", time.Since(startedAt).String(),
 	)
-	return ExitMaxIterations, nil
+	return l.terminate(events, "max_iterations", ExitMaxIterations), nil
+}
+
+// terminate emits a final LoopFinished event with the given reason and
+// exit code, then returns the exit code so callers can `return
+// l.terminate(...), err`.
+func (l *Loop) terminate(events chan<- Event, reason string, code int) int {
+	emit(events, LoopFinished{
+		Reason:   reason,
+		ExitCode: code,
+		At:       time.Now(),
+	})
+	return code
+}
+
+// emit sends ev on events when events is non-nil. The Loop accepts a
+// nil events channel for callers that do not want to consume events;
+// every emit becomes a no-op in that case.
+func emit(events chan<- Event, ev Event) {
+	if events == nil {
+		return
+	}
+	events <- ev
 }
 
 func slugFromPath(path string) string {

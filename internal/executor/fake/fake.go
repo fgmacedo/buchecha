@@ -9,7 +9,7 @@ package fake
 import (
 	"context"
 	"fmt"
-	"io"
+	"os"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 )
@@ -19,11 +19,18 @@ var _ loop.Executor = (*Executor)(nil)
 
 // Step is one scripted iteration response.
 type Step struct {
-	// JSONL is the raw text written to jsonlOut on this Run. Should end
-	// with a newline if the consumer expects line-by-line semantics.
-	JSONL string
+	// Events are pushed onto the events channel in order, one by one.
+	// Real adapters translate native agent events into AgentEvents;
+	// the fake skips the translation and lets tests script the result.
+	Events []loop.AgentEvent
 
-	// ExitCode is the value returned from Run.
+	// RawLog, when non-empty, is written verbatim to the file at
+	// BCC_JSONL_PATH (set by the loop before each iteration). Mirrors
+	// what a real adapter does when it persists the agent's raw event
+	// stream for audit. ExecResult.LogPath is set to BCC_JSONL_PATH.
+	RawLog string
+
+	// ExitCode is the value returned in ExecResult.
 	ExitCode int
 
 	// Err is the error returned from Run. nil means success. ctx errors
@@ -43,23 +50,34 @@ func New(steps ...Step) *Executor {
 	return &Executor{steps: steps}
 }
 
-// Run writes Step.JSONL to jsonlOut and returns Step.ExitCode, Step.Err.
-// If called more times than there are steps, returns an error indicating
+// Run pushes Step.Events on the events channel, optionally writes
+// Step.RawLog to BCC_JSONL_PATH, and returns ExecResult, Step.Err. If
+// called more times than there are steps, returns an error indicating
 // the test exhausted the script (catches off-by-one in loop tests).
-func (e *Executor) Run(ctx context.Context, prompt string, jsonlOut io.Writer) (int, error) {
+func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
 	if e.called >= len(e.steps) {
-		return -1, fmt.Errorf("fake: out of scripted steps (called %d, have %d)", e.called+1, len(e.steps))
+		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("fake: out of scripted steps (called %d, have %d)", e.called+1, len(e.steps))
 	}
 	step := e.steps[e.called]
 	e.called++
 	e.prompts = append(e.prompts, prompt)
 
-	if step.JSONL != "" {
-		if _, err := io.WriteString(jsonlOut, step.JSONL); err != nil {
-			return -1, fmt.Errorf("fake: write jsonl: %w", err)
+	logPath := os.Getenv("BCC_JSONL_PATH")
+	if step.RawLog != "" && logPath != "" {
+		if err := os.WriteFile(logPath, []byte(step.RawLog), 0o644); err != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("fake: write raw log %s: %w", logPath, err)
 		}
 	}
-	return step.ExitCode, step.Err
+
+	for _, ev := range step.Events {
+		select {
+		case events <- ev:
+		case <-ctx.Done():
+			return loop.ExecResult{ExitCode: -1, LogPath: logPath}, ctx.Err()
+		}
+	}
+
+	return loop.ExecResult{ExitCode: step.ExitCode, LogPath: logPath}, step.Err
 }
 
 // CallCount returns how many times Run was called.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -89,11 +90,25 @@ func newTestConfig() *config.Config {
 	return c
 }
 
+// runWithEvents runs the loop with a buffered events channel and
+// returns (exitCode, err, events). The channel is drained after Run
+// returns so callers can assert the full event sequence.
+func runWithEvents(t *testing.T, l *loop.Loop) (int, error, []loop.Event) {
+	t.Helper()
+	events := make(chan loop.Event, 1024)
+	code, err := l.Run(context.Background(), events)
+	var got []loop.Event
+	for ev := range events {
+		got = append(got, ev)
+	}
+	return code, err, got
+}
+
 func TestRun_OkThenDone(t *testing.T) {
 	cfg := newTestConfig()
 	exec := fake.New(
-		fake.Step{JSONL: `{"type":"a"}` + "\n", ExitCode: 0},
-		fake.Step{JSONL: `{"type":"b"}` + "\n", ExitCode: 0},
+		fake.Step{ExitCode: 0},
+		fake.Step{ExitCode: 0},
 	)
 	git := &fakeGit{heads: []string{"A", "B", "B", "C"}}
 	reader := &stepfulSpecReader{contents: []string{
@@ -108,7 +123,7 @@ func TestRun_OkThenDone(t *testing.T) {
 		SpecReader: reader,
 		JSONLDir:   t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -131,7 +146,7 @@ func TestRun_BlockedStops(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -151,7 +166,7 @@ func TestRun_DoneWithLeftovers(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -171,7 +186,7 @@ func TestRun_HEADStuck(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -191,7 +206,7 @@ func TestRun_UnknownResultIsInvalid(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -216,7 +231,7 @@ func TestRun_MaxIterationsReached(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -235,7 +250,7 @@ func TestRun_ExecutorErrorPropagates(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
 	}
@@ -253,7 +268,7 @@ func TestRun_GitErrorPropagates(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -271,7 +286,7 @@ func TestRun_SpecReaderErrorPropagates(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err == nil {
 		t.Fatalf("expected error")
 	}
@@ -293,7 +308,7 @@ func TestRun_SingleShotCapsAtOne(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(), SingleShot: true,
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -333,7 +348,7 @@ func TestRun_PortugueseLocalized(t *testing.T) {
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -353,7 +368,7 @@ func TestRun_RejectsZeroMaxIterations(t *testing.T) {
 		SpecReader: &stepfulSpecReader{},
 		JSONLDir:   t.TempDir(),
 	}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err == nil {
 		t.Errorf("expected error for max_iterations <= 0")
 	}
@@ -365,7 +380,7 @@ func TestRun_RejectsZeroMaxIterations(t *testing.T) {
 func TestRun_NilPortsRejected(t *testing.T) {
 	cfg := newTestConfig()
 	l := &loop.Loop{SpecPath: "x.md", Config: cfg}
-	code, err := l.Run(context.Background())
+	code, err, _ := runWithEvents(t, l)
 	if err == nil {
 		t.Errorf("expected error for nil ports")
 	}
@@ -374,10 +389,10 @@ func TestRun_NilPortsRejected(t *testing.T) {
 	}
 }
 
-func TestRun_JSONLFileWritten(t *testing.T) {
+func TestRun_RawLogWrittenAtBCCJSONLPath(t *testing.T) {
 	cfg := newTestConfig()
 	dir := t.TempDir()
-	exec := fake.New(fake.Step{JSONL: `{"type":"hello"}` + "\n", ExitCode: 0})
+	exec := fake.New(fake.Step{RawLog: `{"type":"hello"}` + "\n", ExitCode: 0})
 	git := &fakeGit{heads: []string{"A", "B"}}
 	reader := &stepfulSpecReader{contents: []string{
 		specWith([]string{"[x]", "[x]"}, "done"),
@@ -386,10 +401,11 @@ func TestRun_JSONLFileWritten(t *testing.T) {
 		SpecPath: "/tmp/sample-spec.md", Config: cfg, Executor: exec, Git: git,
 		SpecReader: reader, JSONLDir: dir,
 	}
-	if _, err := l.Run(context.Background()); err != nil {
+	if _, err, _ := runWithEvents(t, l); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Discover the file and check it has content.
+	// The fake executor writes RawLog to BCC_JSONL_PATH (set by the
+	// loop). Confirm it landed in jsonlDir with the expected slug.
 	matches, err := filepath.Glob(filepath.Join(dir, "sample-spec-iter1.jsonl"))
 	if err != nil {
 		t.Fatalf("glob: %v", err)
@@ -397,15 +413,204 @@ func TestRun_JSONLFileWritten(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 jsonl file, got %d", len(matches))
 	}
-	// Sanity smoke: file exists, non-empty.
 	b, err := os.ReadFile(matches[0])
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if len(b) == 0 {
-		t.Errorf("jsonl file is empty: %s", matches[0])
-	}
 	if !strings.Contains(string(b), `"hello"`) {
 		t.Errorf("jsonl missing scripted content: %q", string(b))
+	}
+}
+
+// TestRun_EventSequence asserts the kinds of Events emitted by the
+// loop for a known fake transcript, in order.
+func TestRun_EventSequence(t *testing.T) {
+	tests := []struct {
+		name      string
+		steps     []fake.Step
+		heads     []string
+		contents  []string
+		wantTypes []string
+	}{
+		{
+			name: "single iteration done",
+			steps: []fake.Step{
+				{
+					Events: []loop.AgentEvent{
+						{Kind: loop.KindInit, Init: &loop.InitInfo{SessionID: "s1"}},
+						{Kind: loop.KindToolUse, Tool: &loop.ToolCallInfo{Name: "Read"}},
+						{Kind: loop.KindResultSummary, Done: &loop.ResultSummaryInfo{NumTurns: 1}},
+					},
+					ExitCode: 0,
+				},
+			},
+			heads: []string{"A", "B"},
+			contents: []string{
+				specWith([]string{"[x]", "[x]"}, "done"),
+			},
+			wantTypes: []string{
+				"IterationStarted",
+				"AgentEventReceived",
+				"AgentEventReceived",
+				"AgentEventReceived",
+				"IterationFinished",
+				"LoopFinished",
+			},
+		},
+		{
+			name: "two iterations to done",
+			steps: []fake.Step{
+				{Events: []loop.AgentEvent{{Kind: loop.KindToolUse}}, ExitCode: 0},
+				{Events: []loop.AgentEvent{{Kind: loop.KindResultSummary}}, ExitCode: 0},
+			},
+			heads: []string{"A", "B", "B", "C"},
+			contents: []string{
+				specWith([]string{"[x]", "[ ]", "[ ]"}, "ok"),
+				specWith([]string{"[x]", "[x]", "[x]"}, "done"),
+			},
+			wantTypes: []string{
+				"IterationStarted",
+				"AgentEventReceived",
+				"IterationFinished",
+				"IterationStarted",
+				"AgentEventReceived",
+				"IterationFinished",
+				"LoopFinished",
+			},
+		},
+		{
+			name: "no agent events still emits boundaries and finish",
+			steps: []fake.Step{
+				{ExitCode: 0},
+			},
+			heads: []string{"A", "B"},
+			contents: []string{
+				specWith([]string{"[x]", "[x]"}, "done"),
+			},
+			wantTypes: []string{
+				"IterationStarted",
+				"IterationFinished",
+				"LoopFinished",
+			},
+		},
+		{
+			name: "blocked terminates after one iteration",
+			steps: []fake.Step{
+				{Events: []loop.AgentEvent{{Kind: loop.KindAssistantText, Text: "stuck"}}, ExitCode: 0},
+			},
+			heads: []string{"A", "B"},
+			contents: []string{
+				specWith([]string{"[x]", "[ ]", "[ ]"}, "blocked"),
+			},
+			wantTypes: []string{
+				"IterationStarted",
+				"AgentEventReceived",
+				"IterationFinished",
+				"LoopFinished",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newTestConfig()
+			exec := fake.New(tt.steps...)
+			git := &fakeGit{heads: tt.heads}
+			reader := &stepfulSpecReader{contents: tt.contents}
+			l := &loop.Loop{
+				SpecPath:   "x.md",
+				Config:     cfg,
+				Executor:   exec,
+				Git:        git,
+				SpecReader: reader,
+				JSONLDir:   t.TempDir(),
+			}
+			_, _, got := runWithEvents(t, l)
+			gotTypes := make([]string, len(got))
+			for i, ev := range got {
+				gotTypes[i] = eventTypeName(ev)
+			}
+			if !reflect.DeepEqual(gotTypes, tt.wantTypes) {
+				t.Errorf("event sequence mismatch:\n got: %v\nwant: %v", gotTypes, tt.wantTypes)
+			}
+		})
+	}
+}
+
+func TestRun_LoopFinishedCarriesExitCode(t *testing.T) {
+	cfg := newTestConfig()
+	exec := fake.New(fake.Step{ExitCode: 0})
+	git := &fakeGit{heads: []string{"A", "B"}}
+	reader := &stepfulSpecReader{contents: []string{
+		specWith([]string{"[x]", "[x]"}, "done"),
+	}}
+	l := &loop.Loop{
+		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
+		SpecReader: reader, JSONLDir: t.TempDir(),
+	}
+	code, _, got := runWithEvents(t, l)
+	if len(got) == 0 {
+		t.Fatalf("no events received")
+	}
+	last, ok := got[len(got)-1].(loop.LoopFinished)
+	if !ok {
+		t.Fatalf("last event = %T, want LoopFinished", got[len(got)-1])
+	}
+	if last.ExitCode != code {
+		t.Errorf("LoopFinished.ExitCode = %d, run code = %d (must match)", last.ExitCode, code)
+	}
+	if last.ExitCode != loop.ExitDone {
+		t.Errorf("LoopFinished.ExitCode = %d, want %d", last.ExitCode, loop.ExitDone)
+	}
+	if last.Reason != "done" {
+		t.Errorf("LoopFinished.Reason = %q, want %q", last.Reason, "done")
+	}
+}
+
+func TestRun_IterationFinishedCarriesResult(t *testing.T) {
+	cfg := newTestConfig()
+	exec := fake.New(fake.Step{ExitCode: 0})
+	git := &fakeGit{heads: []string{"A", "B"}}
+	reader := &stepfulSpecReader{contents: []string{
+		specWith([]string{"[x]", "[ ]"}, "partial"),
+	}}
+	l := &loop.Loop{
+		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
+		SpecReader: reader, JSONLDir: t.TempDir(),
+	}
+	_, _, got := runWithEvents(t, l)
+	var fin *loop.IterationFinished
+	for i := range got {
+		if f, ok := got[i].(loop.IterationFinished); ok {
+			fin = &f
+			break
+		}
+	}
+	if fin == nil {
+		t.Fatalf("no IterationFinished event")
+	}
+	if fin.Index != 1 {
+		t.Errorf("Index = %d, want 1", fin.Index)
+	}
+	if !fin.HEADAdvanced {
+		t.Errorf("HEADAdvanced = false, want true")
+	}
+	if fin.Result.String() != "partial" {
+		t.Errorf("Result = %q, want partial", fin.Result.String())
+	}
+}
+
+func eventTypeName(e loop.Event) string {
+	switch e.(type) {
+	case loop.IterationStarted:
+		return "IterationStarted"
+	case loop.AgentEventReceived:
+		return "AgentEventReceived"
+	case loop.IterationFinished:
+		return "IterationFinished"
+	case loop.LoopFinished:
+		return "LoopFinished"
+	default:
+		return fmt.Sprintf("Unknown(%T)", e)
 	}
 }

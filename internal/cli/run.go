@@ -154,7 +154,19 @@ func runSpec(ctx context.Context, specPath string) error {
 		SingleShot: runSingleShot,
 	}
 
-	code, runErr := l.Run(ctx)
+	// Drain events in a goroutine so the loop never blocks on a
+	// full channel. P2.3 will replace this no-op drain with the
+	// tui/text/json render backends.
+	events := make(chan loop.Event, 256)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range events {
+		}
+	}()
+
+	code, runErr := l.Run(ctx, events)
+	<-drained
 	ExitCode = code
 	return runErr
 }

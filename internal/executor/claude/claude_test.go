@@ -1,13 +1,15 @@
 package claude
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -19,87 +21,119 @@ func fixture(t *testing.T, name string) string {
 	return abs
 }
 
+// withLogPath sets BCC_JSONL_PATH to a fresh file in t.TempDir() and
+// returns the path. The env var is restored at test end via t.Setenv.
+func withLogPath(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "stream.jsonl")
+	t.Setenv("BCC_JSONL_PATH", path)
+	return path
+}
+
 func TestRun_StreamsJSONL(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{Binary: fixture(t, "fake-claude.sh")})
-	var buf bytes.Buffer
-	code, err := e.Run(context.Background(), "test prompt", &buf)
+	events := make(chan loop.AgentEvent, 4)
+	res, err := e.Run(context.Background(), "test prompt", events)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if code != 0 {
-		t.Errorf("exit code = %d, want 0", code)
+	if res.ExitCode != 0 {
+		t.Errorf("exit code = %d, want 0", res.ExitCode)
 	}
-	out := buf.String()
-	if !strings.Contains(out, `"type":"system"`) {
-		t.Errorf("output missing system event: %q", out)
+	if res.LogPath != logPath {
+		t.Errorf("LogPath = %q, want %q", res.LogPath, logPath)
 	}
-	if !strings.Contains(out, `"type":"result"`) {
-		t.Errorf("output missing result event: %q", out)
+	out, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if !strings.Contains(string(out), `"type":"system"`) {
+		t.Errorf("log missing system event: %q", out)
+	}
+	if !strings.Contains(string(out), `"type":"result"`) {
+		t.Errorf("log missing result event: %q", out)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 	if len(lines) != 3 {
 		t.Errorf("expected 3 lines of JSONL, got %d (out=%q)", len(lines), out)
 	}
 }
 
 func TestRun_PropagatesNonZeroExit(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{Binary: fixture(t, "fake-claude-fail.sh")})
-	var buf bytes.Buffer
-	code, err := e.Run(context.Background(), "x", &buf)
+	events := make(chan loop.AgentEvent, 4)
+	res, err := e.Run(context.Background(), "x", events)
 	if err != nil {
 		t.Fatalf("Run: unexpected error %v", err)
 	}
-	if code != 7 {
-		t.Errorf("exit code = %d, want 7", code)
+	if res.ExitCode != 7 {
+		t.Errorf("exit code = %d, want 7", res.ExitCode)
 	}
-	if !strings.Contains(buf.String(), `"type":"system"`) {
-		t.Errorf("partial stdout was lost: %q", buf.String())
+	out, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(out), `"type":"system"`) {
+		t.Errorf("partial stdout was lost: %q", out)
 	}
 }
 
 func TestRun_BinaryNotFound(t *testing.T) {
+	withLogPath(t)
 	e := New(Config{Binary: "/nonexistent/binary"})
-	var buf bytes.Buffer
-	_, err := e.Run(context.Background(), "x", &buf)
+	events := make(chan loop.AgentEvent, 4)
+	_, err := e.Run(context.Background(), "x", events)
 	if err == nil {
 		t.Errorf("expected error for missing binary")
 	}
 }
 
 func TestRun_ContextCancelInterrupts(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{
 		Binary:      fixture(t, "fake-claude-slow.sh"),
 		CancelGrace: 1 * time.Second,
 	})
-	var buf bytes.Buffer
+	events := make(chan loop.AgentEvent, 4)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	_, err := e.Run(ctx, "x", &buf)
+	_, err := e.Run(ctx, "x", events)
 	if err == nil {
-		t.Fatalf("expected ctx error, got nil; output=%q", buf.String())
+		t.Fatalf("expected ctx error, got nil")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want ctx.Err()", err)
 	}
-	if !strings.Contains(buf.String(), `"interrupted"`) {
-		t.Errorf("output missing interrupted terminator: %q", buf.String())
+	out, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(out), `"interrupted"`) {
+		t.Errorf("log missing interrupted terminator: %q", out)
 	}
 }
 
 func TestRun_PromptIsLastArg(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{
 		Binary:          fixture(t, "fake-claude-echo-args.sh"),
 		Model:           "test-model",
 		ExtraArgs:       []string{"--foo", "--bar"},
 		SkipPermissions: true,
 	})
-	var buf bytes.Buffer
-	if _, err := e.Run(context.Background(), "the prompt", &buf); err != nil {
+	events := make(chan loop.AgentEvent, 4)
+	if _, err := e.Run(context.Background(), "the prompt", events); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	out := strings.TrimRight(buf.String(), "\n")
-	lines := strings.Split(out, "\n")
+	out, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	trimmed := strings.TrimRight(string(out), "\n")
+	lines := strings.Split(trimmed, "\n")
 
 	want := []string{
 		"-p", "--output-format", "stream-json", "--verbose",
@@ -119,52 +153,46 @@ func TestRun_PromptIsLastArg(t *testing.T) {
 }
 
 func TestRun_OmitsModelWhenEmpty(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
-	var buf bytes.Buffer
-	if _, err := e.Run(context.Background(), "p", &buf); err != nil {
+	events := make(chan loop.AgentEvent, 4)
+	if _, err := e.Run(context.Background(), "p", events); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if strings.Contains(buf.String(), "--model") {
-		t.Errorf("--model should be omitted when Model is empty: %q", buf.String())
+	out, _ := os.ReadFile(logPath)
+	if strings.Contains(string(out), "--model") {
+		t.Errorf("--model should be omitted when Model is empty: %q", out)
 	}
 }
 
 func TestRun_OmitsSkipPermissionsWhenFalse(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{
 		Binary:          fixture(t, "fake-claude-echo-args.sh"),
 		SkipPermissions: false,
 	})
-	var buf bytes.Buffer
-	if _, err := e.Run(context.Background(), "p", &buf); err != nil {
+	events := make(chan loop.AgentEvent, 4)
+	if _, err := e.Run(context.Background(), "p", events); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if strings.Contains(buf.String(), "--dangerously-skip-permissions") {
-		t.Errorf("--dangerously-skip-permissions should be omitted when SkipPermissions=false: %q", buf.String())
+	out, _ := os.ReadFile(logPath)
+	if strings.Contains(string(out), "--dangerously-skip-permissions") {
+		t.Errorf("--dangerously-skip-permissions should be omitted when SkipPermissions=false: %q", out)
 	}
 }
 
 func TestRun_AddsSkipPermissionsWhenTrue(t *testing.T) {
+	logPath := withLogPath(t)
 	e := New(Config{
 		Binary:          fixture(t, "fake-claude-echo-args.sh"),
 		SkipPermissions: true,
 	})
-	var buf bytes.Buffer
-	if _, err := e.Run(context.Background(), "p", &buf); err != nil {
+	events := make(chan loop.AgentEvent, 4)
+	if _, err := e.Run(context.Background(), "p", events); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(buf.String(), "--dangerously-skip-permissions") {
-		t.Errorf("--dangerously-skip-permissions should appear when SkipPermissions=true: %q", buf.String())
+	out, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(out), "--dangerously-skip-permissions") {
+		t.Errorf("--dangerously-skip-permissions should appear when SkipPermissions=true: %q", out)
 	}
-}
-
-func TestRun_StderrIsCapturedWhenConfigured(t *testing.T) {
-	e := New(Config{Binary: fixture(t, "fake-claude.sh")})
-	var stdoutBuf, stderrBuf bytes.Buffer
-	e.cfg.Stderr = &stderrBuf
-	if _, err := e.Run(context.Background(), "p", &stdoutBuf); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	// fake-claude.sh has set -e but writes only to stdout; stderrBuf can
-	// be empty but must not panic. Smoke test that the path is wired.
-	_ = stderrBuf
 }

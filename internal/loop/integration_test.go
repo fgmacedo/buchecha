@@ -3,7 +3,6 @@ package loop_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,12 +60,12 @@ type editingExec struct {
 	idx      int
 }
 
-func (e *editingExec) Run(ctx context.Context, prompt string, w io.Writer) (int, error) {
+func (e *editingExec) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
 	if e.idx < len(e.updates) {
 		e.updates[e.idx]()
 		e.idx++
 	}
-	return e.fake.Run(ctx, prompt, w)
+	return e.fake.Run(ctx, prompt, events)
 }
 
 func TestIntegration_TwoIterToDone(t *testing.T) {
@@ -85,10 +84,10 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 		runShell(t, dir, "git", "commit", "-m", "iter2")
 	}
 
-	exec := &editingExec{
+	executor := &editingExec{
 		fake: fake.New(
-			fake.Step{JSONL: `{"type":"system"}` + "\n", ExitCode: 0},
-			fake.Step{JSONL: `{"type":"result"}` + "\n", ExitCode: 0},
+			fake.Step{RawLog: `{"type":"system"}` + "\n", ExitCode: 0},
+			fake.Step{RawLog: `{"type":"result"}` + "\n", ExitCode: 0},
 		),
 		specPath: specPath,
 		repoDir:  dir,
@@ -102,24 +101,28 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 	l := &loop.Loop{
 		SpecPath:   specPath,
 		Config:     cfg,
-		Executor:   exec,
+		Executor:   executor,
 		Git:        gitcli.New(dir),
 		SpecReader: markdown.New(),
 		JSONLDir:   jsonlDir,
 	}
 
-	code, err := l.Run(context.Background())
+	events := make(chan loop.Event, 1024)
+	code, err := l.Run(context.Background(), events)
+	for range events {
+	}
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if code != loop.ExitDone {
 		t.Errorf("exit = %d, want %d (ExitDone)", code, loop.ExitDone)
 	}
-	if exec.fake.CallCount() != 2 {
-		t.Errorf("executor calls = %d, want 2", exec.fake.CallCount())
+	if executor.fake.CallCount() != 2 {
+		t.Errorf("executor calls = %d, want 2", executor.fake.CallCount())
 	}
 
-	// JSONL files should exist for both iterations.
+	// Raw logs (written by the fake adapter to BCC_JSONL_PATH) should
+	// exist for both iterations.
 	matches, err := filepath.Glob(filepath.Join(jsonlDir, "spec-iter*.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +130,6 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 	if len(matches) != 2 {
 		t.Errorf("expected 2 jsonl files, got %d: %v", len(matches), matches)
 	}
-	// Iter 1 JSONL must contain the scripted system event.
 	iter1JSONL, err := os.ReadFile(filepath.Join(jsonlDir, "spec-iter1.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -141,9 +143,8 @@ func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
 	dir, specPath := initIntegrationRepo(t)
 
 	// Agent runs but does NOT commit anything; spec file is unchanged.
-	exec := &editingExec{
-		fake: fake.New(fake.Step{JSONL: `{"type":"system"}` + "\n", ExitCode: 0}),
-		// No updates → HEAD does not advance.
+	executor := &editingExec{
+		fake:     fake.New(fake.Step{RawLog: `{"type":"system"}` + "\n", ExitCode: 0}),
 		updates:  nil,
 		specPath: specPath,
 		repoDir:  dir,
@@ -155,13 +156,16 @@ func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
 	l := &loop.Loop{
 		SpecPath:   specPath,
 		Config:     cfg,
-		Executor:   exec,
+		Executor:   executor,
 		Git:        gitcli.New(dir),
 		SpecReader: markdown.New(),
 		JSONLDir:   t.TempDir(),
 	}
 
-	code, err := l.Run(context.Background())
+	events := make(chan loop.Event, 1024)
+	code, err := l.Run(context.Background(), events)
+	for range events {
+	}
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -178,11 +182,7 @@ func configWithDefaults() *config.Config {
 	return c
 }
 
-// Reuse the loop_test.go helper specWith if visible; otherwise inline.
-// (specWith is package-local in loop_test.go and visible here because we
-// share the loop_test package.)
-
-// Helper to pretty-print specs in test failures.
+// dumpSpec is a debug helper retained for ad-hoc test diagnosis.
 func dumpSpec(t *testing.T, path string) {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -193,9 +193,6 @@ func dumpSpec(t *testing.T, path string) {
 	t.Logf("--- %s ---\n%s\n--- end ---", path, b)
 }
 
-// silenceUnused: make sure dumpSpec / configWithDefaults compile even
-// when not invoked in a particular subtest. Cheap way to keep them
-// available without tripping the linter.
 var (
 	_ = dumpSpec
 	_ = configWithDefaults

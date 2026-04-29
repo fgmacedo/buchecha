@@ -298,10 +298,10 @@ bcc run <spec> [flags]
 
 ### P2.1: event types and Executor contract
 
-1. [ ] Add `internal/loop/events.go` with `AgentEvent`, `AgentEventKind`, `Event` interface, and the four loop-level event types. Pure types, no I/O.
-1. [ ] Set `loop.Executor.Run` signature to `Run(ctx, prompt, events chan<- AgentEvent) (ExecResult, error)`. `loop.Loop.Run` forwards agent events into its own `chan<- Event`.
-1. [ ] Update the existing fake executor in tests to push canned `AgentEvent`s on the channel.
-1. [ ] Tests: table-driven loop test asserts the sequence of `Event`s emitted for a known fake transcript.
+1. [x] Add `internal/loop/events.go` with `AgentEvent`, `AgentEventKind`, `Event` interface, and the four loop-level event types. Pure types, no I/O.
+1. [x] Set `loop.Executor.Run` signature to `Run(ctx, prompt, events chan<- AgentEvent) (ExecResult, error)`. `loop.Loop.Run` forwards agent events into its own `chan<- Event`.
+1. [x] Update the existing fake executor in tests to push canned `AgentEvent`s on the channel.
+1. [x] Tests: table-driven loop test asserts the sequence of `Event`s emitted for a known fake transcript.
 
 ### P2.2: claude adapter emits typed events
 
@@ -402,4 +402,11 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 
 ## Execution Journal
 
-(empty until Phase 2 is run)
+### 2026-04-29 17:30, P2.1 event types and Executor contract
+
+- **Result**: ok
+- **Summary**: Added `internal/loop/events.go` with the typed event model (`AgentEvent`/`AgentEventKind` plus `IterationStarted`, `AgentEventReceived`, `IterationFinished`, `LoopFinished`). Switched `loop.Executor.Run` to `Run(ctx, prompt, events chan<- AgentEvent) (ExecResult, error)`. `Loop.Run` now takes `events chan<- Event`, runs an internal pump goroutine that forwards each `AgentEvent` as `AgentEventReceived`, and emits boundary and terminal events; it closes the channel on return. Adapters (claude, fake) return `ExecResult{ExitCode, LogPath}` and write the raw stream to `BCC_JSONL_PATH`. Loop-level test asserts the event sequence is table-driven.
+- **Commits**: this commit `loop: introduce typed Event channel and AgentEvent contract`
+- **Decisions**: `Loop.Run` keeps `(int, error)` return alongside `LoopFinished.ExitCode` for now; cmd/run still uses the int return while text/json backends are not wired yet (P2.3). Adapters write the raw native log themselves at `BCC_JSONL_PATH` (set by the loop before each iteration); loop no longer creates that file. Fake's `Step.JSONL` renamed to `Step.RawLog`; `Step` gained `Events []loop.AgentEvent`. Loop close-on-return is the canonical sender-closes pattern; tests drain the channel after Run.
+- **Next**: P2.2 (claude adapter parses stream-json into AgentEvents)
+- **Notes for observer**: BCC_JSONL_PATH=/var/folders/6s/bqzmgmsn5kz7l6ny1r0k17_r0000gp/T/bcc/2026-04-29-phase-2-tui-dashboard-iter1.jsonl
