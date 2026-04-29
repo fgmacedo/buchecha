@@ -9,12 +9,9 @@ import (
 )
 
 // healthPanel surfaces the run-level vital signs: heartbeat, throughput
-// (tools/min), error count, rate-limit status, token usage, and cost.
-//
-// P2.5 keeps the math simple (cumulative counts, instantaneous rate
-// from a 60-second sliding window) so panels render meaningful numbers
-// from the first event. P2.6 swaps the windowed pieces in for the
-// full sliding-window heuristic without changing the panel surface.
+// (tools/min, 60s window), error count (5m window), rate-limit status,
+// token usage, cost, and the loop-suspect heuristic (≥ 7 of the last 10
+// tool calls share the same (name, primary_arg) key).
 type healthPanel struct {
 	startedAt    time.Time
 	lastEvent    time.Time
@@ -33,6 +30,10 @@ type healthPanel struct {
 	// capped at 1024 entries. The 5-minute window is computed at view
 	// time.
 	errorStamps []time.Time
+
+	// suspect tracks the last 10 tool_use keys for the loop-suspect
+	// heuristic. Renders a warning row when triggered.
+	suspect loopSuspect
 }
 
 const healthRingCap = 1024
@@ -51,6 +52,7 @@ func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
 	case loop.KindToolUse:
 		h.totalTools++
 		h.toolStamps = pushStamp(h.toolStamps, at)
+		h.suspect.onAgentEvent(ev)
 	case loop.KindToolResult:
 		if ev.Tool != nil && ev.Tool.IsError {
 			h.totalErrors++
@@ -98,7 +100,25 @@ func (h healthPanel) view(now time.Time) string {
 
 	b.WriteString(fmt.Sprintf("  tokens: %s\n", formatTokens(h.totalTokens)))
 	b.WriteString(fmt.Sprintf("  cost: $%.2f\n", h.totalCostUSD))
+
+	if key, count, ok := h.suspect.triggered(); ok {
+		b.WriteString("  ")
+		b.WriteString(theme.err.Render(fmt.Sprintf(
+			"loop-suspect: %s (%d/%d)",
+			suspectLabel(key), count, loopSuspectWindow,
+		)))
+		b.WriteByte('\n')
+	}
 	return b.String()
+}
+
+// suspectLabel renders the dominant key as one short line: "Edit x.go"
+// or just "Edit" when the tool has no primary arg.
+func suspectLabel(k loopSuspectKey) string {
+	if k.arg == "" {
+		return k.name
+	}
+	return k.name + " " + truncate(k.arg, 40)
 }
 
 // pushStamp appends t to s and trims to the most recent healthRingCap

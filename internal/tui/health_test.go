@@ -92,6 +92,53 @@ func TestPushStamp_TrimsToCap(t *testing.T) {
 	}
 }
 
+func TestHealth_view_LoopSuspectRowAppearsWhenTriggered(t *testing.T) {
+	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
+	h := healthPanel{startedAt: now.Add(-time.Minute)}
+
+	// Below threshold: no row.
+	for i := 0; i < loopSuspectThreshold-1; i++ {
+		h.onAgentEvent(loop.AgentEvent{
+			Kind: loop.KindToolUse, At: now,
+			Tool: &loop.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "plan.go"}},
+		})
+	}
+	for i := 0; i < loopSuspectWindow-(loopSuspectThreshold-1); i++ {
+		h.onAgentEvent(loop.AgentEvent{
+			Kind: loop.KindToolUse, At: now,
+			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
+		})
+	}
+	if got := h.view(now); strings.Contains(got, "loop-suspect") {
+		t.Errorf("loop-suspect row should be hidden below threshold; got\n%s", got)
+	}
+
+	// Bump one Read → Edit so the dominant key reaches threshold.
+	h.suspect = loopSuspect{}
+	for i := 0; i < loopSuspectThreshold; i++ {
+		h.onAgentEvent(loop.AgentEvent{
+			Kind: loop.KindToolUse, At: now,
+			Tool: &loop.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "plan.go"}},
+		})
+	}
+	for i := 0; i < loopSuspectWindow-loopSuspectThreshold; i++ {
+		h.onAgentEvent(loop.AgentEvent{
+			Kind: loop.KindToolUse, At: now,
+			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
+		})
+	}
+	out := h.view(now)
+	if !strings.Contains(out, "loop-suspect") {
+		t.Errorf("loop-suspect row missing when triggered: %q", out)
+	}
+	if !strings.Contains(out, "Edit plan.go") {
+		t.Errorf("loop-suspect row should name dominant key; got %q", out)
+	}
+	if !strings.Contains(out, "7/10") {
+		t.Errorf("loop-suspect row should show count/window; got %q", out)
+	}
+}
+
 func TestFormatTokens(t *testing.T) {
 	cases := []struct {
 		n    int64

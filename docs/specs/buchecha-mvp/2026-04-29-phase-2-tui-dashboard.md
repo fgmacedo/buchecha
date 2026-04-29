@@ -340,9 +340,9 @@ bcc run <spec> [flags]
 
 ### P2.6: heuristics
 
-1. [ ] Loop-suspect detector: ring buffer of last 10 `(tool, primary_arg)`; threshold ≥ 7/10 same key. Display warning row in health.
-1. [ ] Error rate counter: 5-minute sliding window of `IsError=true`.
-1. [ ] Tools/min rate: 60-second sliding window.
+1. [x] Loop-suspect detector: ring buffer of last 10 `(tool, primary_arg)`; threshold ≥ 7/10 same key. Display warning row in health.
+1. [x] Error rate counter: 5-minute sliding window of `IsError=true`.
+1. [x] Tools/min rate: 60-second sliding window.
 
 ### P2.7: theming and polish
 
@@ -401,6 +401,15 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 - Phase 3 steering draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)
 
 ## Execution Journal
+
+### 2026-04-29 15:25, P2.6 heuristics
+
+- **Result**: ok
+- **Summary**: Closed P2.6 by adding the loop-suspect detector and locking in the existing 60s tools/min and 5m errors-recent windows that already shipped with the health panel. New `internal/tui/heuristics.go` introduces `loopSuspect`, a fixed-size ring of 10 `(tool name, primary_arg)` keys (using the same `primaryArg` lookup as `nowPanel`); `triggered()` requires the window to be full and returns the dominant key with its count when it reaches the 7/10 threshold. `healthPanel` embeds it, routes `KindToolUse` events through it inside `onAgentEvent`, and renders one extra warning row at the bottom of the panel when triggered: `loop-suspect: <Name> <truncated arg> (N/10)`, themed via `theme.err`. The row is omitted entirely when not triggered, so the standard 6-line layout is unchanged in the common case. New tests in `heuristics_test.go` cover sparse windows, exact threshold, below-threshold, oldest-entry eviction (window flips to a new dominant key), distinct args/tools producing distinct keys, no-arg tools, and ignoring non-tool_use events. Added an integration test in `health_test.go` that drives the panel through the threshold and asserts the row appears with `Edit plan.go` and `7/10`. Re-asserted the 60s tools/min and 5m errors-recent semantics with explicit roll-off tests so P2.6.2/P2.6.3 are covered by the test suite directly. `gofmt -l`, `go vet`, `go test -race ./...`, `go build` all clean.
+- **Commits**: this commit `tui: loop-suspect heuristic + explicit windows for tools/min and errors-recent`
+- **Decisions**: `loopSuspect` lives in its own file rather than as a method on `healthPanel` so the math is testable in isolation and so a future panel (e.g., a dedicated heuristics panel in P2.7+) can consume it without entangling the health counters. The window/threshold are package constants (`loopSuspectWindow=10`, `loopSuspectThreshold=7`); tunability via `.bcc.toml` is in the risks table but not yet a sub-item, so it stays compile-time for now. The dedup key is `(name, primaryArg)`, where `primaryArg` is the existing helper from `now.go` (file_path → path → command → pattern → url → query); reusing it keeps the heuristic aligned with how the user reads the actions panel ("the agent has been editing plan.go over and over"). A no-arg tool produces an empty-string arg and still counts as a key, so an agent stuck calling the same parameterless tool also flags. The triggered() return is `(key, count, ok)` rather than just `ok`: the warning row needs both the key and the count for "Edit plan.go (8/10)", and exposing them as named values keeps the test surface explicit. The warning row is appended to the existing health view (after `cost`), themed `theme.err` (red) so it stands out next to the existing yellow heartbeat/rate-limit warnings; placing it at the bottom keeps the standard counter ordering stable. `suspectLabel` truncates the arg at 40 runes via the existing `truncate` helper from `now.go`. P2.6.2 and P2.6.3 were already implemented during P2.5 (the journal explicitly noted "P2.6 may refine the calculation but the panel surface is now stable"); this iteration confirms the rolling-window semantics with explicit tests rather than rewriting them.
+- **Next**: P2.7 (theming and polish)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter3.jsonl. No new `[ ]` sub-items added. P2.6 is now fully `[x]`; the next pending phase is P2.7 (lipgloss theming, `--no-color`, `?` help overlay, terminal restoration on panic, manual visual review at multiple sizes).
 
 ### 2026-04-29 15:02, P2.5.7 run-local commit count
 
