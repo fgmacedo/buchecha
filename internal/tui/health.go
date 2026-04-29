@@ -17,9 +17,18 @@ type healthPanel struct {
 	lastEvent    time.Time
 	totalTools   int
 	totalErrors  int
-	totalTokens  int64
 	totalCostUSD float64
 	rate         loop.RateLimitInfo
+
+	// totalTokens accumulates the authoritative token sum from completed
+	// iterations (reconciled from KindResultSummary at each iteration end).
+	totalTokens int64
+
+	// iterTokens accumulates per-message usage from KindAssistantText events
+	// during the current in-progress iteration. Reset at each IterationStarted
+	// and reconciled into totalTokens when KindResultSummary arrives.
+	// Showing totalTokens+iterTokens in the view gives a live count.
+	iterTokens int64
 
 	// toolStamps is a ring of recent tool_use timestamps used for the
 	// 60s tools/min figure. Bounded to 1024 entries to keep memory flat
@@ -38,6 +47,25 @@ type healthPanel struct {
 
 const healthRingCap = 1024
 
+// onAny stamps the heartbeat for any loop event (IterationStarted,
+// IterationFinished, LoopFinished) so the heartbeat dot stays green
+// throughout the run, not only while agent events are flowing.
+func (h *healthPanel) onAny(at time.Time) {
+	if at.IsZero() {
+		return
+	}
+	if at.After(h.lastEvent) {
+		h.lastEvent = at
+	}
+}
+
+// onIterStarted resets the current-iteration token counter so the live
+// running total does not carry over stale partial counts from the
+// previous iteration. Called before the executor starts each new iteration.
+func (h *healthPanel) onIterStarted() {
+	h.iterTokens = 0
+}
+
 // onAgentEvent folds an agent event into the panel's counters. It
 // trims the timestamp rings on every push so the slice never grows
 // past healthRingCap.
@@ -46,7 +74,7 @@ func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	h.lastEvent = at
+	h.onAny(at)
 
 	switch ev.Kind {
 	case loop.KindToolUse:
@@ -62,9 +90,22 @@ func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
 		if ev.Rate != nil {
 			h.rate = *ev.Rate
 		}
+	case loop.KindAssistantText:
+		// Accumulate per-message token usage incrementally so the health
+		// panel shows a live count during the iteration. The terminal
+		// KindResultSummary reconciles to the authoritative total.
+		if ev.Usage != nil {
+			h.iterTokens += ev.Usage.InputTokens + ev.Usage.OutputTokens +
+				ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
+		}
 	case loop.KindResultSummary:
 		if ev.Done != nil {
-			h.totalTokens += ev.Done.InputTokens + ev.Done.OutputTokens
+			// Reconcile: replace the live per-message estimate with the
+			// authoritative four-field total from the terminal result event.
+			authoritative := ev.Done.InputTokens + ev.Done.OutputTokens +
+				ev.Done.CacheReadInputTokens + ev.Done.CacheCreationInputTokens
+			h.totalTokens += authoritative
+			h.iterTokens = 0
 			h.totalCostUSD += ev.Done.TotalCostUSD
 		}
 	}
@@ -98,7 +139,7 @@ func (h healthPanel) view(now time.Time, _ int) string {
 	}
 	b.WriteString("  rate: " + rate + "\n")
 
-	b.WriteString(fmt.Sprintf("  tokens: %s\n", formatTokens(h.totalTokens)))
+	b.WriteString(fmt.Sprintf("  tokens: %s\n", formatTokens(h.totalTokens+h.iterTokens)))
 	b.WriteString(fmt.Sprintf("  cost: $%.2f\n", h.totalCostUSD))
 
 	if key, count, ok := h.suspect.triggered(); ok {

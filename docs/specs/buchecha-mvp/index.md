@@ -86,6 +86,8 @@ graph LR
 | [2026-04-29-phase-4-execution-tuning.md](./2026-04-29-phase-4-execution-tuning.md) | spec | draft | Per-spec / per-phase tuning (model, effort, MCP scope, planner) resolved via directives + config |
 | [2026-04-29-phase-5-init-wizard.md](./2026-04-29-phase-5-init-wizard.md) | spec | draft | `bcc init` rewritten on `huh.Form`: per-field validation, back navigation, review step, accessible fallback |
 | Phase 6+ | (placeholder) | future | Self-hosting, multi-agent support, PRD→Spec→bcc flow, releases |
+| [2026-04-29-spec-vendor-neutrality.md](./2026-04-29-spec-vendor-neutrality.md) | spec | draft | Carve `internal/spec/` out of the domain; signal-shaped `SpecReader` and `JournalStore` ports so other formats (open-spec, spec-kit, bmad) plug in as adapters. Floating priority. |
+| [2026-04-29-skill-spec-authoring.md](./2026-04-29-skill-spec-authoring.md) | spec | draft | Author-side skill: active-phase scoping, `Relevant files` blocks, journal Context-summary block. Floating priority. |
 
 ## Cross-cutting decisions
 
@@ -162,6 +164,13 @@ Placeholders. Specs created when Phase 1 through 5 stabilize.
 1. [ ] **Configurable spec/doc templates**: project can override `docs/templates/` defaults; `bcc new` reads them.
 1. [ ] **goreleaser + GitHub Actions**: tag-driven releases (Linux, macOS, Windows; arm64 + x64); Homebrew formula auto-generated.
 1. [ ] **Public release**: README polish, examples, blog post positioning as Behavior-driven Coding Cycle.
+
+### Floating specs (not phase-numbered)
+
+Specs whose priority is fluid and not part of the holistic phase plan. Pulled into a phase slot when the dogfooding signal calls for them.
+
+- [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md): unwind `internal/spec/`'s coupling to bcc-markdown by introducing signal-shaped `SpecReader` / `JournalStore` ports. Pull forward when we want to run `bcc` on a non-bcc-markdown spec, or when a feature would otherwise deepen the coupling.
+- [Skill: fast-iteration spec authoring](./2026-04-29-skill-spec-authoring.md): author-side guidance (Relevant files, scoped phases, journal Context summary) packaged as a Claude Code skill. Independent of the framework; can land any time.
 
 ## Open questions
 

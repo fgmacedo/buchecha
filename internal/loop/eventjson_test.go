@@ -1,6 +1,7 @@
 package loop_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -139,9 +140,81 @@ func TestMarshalJSONEvent_AgentResultSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-04-29T14:35:00Z","done":{"duration_ms":42100,"input_tokens":12000,"num_turns":12,"output_tokens":2300,"total_cost_usd":0.34},"kind":"result_summary","level":"info","type":"agent_event"}`
+	// done keys sorted alphabetically; cache token fields present even when zero.
+	want := `{"at":"2026-04-29T14:35:00Z","done":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"duration_ms":42100,"input_tokens":12000,"num_turns":12,"output_tokens":2300,"total_cost_usd":0.34},"kind":"result_summary","level":"info","type":"agent_event"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentResultSummaryWithCacheTokens(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindResultSummary,
+		At:   at,
+		Done: &loop.ResultSummaryInfo{
+			NumTurns:                 4,
+			TotalCostUSD:             0.10,
+			InputTokens:              5000,
+			OutputTokens:             1000,
+			CacheReadInputTokens:     800,
+			CacheCreationInputTokens: 200,
+			DurationMS:               15000,
+		},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-04-29T14:35:00Z","done":{"cache_creation_input_tokens":200,"cache_read_input_tokens":800,"duration_ms":15000,"input_tokens":5000,"num_turns":4,"output_tokens":1000,"total_cost_usd":0.1},"kind":"result_summary","level":"info","type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentAssistantTextWithUsage(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 10, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindAssistantText,
+		At:   at,
+		Text: "Adjusting parser for edge case.",
+		Usage: &loop.UsageInfo{
+			InputTokens:              1200,
+			OutputTokens:             300,
+			CacheReadInputTokens:     500,
+			CacheCreationInputTokens: 100,
+		},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// usage and its keys appear when non-nil; top-level keys sorted alphabetically.
+	want := `{"at":"2026-04-29T14:32:10Z","kind":"assistant_text","level":"debug","text":"Adjusting parser for edge case.","type":"agent_event","usage":{"cache_creation_input_tokens":100,"cache_read_input_tokens":500,"input_tokens":1200,"output_tokens":300}}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_AgentAssistantTextWithoutUsage(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 11, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
+		Kind: loop.KindAssistantText,
+		At:   at,
+		Text: "Plain message body.",
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Re-parse and check key absence rather than substring-matching, so
+	// the assertion does not depend on the text body containing "usage".
+	var obj map[string]any
+	if err := json.Unmarshal(got, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, present := obj["usage"]; present {
+		t.Errorf("usage key should be absent when Usage is nil: %s", got)
 	}
 }
 

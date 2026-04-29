@@ -27,11 +27,22 @@ type AgentEvent struct {
 	Kind AgentEventKind
 	At   time.Time
 
-	Init *InitInfo          // KindInit
-	Tool *ToolCallInfo      // KindToolUse, KindToolResult
-	Text string             // KindThinking, KindAssistantText
-	Rate *RateLimitInfo     // KindRateLimit
-	Done *ResultSummaryInfo // KindResultSummary
+	Init  *InitInfo          // KindInit
+	Tool  *ToolCallInfo      // KindToolUse, KindToolResult
+	Text  string             // KindThinking, KindAssistantText
+	Usage *UsageInfo         // KindAssistantText only: per-message token usage
+	Rate  *RateLimitInfo     // KindRateLimit
+	Done  *ResultSummaryInfo // KindResultSummary
+}
+
+// UsageInfo carries per-message token usage attached to assistant text
+// events. The four fields sum to the total billable tokens for that
+// message. Cache fields are zero when caching was not involved.
+type UsageInfo struct {
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadInputTokens     int64
+	CacheCreationInputTokens int64
 }
 
 // InitInfo carries data from a session-init event.
@@ -58,13 +69,16 @@ type RateLimitInfo struct {
 }
 
 // ResultSummaryInfo carries the agent's per-iteration cost and usage
-// totals (last event of an iteration in stream-json).
+// totals (last event of an iteration in stream-json). The four token
+// fields sum to the total billable token count for the iteration.
 type ResultSummaryInfo struct {
-	NumTurns     int
-	TotalCostUSD float64
-	InputTokens  int64
-	OutputTokens int64
-	DurationMS   int64
+	NumTurns                 int
+	TotalCostUSD             float64
+	InputTokens              int64
+	OutputTokens             int64
+	CacheReadInputTokens     int64
+	CacheCreationInputTokens int64
+	DurationMS               int64
 }
 
 // ExecResult is the result of one Executor.Run.

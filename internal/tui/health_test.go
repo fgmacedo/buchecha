@@ -37,6 +37,55 @@ func TestHealth_onAgentEvent_AccumulatesCounters(t *testing.T) {
 	}
 }
 
+func TestHealth_AssistantTextUsageAccumulatesAndReconciles(t *testing.T) {
+	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
+	h := healthPanel{startedAt: now.Add(-time.Minute)}
+
+	// Two assistant messages with per-message Usage. The four-field sum
+	// should accumulate into iterTokens (the live, in-flight counter).
+	h.onAgentEvent(loop.AgentEvent{
+		Kind: loop.KindAssistantText, At: now.Add(-30 * time.Second),
+		Text: "first turn",
+		Usage: &loop.UsageInfo{
+			InputTokens: 100, OutputTokens: 20,
+			CacheReadInputTokens: 10, CacheCreationInputTokens: 5,
+		},
+	})
+	h.onAgentEvent(loop.AgentEvent{
+		Kind: loop.KindAssistantText, At: now.Add(-15 * time.Second),
+		Text: "second turn",
+		Usage: &loop.UsageInfo{
+			InputTokens: 200, OutputTokens: 40,
+			CacheReadInputTokens: 0, CacheCreationInputTokens: 0,
+		},
+	})
+	if h.iterTokens != 100+20+10+5+200+40 {
+		t.Errorf("iterTokens = %d, want %d", h.iterTokens, 375)
+	}
+	if h.totalTokens != 0 {
+		t.Errorf("totalTokens should still be 0 before result_summary; got %d", h.totalTokens)
+	}
+	// Live display sums totalTokens + iterTokens.
+	if got := h.totalTokens + h.iterTokens; got != 375 {
+		t.Errorf("live total = %d, want 375", got)
+	}
+
+	// Terminal result event reconciles to the authoritative four-field
+	// total and resets the per-iteration counter. The authoritative value
+	// can differ slightly from the per-message sum (ok by design).
+	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindResultSummary, At: now, Done: &loop.ResultSummaryInfo{
+		InputTokens: 320, OutputTokens: 64,
+		CacheReadInputTokens: 12, CacheCreationInputTokens: 5,
+		TotalCostUSD: 0.10,
+	}})
+	if h.iterTokens != 0 {
+		t.Errorf("iterTokens should reset on result_summary; got %d", h.iterTokens)
+	}
+	if h.totalTokens != 320+64+12+5 {
+		t.Errorf("totalTokens = %d, want %d", h.totalTokens, 401)
+	}
+}
+
 func TestHealth_view_RendersAllRows(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 	h := healthPanel{startedAt: now.Add(-time.Minute)}

@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +12,24 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/spec"
 )
+
+// fakeGitProbe counts calls and returns canned values.
+type fakeGitProbe struct {
+	dirty    atomic.Int32
+	commits  atomic.Int32
+	dirtyN   int
+	commitsN int
+}
+
+func (f *fakeGitProbe) DirtyFileCount(_ context.Context) (int, error) {
+	f.dirty.Add(1)
+	return f.dirtyN, nil
+}
+
+func (f *fakeGitProbe) CommitsSince(_ context.Context, _ string) (int, error) {
+	f.commits.Add(1)
+	return f.commitsN, nil
+}
 
 // newTestModel builds a Model with a buffered events channel returned
 // alongside so tests can push events into it.
@@ -109,6 +129,119 @@ func TestUpdate_IterationStartedTracksIndex(t *testing.T) {
 	mm := got.(Model)
 	if mm.header.iter != 3 {
 		t.Errorf("header.iter = %d, want 3", mm.header.iter)
+	}
+}
+
+// drainBatchChildren expands a tea.Cmd into its child cmds. Handles both
+// tea.Batch (single batch wrapping multiple cmds) and tea.sequenceMsg
+// shapes; if the cmd is a single non-batch cmd, its msg is irrelevant
+// here so the caller treats the children list as empty.
+func drainBatchChildren(t *testing.T, cmd tea.Cmd) []tea.Cmd {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		return batch
+	}
+	return nil
+}
+
+func TestUpdate_IterationStartedFiresImmediateGitProbe(t *testing.T) {
+	probe := &fakeGitProbe{dirtyN: 1, commitsN: 0}
+	events := make(chan loop.Event, 1)
+	gate := NewGate()
+	m := New(Options{
+		Events:   events,
+		Cancel:   func() {},
+		Gate:     gate,
+		SpecPath: "spec.md",
+		Branch:   "feat/x",
+		MaxIter:  5,
+		GitProbe: probe,
+	})
+
+	// Close the events channel so the inner readEventCmd does not block
+	// when we drive it synchronously below.
+	close(events)
+
+	_, cmd := m.Update(eventMsg{ev: loop.IterationStarted{
+		Index: 1, MaxIter: 5, BaselineSHA: "abc123",
+	}})
+	if cmd == nil {
+		t.Fatalf("expected cmd from IterationStarted handler")
+	}
+	children := drainBatchChildren(t, cmd)
+
+	// The batch must contain at least one cmd that produces a gitProbeMsg
+	// without waiting for a tick. Run each child once with a short timeout
+	// guard; we cannot synchronously drive tea.Tick, but the immediate cmd
+	// returns instantly.
+	sawProbeMsg := false
+	for _, c := range children {
+		if c == nil {
+			continue
+		}
+		done := make(chan tea.Msg, 1)
+		go func(cm tea.Cmd) { done <- cm() }(c)
+		select {
+		case msg := <-done:
+			if _, ok := msg.(gitProbeMsg); ok {
+				sawProbeMsg = true
+			}
+		case <-time.After(50 * time.Millisecond):
+			// tea.Tick blocks for gitProbeInterval; ignore.
+		}
+	}
+	if !sawProbeMsg {
+		t.Errorf("expected an immediate gitProbeMsg in the batch; got none")
+	}
+	if probe.dirty.Load() < 1 {
+		t.Errorf("DirtyFileCount not called; got %d", probe.dirty.Load())
+	}
+	if probe.commits.Load() < 1 {
+		t.Errorf("CommitsSince not called for run baseline; got %d", probe.commits.Load())
+	}
+}
+
+func TestUpdate_IterationStartedWithoutBaselineDoesNotProbe(t *testing.T) {
+	probe := &fakeGitProbe{}
+	events := make(chan loop.Event, 1)
+	gate := NewGate()
+	m := New(Options{
+		Events:   events,
+		Cancel:   func() {},
+		Gate:     gate,
+		SpecPath: "spec.md",
+		Branch:   "feat/x",
+		MaxIter:  5,
+		GitProbe: probe,
+	})
+	close(events)
+
+	_, cmd := m.Update(eventMsg{ev: loop.IterationStarted{
+		Index: 1, MaxIter: 5, BaselineSHA: "",
+	}})
+	children := drainBatchChildren(t, cmd)
+
+	for _, c := range children {
+		if c == nil {
+			continue
+		}
+		done := make(chan tea.Msg, 1)
+		go func(cm tea.Cmd) { done <- cm() }(c)
+		select {
+		case msg := <-done:
+			if _, ok := msg.(gitProbeMsg); ok {
+				t.Errorf("no probe should fire when BaselineSHA is empty; got %T", msg)
+			}
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if probe.dirty.Load() != 0 || probe.commits.Load() != 0 {
+		t.Errorf("git probe must not be called without a baseline; dirty=%d commits=%d",
+			probe.dirty.Load(), probe.commits.Load())
 	}
 }
 

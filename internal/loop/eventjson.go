@@ -80,6 +80,14 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 		}
 	case KindThinking, KindAssistantText:
 		out["text"] = ae.Text
+		if ae.Kind == KindAssistantText && ae.Usage != nil {
+			out["usage"] = map[string]any{
+				"input_tokens":                ae.Usage.InputTokens,
+				"output_tokens":               ae.Usage.OutputTokens,
+				"cache_read_input_tokens":     ae.Usage.CacheReadInputTokens,
+				"cache_creation_input_tokens": ae.Usage.CacheCreationInputTokens,
+			}
+		}
 	case KindToolUse:
 		if ae.Tool != nil {
 			tool := map[string]any{
@@ -112,11 +120,13 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 	case KindResultSummary:
 		if ae.Done != nil {
 			out["done"] = map[string]any{
-				"num_turns":      ae.Done.NumTurns,
-				"total_cost_usd": ae.Done.TotalCostUSD,
-				"input_tokens":   ae.Done.InputTokens,
-				"output_tokens":  ae.Done.OutputTokens,
-				"duration_ms":    ae.Done.DurationMS,
+				"num_turns":                   ae.Done.NumTurns,
+				"total_cost_usd":              ae.Done.TotalCostUSD,
+				"input_tokens":                ae.Done.InputTokens,
+				"output_tokens":               ae.Done.OutputTokens,
+				"cache_read_input_tokens":     ae.Done.CacheReadInputTokens,
+				"cache_creation_input_tokens": ae.Done.CacheCreationInputTokens,
+				"duration_ms":                 ae.Done.DurationMS,
 			}
 		}
 	}

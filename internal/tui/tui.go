@@ -207,6 +207,8 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.now.onIterStarted()
 		m.risk.onIterStarted(e.Index)
 		m.header.onAny(e.At)
+		m.health.onAny(e.At)
+		m.health.onIterStarted()
 		// Treat the first iteration's BaselineSHA as the run-local baseline
 		// so the risk panel can show how many commits the run has produced
 		// (computed via GitProbe.CommitsSince in the next tick). Subsequent
@@ -214,10 +216,16 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		// the first is preserved here.
 		if m.runBaselineSHA == "" && e.BaselineSHA != "" {
 			m.runBaselineSHA = e.BaselineSHA
+			// Fire an immediate probe so the commit count appears on the
+			// next render rather than after the next 2s tick.
+			if m.gitProbe != nil {
+				cmds = append(cmds, gitProbeNowCmd(m.gitCtx, m.gitProbe, m.runBaselineSHA))
+			}
 		}
 	case loop.IterationFinished:
 		m.progress.onIterationFinished(time.Duration(e.DurationMS) * time.Millisecond)
 		m.header.onAny(e.At)
+		m.health.onAny(e.At)
 		// Release the gate (no-op if paused).
 		if m.gate != nil {
 			m.gate.IterDone()
@@ -229,6 +237,7 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 	case loop.LoopFinished:
 		m.finished = true
 		m.header.onAny(e.At)
+		m.health.onAny(e.At)
 		// Drain remaining messages until the channel closes; tea.Quit
 		// via the next eventMsg{closed: true} from readEventCmd.
 	case loop.AgentEventReceived:
@@ -322,21 +331,34 @@ type gitProbeMsg struct {
 	commitsKnown bool
 }
 
+func doGitProbe(ctx context.Context, probe GitProbe, baselineSHA string) gitProbeMsg {
+	var msg gitProbeMsg
+	if n, err := probe.DirtyFileCount(ctx); err == nil {
+		msg.dirtyCount = n
+		msg.dirtyKnown = true
+	}
+	if baselineSHA != "" {
+		if n, err := probe.CommitsSince(ctx, baselineSHA); err == nil {
+			msg.commitCount = n
+			msg.commitsKnown = true
+		}
+	}
+	return msg
+}
+
 func gitProbeCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea.Cmd {
 	return tea.Tick(gitProbeInterval, func(time.Time) tea.Msg {
-		var msg gitProbeMsg
-		if n, err := probe.DirtyFileCount(ctx); err == nil {
-			msg.dirtyCount = n
-			msg.dirtyKnown = true
-		}
-		if baselineSHA != "" {
-			if n, err := probe.CommitsSince(ctx, baselineSHA); err == nil {
-				msg.commitCount = n
-				msg.commitsKnown = true
-			}
-		}
-		return msg
+		return doGitProbe(ctx, probe, baselineSHA)
 	})
+}
+
+// gitProbeNowCmd performs a git probe immediately (no tick delay). Used
+// when the run-local baseline SHA is first known so the commit count
+// appears on the next render rather than after the next 2s tick.
+func gitProbeNowCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea.Cmd {
+	return func() tea.Msg {
+		return doGitProbe(ctx, probe, baselineSHA)
+	}
 }
 
 // specParsedMsg carries a freshly parsed plan and latest result.

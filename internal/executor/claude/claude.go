@@ -260,6 +260,12 @@ func parseAssistant(raw []byte, at time.Time) []loop.AgentEvent {
 	var v struct {
 		Message struct {
 			Content []assistantContent `json:"content"`
+			Usage   struct {
+				InputTokens              int64 `json:"input_tokens"`
+				OutputTokens             int64 `json:"output_tokens"`
+				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -294,6 +300,26 @@ func parseAssistant(raw []byte, at time.Time) []loop.AgentEvent {
 				At:   at,
 				Tool: &loop.ToolCallInfo{ID: c.ID, Name: c.Name, Args: c.Input},
 			})
+		}
+	}
+	// Attach the per-message usage to the first KindAssistantText event.
+	// The usage block covers the whole message; attaching it to the text
+	// event (the natural carrier) lets the health panel accumulate tokens
+	// incrementally without waiting for the terminal result event.
+	// Messages that produce no text event (tool-only turns) contribute
+	// tokens only at iteration end via KindResultSummary reconciliation.
+	u := v.Message.Usage
+	if u.InputTokens+u.OutputTokens+u.CacheReadInputTokens+u.CacheCreationInputTokens > 0 {
+		for i := range out {
+			if out[i].Kind == loop.KindAssistantText {
+				out[i].Usage = &loop.UsageInfo{
+					InputTokens:              u.InputTokens,
+					OutputTokens:             u.OutputTokens,
+					CacheReadInputTokens:     u.CacheReadInputTokens,
+					CacheCreationInputTokens: u.CacheCreationInputTokens,
+				}
+				break
+			}
 		}
 	}
 	return out
@@ -398,8 +424,10 @@ func parseResult(raw []byte, at time.Time) []loop.AgentEvent {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 		DurationMS   int64   `json:"duration_ms"`
 		Usage        struct {
-			InputTokens  int64 `json:"input_tokens"`
-			OutputTokens int64 `json:"output_tokens"`
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -409,11 +437,13 @@ func parseResult(raw []byte, at time.Time) []loop.AgentEvent {
 		Kind: loop.KindResultSummary,
 		At:   at,
 		Done: &loop.ResultSummaryInfo{
-			NumTurns:     v.NumTurns,
-			TotalCostUSD: v.TotalCostUSD,
-			DurationMS:   v.DurationMS,
-			InputTokens:  v.Usage.InputTokens,
-			OutputTokens: v.Usage.OutputTokens,
+			NumTurns:                 v.NumTurns,
+			TotalCostUSD:             v.TotalCostUSD,
+			DurationMS:               v.DurationMS,
+			InputTokens:              v.Usage.InputTokens,
+			OutputTokens:             v.Usage.OutputTokens,
+			CacheReadInputTokens:     v.Usage.CacheReadInputTokens,
+			CacheCreationInputTokens: v.Usage.CacheCreationInputTokens,
 		},
 	}}
 }
