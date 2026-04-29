@@ -38,11 +38,12 @@ type DeciderInput struct {
 	UncheckedAfter int
 }
 
-// Decide implements the bash exec-spec.sh decision table:
+// Decide implements the loop decision table:
 //
 //	HEADAdvanced=false                            → ExitHEADStuck (3), Stop
 //	LatestResult=Unknown                          → ExitInvalid (2), Stop
 //	LatestResult=Blocked                          → ExitBlocked (1), Stop
+//	LatestResult=Review                           → ExitReview (6), Stop
 //	LatestResult=Done && UncheckedAfter > 0       → ExitDoneWithLeftovers (5), Stop
 //	LatestResult=Done && UncheckedAfter == 0      → ExitDone (0), Stop
 //	LatestResult=OK or Partial                    → Continue
@@ -58,6 +59,8 @@ func Decide(in DeciderInput) Decision {
 		return Decision{Action: ActionStop, ExitCode: ExitInvalid}
 	case spec.ResultBlocked:
 		return Decision{Action: ActionStop, ExitCode: ExitBlocked}
+	case spec.ResultReview:
+		return Decision{Action: ActionStop, ExitCode: ExitReview}
 	case spec.ResultDone:
 		if in.UncheckedAfter > 0 {
 			return Decision{Action: ActionStop, ExitCode: ExitDoneWithLeftovers}

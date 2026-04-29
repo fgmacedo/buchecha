@@ -78,6 +78,7 @@ type Results struct {
 	Partial string `toml:"partial"`
 	Done    string `toml:"done"`
 	Blocked string `toml:"blocked"`
+	Review  string `toml:"review"`
 }
 
 // Git holds git-related settings.

@@ -23,4 +23,10 @@ const (
 	// ExitDoneWithLeftovers: agent declared 'done' but the plan still
 	// has [ ] items. Aborted to enforce the journal contract.
 	ExitDoneWithLeftovers = 5
+
+	// ExitReview: agent declared 'review'. Recoverable observer checkpoint:
+	// the spec or the protocol asked the human to look and edit; once the
+	// observer fills the gap, re-trigger `bcc run`. Distinct from Blocked
+	// (unrecoverable until a tech fix).
+	ExitReview = 6
 )

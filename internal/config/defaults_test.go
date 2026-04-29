@@ -24,6 +24,9 @@ func TestApplyDefaults_EnglishDefault(t *testing.T) {
 	if c.Loop.Results.Done != "done" {
 		t.Errorf("Results.Done = %q", c.Loop.Results.Done)
 	}
+	if c.Loop.Results.Review != "review" {
+		t.Errorf("Results.Review = %q", c.Loop.Results.Review)
+	}
 	if c.Executor.Agent != "claude" {
 		t.Errorf("Executor.Agent = %q", c.Executor.Agent)
 	}
@@ -61,6 +64,9 @@ func TestApplyDefaults_PtBR(t *testing.T) {
 	}
 	if c.Loop.Results.Blocked != "bloqueado" {
 		t.Errorf("Blocked = %q", c.Loop.Results.Blocked)
+	}
+	if c.Loop.Results.Review != "revisão" {
+		t.Errorf("Review = %q (want revisão)", c.Loop.Results.Review)
 	}
 }
 

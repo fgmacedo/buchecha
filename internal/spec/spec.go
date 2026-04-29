@@ -27,6 +27,12 @@ const (
 	ResultPartial
 	ResultDone
 	ResultBlocked
+	// ResultReview is a recoverable stop: the agent paused intentionally
+	// at a checkpoint declared by the spec (e.g., a placeholder phase
+	// waiting on observer input) and the human needs only to fill the
+	// gap and re-trigger. Distinct from Blocked, which is unrecoverable
+	// without a human fix to something that broke.
+	ResultReview
 )
 
 // String returns the canonical English name of r. Used for diagnostics; the
@@ -41,6 +47,8 @@ func (r Result) String() string {
 		return "done"
 	case ResultBlocked:
 		return "blocked"
+	case ResultReview:
+		return "review"
 	default:
 		return "unknown"
 	}
@@ -54,22 +62,29 @@ type ResultVocab struct {
 	Partial string
 	Done    string
 	Blocked string
+	Review  string
 }
 
 // Map returns the Result corresponding to raw, or ResultUnknown if it does
 // not match any vocabulary entry. Comparison trims surrounding whitespace
 // and is otherwise case-sensitive: the contract documented in the
 // autonomous-execution guide is strict on purpose.
+//
+// Empty vocabulary entries are skipped (an unconfigured value should not
+// match anything, especially not the empty surface string).
 func (v ResultVocab) Map(raw string) Result {
-	switch strings.TrimSpace(raw) {
-	case v.OK:
+	s := strings.TrimSpace(raw)
+	switch {
+	case v.OK != "" && s == v.OK:
 		return ResultOK
-	case v.Partial:
+	case v.Partial != "" && s == v.Partial:
 		return ResultPartial
-	case v.Done:
+	case v.Done != "" && s == v.Done:
 		return ResultDone
-	case v.Blocked:
+	case v.Blocked != "" && s == v.Blocked:
 		return ResultBlocked
+	case v.Review != "" && s == v.Review:
+		return ResultReview
 	}
 	return ResultUnknown
 }

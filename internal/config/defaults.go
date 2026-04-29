@@ -69,6 +69,9 @@ func applyDefaultsEn(c *Config) {
 	if c.Loop.Results.Blocked == "" {
 		c.Loop.Results.Blocked = "blocked"
 	}
+	if c.Loop.Results.Review == "" {
+		c.Loop.Results.Review = "review"
+	}
 }
 
 func applyDefaultsPtBR(c *Config) {
@@ -92,5 +95,8 @@ func applyDefaultsPtBR(c *Config) {
 	}
 	if c.Loop.Results.Blocked == "" {
 		c.Loop.Results.Blocked = "bloqueado"
+	}
+	if c.Loop.Results.Review == "" {
+		c.Loop.Results.Review = "revisão"
 	}
 }

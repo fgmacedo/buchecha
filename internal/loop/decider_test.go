@@ -52,6 +52,11 @@ func TestDecide(t *testing.T) {
 			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultUnknown, UncheckedAfter: 0},
 			want: Decision{Action: ActionStop, ExitCode: ExitInvalid},
 		},
+		{
+			name: "review stops with ExitReview (exit 6)",
+			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultReview, UncheckedAfter: 5},
+			want: Decision{Action: ActionStop, ExitCode: ExitReview},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
