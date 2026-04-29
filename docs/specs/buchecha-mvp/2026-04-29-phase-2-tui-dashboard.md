@@ -402,6 +402,15 @@ Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 
 ## Execution Journal
 
+### 2026-04-29 16:30, P2.7.3 manual visual review (no-op review checkpoint)
+
+- **Result**: review
+- **Summary**: Iteration started from a clean tree at 80c9722 (`tui: theme polish, ? help overlay, panic-safe TUI host`) with the spec unchanged since the previous `review` exit. The next pending phase is still P2.7 and its only `[ ]` is P2.7.3 ("Manual visual review at 80x24, 120x40, 200x60 terminal sizes"), which is observer-driven by content. Re-asserted `go build`, `go vet`, `go test ./...` clean against `feat/phase-2`. No code changes; this commit only appends the journal entry to keep `HEAD` advancing per the loop contract.
+- **Commits**: this commit `spec: P2.7.3 review checkpoint (no spec or working-tree change)`
+- **Decisions**: Procedure rule applies: P2.7.3 is observer-driven by nature (a human must visually inspect the dashboard at three terminal sizes), so the agent re-exits `review` per `docs/guides/autonomous-execution.md` rather than inventing content for the placeholder. Did NOT add a programmatic width-check sub-item: the spec calls out *manual* visual review and substituting a `lipgloss.Width()` assertion would invent scope rather than satisfy the existing item; the observer can edit the spec to that effect if they prefer an automated guardrail. Did NOT skip P2.7.3 to advance to P2.8 either: skipping a `[ ]` would violate the "no scope transfer in prose" rule and would propagate undeclared work into the next phase. Bumped `BCC_MAX_ITERATIONS=5` is acknowledged but does not change the analysis: the observer must act before further iterations have anything new to do.
+- **Next**: P2.7 (P2.7.3 manual visual review by observer) → P2.8 (end-to-end validation)
+- **Notes for observer**: BCC_JSONL_PATH=.bcc/logs/2026-04-29-phase-2-tui-dashboard-iter1.jsonl. Nothing changed since the previous review checkpoint at 80c9722. To unblock the loop, you have three options: (a) perform the manual visual review (rebuild with `go install ./cmd/bcc`, run `bcc run <some-spec> --output tui` at terminal sizes 80x24, 120x40, 200x60, confirm no panel overflow / no clipping / `?` overlay toggles / `--no-color` produces plain ASCII), then mark P2.7.3 [x] and re-trigger; (b) rescope: replace P2.7.3 with a programmatic width-check sub-item the agent can implement (e.g., "render `View()` at widths 80/120/200 with a populated Model and assert no rendered line exceeds the width"); (c) drop P2.7.3 entirely and rely on P2.8's end-to-end TUI validation to surface visual issues. Until one of those happens, every re-trigger will produce another no-op `review` exit.
+
 ### 2026-04-29 15:50, P2.7 theming and polish (3/4)
 
 - **Result**: review
