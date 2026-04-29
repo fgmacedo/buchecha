@@ -331,9 +331,11 @@ Each item is a deliverable with a checkbox. The order respects the layer rules i
 
 ### P4.7: init wizard
 
-1. [ ] Add the MCP mode question to `internal/cli/init.go` (default `isolated`).
-2. [ ] Add the planner question (default `disabled`).
-3. [ ] Update `internal/cli/init_test.go` golden output.
+The MCP mode and planner fields land in the wizard via [Phase 5: form-based `bcc init` wizard](./2026-04-29-phase-5-init-wizard.md), specifically P5.6 (cobra wiring) and P5.7 (writer additions for new fields). This phase contributes only the typed defaults and the resolver wiring; the wizard surface is owned by Phase 5.
+
+1. [ ] Confirm `internal/config.Executor.MCPMode` and `internal/config.Loop.PlannerEnabled` (with defaults `"isolated"` and `false`) are present and round-trip through the TOML loader. Phase 5 P5.7 adds them to `WriteConfigTOML` and the wizard `huh.Form`.
+2. [ ] No change to the linear stdin wizard. If Phase 5 has not landed when this phase ships, defer the wizard surface for these fields until Phase 5.
+3. [ ] The resolver in P4.3 must read the new fields with their defaults whether or not the user re-ran `bcc init`; this is the safety net that lets P4.7 stay surface-only.
 
 ### P4.8: TUI surface
 

@@ -62,9 +62,17 @@ graph TD
 graph LR
     INIT["index.md<br/>(this doc)"] --> P1["Phase 1<br/>bash parity"]
     INIT --> P2["Phase 2<br/>TUI dashboard"]
-    INIT --> P3["Phase 3+<br/>self-hosting & polish"]
+    INIT --> P3["Phase 3<br/>steering"]
+    INIT --> P4["Phase 4<br/>execution tuning"]
+    INIT --> P5["Phase 5<br/>init wizard rework"]
+    INIT --> P6["Phase 6+<br/>self-hosting & polish"]
     P1 --> P2
     P2 --> P3
+    P2 --> P4
+    P2 --> P5
+    P3 --> P6
+    P4 --> P6
+    P5 --> P6
 ```
 
 ## Documents in this initiative
@@ -75,7 +83,9 @@ graph LR
 | [2026-04-29-phase-1-bash-parity.md](./2026-04-29-phase-1-bash-parity.md) | spec | draft | `bcc run` with full functional parity to `scripts/exec-spec.sh` |
 | [2026-04-29-phase-2-tui-dashboard.md](./2026-04-29-phase-2-tui-dashboard.md) | spec | draft | Live TUI built into `bcc run` plus `--output text\|json` for headless / orchestrator use; normalized event model |
 | [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md) | spec | draft | Mid-run user-to-agent steering via TUI input, capability-gated per executor |
-| Phase 3+ | (placeholder) | future | Self-hosting, multi-agent support, PRD→Spec→bcc flow, releases |
+| [2026-04-29-phase-4-execution-tuning.md](./2026-04-29-phase-4-execution-tuning.md) | spec | draft | Per-spec / per-phase tuning (model, effort, MCP scope, planner) resolved via directives + config |
+| [2026-04-29-phase-5-init-wizard.md](./2026-04-29-phase-5-init-wizard.md) | spec | draft | `bcc init` rewritten on `huh.Form`: per-field validation, back navigation, review step, accessible fallback |
+| Phase 6+ | (placeholder) | future | Self-hosting, multi-agent support, PRD→Spec→bcc flow, releases |
 
 ## Cross-cutting decisions
 
@@ -124,11 +134,28 @@ Detailed plan in [2026-04-29-phase-2-tui-dashboard.md](./2026-04-29-phase-2-tui-
 
 Goal: `bcc run <spec>` opens a live TUI by default showing real-time activity, plan progress, health, and risk panels. Same process owns the loop and the dashboard. The `Executor` port is refactored to emit a normalized event stream so codex and gemini drop in without TUI changes. `--output text` falls back to structured slog on stderr; `--output json` emits a stable NDJSON event stream on stdout (verbosity-filtered) so a parent `bcc` or any tool can orchestrate child runs.
 
-### Phase 3+: Future scope
+### Phase 3: Mid-run steering
 
-Some specs are draft; others are placeholders. Specs created when Phase 1 and 2 stabilize.
+Detailed plan in [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md).
 
-1. [ ] **Mid-run steering** (draft: [2026-04-29-phase-3-steering.md](./2026-04-29-phase-3-steering.md)): user injects messages into the live agent conversation via the TUI; capability-gated per executor adapter.
+Goal: user injects messages into the live agent conversation via the TUI; capability-gated per executor adapter.
+
+### Phase 4: Execution tuning
+
+Detailed plan in [2026-04-29-phase-4-execution-tuning.md](./2026-04-29-phase-4-execution-tuning.md).
+
+Goal: per-spec and per-phase tuning of model, reasoning effort, MCP scope, and planner enablement, resolved via in-spec directives plus `.bcc.toml`. Surfaces in the TUI header and the `bcc init` wizard.
+
+### Phase 5: Init wizard rework
+
+Detailed plan in [2026-04-29-phase-5-init-wizard.md](./2026-04-29-phase-5-init-wizard.md).
+
+Goal: `bcc init` rewritten on `huh.Form` with per-field validation, multi-group navigation, review step, and accessible fallback. The pure `WriteConfigTOML` writer stays unchanged; only the front-end is replaced. Phase 4's MCP / planner fields land here.
+
+### Phase 6+: Future scope
+
+Placeholders. Specs created when Phase 1 through 5 stabilize.
+
 1. [ ] **Self-hosting validation**: run a `bcc`-managed spec end-to-end on the `bcc` repo itself.
 1. [ ] **Multi-agent executor support**: codex, gemini, generic subprocess. Runtime selection via `[executor].agent`.
 1. [ ] **PRD → Spec → bcc flow**: `bcc new prd <slug>`, `bcc new spec <slug>` scaffold from templates. Optional `bcc derive spec <prd>` that asks the agent to draft a spec from a PRD.

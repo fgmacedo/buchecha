@@ -52,6 +52,7 @@ A third use case is structural: when `bcc` itself is invoked by another agent, b
 - [ ] Graceful resize, no terminal corruption on exit (panic / signal / kill).
 - [ ] Live-update contract: tokens, cost, heartbeat, plan progress, and the run-local commit count change in real time during an iteration, not only at iteration boundaries. A panel that stays visibly empty during work in progress is a bug.
 - [ ] Charm v2 stack: `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `charm.land/bubbles/v2` (with `charm.land/glamour/v2` for the optional spec preview). No v1 imports; greenfield project pins to current latest stable.
+- [ ] Post-loop session contract (TUI mode): the agent's terminal `Result` (`review`, `done`, `blocked`, `max iterations`) is a signal that the human is needed, not a process exit. `bcc` keeps the alt-screen, freezes the dashboard, and shows a menu (resume / edit spec / view journal / show audit log / quit). Text and JSON modes still exit immediately so orchestrators are unaffected.
 
 ### Non-goals
 
@@ -350,7 +351,6 @@ bcc run <spec> [flags]
 
 1. [x] `internal/tui/theme.go` lipgloss styles. `--no-color` disables color via `lipgloss.SetColorProfile(termenv.Ascii)`.
 1. [x] Help screen: `?` toggles modal overlay listing keybindings.
-1. [ ] Manual visual review at 80x24, 120x40, 200x60 terminal sizes.
 1. [x] Terminal restoration on panic: deferred `program.ReleaseTerminal()` plus SIGTERM signal handler.
 
 ### P2.8: panel layout and visual fidelity
@@ -364,7 +364,6 @@ The dashboard renders panels as bordered boxes laid out per the [Layout (TUI mod
 1. [x] Header reshape: render the header as a two-line bordered box per the mockup — branch + iter `n/N` + elapsed in the top-border title; spec path + alive marker on the body line. Receives the layout's full width.
 1. [x] Layout cache on resize: `tea.WindowSizeMsg` recomputes a `layout` struct (`headerW`, `nowW`, `healthW`, `progressW`, `riskW`, `actionsW`) on the Model. Panels and the box wrapper read precomputed widths.
 1. [x] Tests: render the Model at 80, 120, and 200 columns; assert (a) `lipgloss.Width` of every rendered line is ≤ the terminal width, (b) the now box sits to the left of the health box on the same vertical band (top-aligned), (c) the header box's title contains branch and iter, (d) below the 40-col threshold every box falls back to plain `[ name ]` and no rendered line exceeds the width.
-1. [ ] Manual visual review at 80x24, 120x40, 200x60 (supersedes the placeholder P2.7.3): observer confirms no overflow, no clipping, panels populate, `?` toggles, `--no-color` produces ASCII-only output. Mark P2.7.3 [x] in the same iteration that closes this phase.
 
 ### P2.9: live data updates
 
@@ -390,19 +389,62 @@ The dashboard adopts the standard Charm component set (bubbles, lipgloss v2, opt
 1. [ ] Drop `--no-color`'s `lipgloss.SetColorProfile(termenv.Ascii)` call and use the v2 lipgloss `WithColorProfile` / `Renderer` API per the v2 migration guide. `termenv` becomes an indirect dependency only.
 1. [ ] Tests: panel-level tests stay green after the component swaps; new tests assert `keyMap.FullHelp()` lists every binding the model handles, and that `actionsPanel` scrolls past the 5-entry visible window when more events arrive.
 
-### P2.11: end-to-end validation
+### P2.11: post-loop interactive session (TUI mode)
 
-1. [ ] Run `bcc run` on a real one-phase spec with `--output tui`. Confirm panels populate and iteration completes.
-1. [ ] Same spec with `--output text`: confirm slog output is readable and exit code matches TUI mode.
+In TUI mode (`--output tui`), `bcc` does not exit when the inner loop terminates. The terminal `Result` of the agent (`review`, `done`, `blocked`) is a signal that the human is needed, not a process exit; `bcc` is the human's interface to that signal. The dashboard transitions to an idle "session" state with the run's outcome on screen and a menu of actions; the user picks the next step without leaving the alt-screen and without re-typing `bcc run` in the shell.
+
+Text and JSON modes preserve the current exit-on-`LoopFinished` behavior because their consumers (CI, parent `bcc`, log aggregators) expect a process to terminate.
+
+Menu actions:
+
+- `[r] Resume loop`: builds a fresh `loop.Loop` with the same Config and SpecPath, re-attaches it to the existing TUI Model (panels reset to per-iteration counters, run-local commit count keeps its baseline), and starts a new iteration. Useful after the user edited the spec from outside or used `[e]`.
+- `[e] Edit spec in $EDITOR`: suspends the program with `program.ReleaseTerminal()`, runs `$EDITOR <spec-path>` (falls back to `$VISUAL`, then prints a hint and returns to menu when neither is set), restores the terminal with `program.RestoreTerminal()`. Edit time is unbounded; nothing is running.
+- `[j] View latest journal entry`: replaces the menu with a `bubbles/v2/viewport` showing the last `**Result**` block rendered via `charm.land/glamour/v2`. `q` returns to the menu.
+- `[l] Audit log path`: prints the JSONL audit log path in a copyable form. Optional: copy to clipboard via the bubbletea v2 OSC-52 helper.
+- `[q] Exit`: `tea.Quit`. Process exits with the loop's terminal exit code.
+
+Behavior matrix per terminal reason:
+
+| Reason | TUI mode | Text / JSON mode |
+|---|---|---|
+| `review` | menu | exit (current behavior) |
+| `done` | menu | exit |
+| `blocked` | menu | exit |
+| `max iterations` | menu | exit |
+| `user cancelled` (Ctrl+C during run) | exit immediately (the user already chose to leave) | exit |
+| `fatal` (config invalid, executor missing) | exit with stderr error | exit |
+
+Sub-items:
+
+1. [ ] **Default output regression test**: assert `runCmd.Flags().Lookup("output").DefValue == "tui"` in `internal/cli/run_test.go`. Locks the contract so a future flag-tweak cannot silently change the default.
+1. [ ] **Loop-control change**: in TUI mode, `LoopFinished` no longer schedules `tea.Quit`. The Model latches `sessionMode = true`, captures the latest `Result`, the JSONL path, and the run-local commit count from the current panel state.
+1. [ ] **Session overlay**: new `internal/tui/session.go` renders the menu over the last frame of the dashboard (frozen). Uses `bubbles/v2/key` for the bindings (`Resume`, `Edit`, `Journal`, `Log`, `Quit`) and `bubbles/v2/help` for the inline help footer; the `?` overlay still works inside session mode.
+1. [ ] **Journal viewer**: `[j]` swaps the overlay for a `bubbles/v2/viewport` displaying the last journal entry rendered via `charm.land/glamour/v2`. The viewer respects `--no-color` (Glamour `notty` style).
+1. [ ] **Resume action**: pressing `[r]` returns a `tea.Cmd` that emits a `restartLoopMsg` containing the same Config / SpecPath. `runWithTUI` recognises the message, tears down the current `loop.Loop` cleanly, builds a fresh one, and re-binds the new events channel into the existing Model. Iteration counter resets per session; run-local baseline SHA is preserved (the run, not the iteration, is the baseline).
+1. [ ] **Edit action**: `[e]` invokes `program.ReleaseTerminal()`, runs `$EDITOR` synchronously, then `program.RestoreTerminal()`. After return, the spec is re-parsed (`parseSpecCmd` from P2.9) so the menu's "Notes for observer" and progress data reflect the edits before the user picks the next action. `$EDITOR` not set falls back to `$VISUAL`; neither set shows the path in a one-line message and a hint to set the env var.
+1. [ ] **Audit log action**: `[l]` shows the `.bcc/logs/<slug>-iter<N>.jsonl` path. OSC-52 clipboard copy is best-effort; failure to copy is silent.
+1. [ ] **Header state badge**: the header box gains a state indicator while in session mode: `idle (review) • r resume • e edit • j journal • q exit`. Replaces the alive dot in the same slot.
+1. [ ] **Ctrl+C in session mode**: exits immediately, no confirmation. The loop is already done; the menu is convenience, not commitment.
+1. [ ] **Text/JSON parity**: `LoopFinished` in those modes still produces an immediate exit with the loop's exit code. Add a regression test in `render_test.go` that asserts text and json render goroutines drain and return without waiting for any user input.
+1. [ ] **Tests**: scripted Model test feeds `LoopFinished` and asserts (a) no `tea.Quit` is dispatched, (b) the menu is rendered, (c) `[r]` produces a `restartLoopMsg`, (d) `[q]` produces `tea.Quit`. End-to-end test wraps a fake `Loop.Run` that terminates on the first iteration with `Result: review`, drives the model through `[r]`, and asserts a second `IterationStarted` is observed.
+
+### P2.12: end-to-end validation
+
+1. [ ] Run `bcc run` on a real one-phase spec with `--output tui`. Confirm panels populate and iteration completes; on terminal `Result`, the session menu appears (no terminal scrollback).
+1. [ ] Same spec with `--output text`: confirm slog output is readable, exit code matches what would be the TUI session's `[q]` exit code, and no menu is rendered.
 1. [ ] Same spec with `--output json`: pipe stdout through `jq -c` and confirm every line parses; exit code matches.
 1. [ ] Verbosity sweep: run the same spec at `--verbosity error`, `info`, `trace`; confirm the line counts strictly increase and no line at a lower level disappears at a higher level.
 1. [ ] Smoke test "bcc coordinating bccs": small Go program reads NDJSON from `bcc run ... --output json --verbosity info` and prints a one-line summary per `iter_finished`. Demonstrates that `info` is the right default for orchestrators.
 1. [ ] Trigger loop-suspect by having the agent grep the same file 8 times; confirm warning appears in TUI.
 1. [ ] Synthetic rate-limit event injected via fake executor; confirm red row in TUI and corresponding NDJSON event.
-1. [ ] Ctrl+C mid-iteration: confirm clean terminal restore in TUI, no garbage characters; exit code reflects user-cancelled in all three modes.
+1. [ ] Ctrl+C mid-iteration: confirm clean terminal restore in TUI, no garbage characters; exit code reflects user-cancelled in all three modes; session menu does not render (Ctrl+C is "leave now").
+1. [ ] Ctrl+C in session menu: confirm immediate exit with no extra prompt and clean terminal restore.
+1. [ ] Resume loop from session menu: edit the spec to mark one item `[x]`, press `[r]`, confirm a fresh iteration starts and the progress panel reflects the edit.
+1. [ ] Edit spec from session menu: press `[e]`, confirm `$EDITOR` opens, save+exit returns to the menu, the journal-viewer reflects the edited content.
 1. [ ] Resize while running TUI: no clipping or overflow at any width above the 40-col threshold.
 1. [ ] Live tokens / cost sanity: at the second assistant event of a real iteration, the health panel shows non-zero tokens; final value at `iter_finished` matches the `result.usage` totals (input + output + cache_read + cache_creation).
 1. [ ] Mouse wheel scrolls the actions panel through events older than the visible window.
+1. [ ] Manual visual review at 80x24, 120x40, 200x60: observer rebuilds (`go install ./cmd/bcc`), runs `bcc run <spec>` in each terminal size, confirms no overflow, no clipping, panels populate, `?` toggles, `--no-color` produces ASCII-only output, and the session menu renders correctly at each width.
 
 ## Autonomous execution
 
@@ -412,12 +454,12 @@ This spec follows the [Autonomous execution guide](../../guides/autonomous-execu
 
 Default Go criteria (`gofmt`, `go vet`, `go test -race`, `go build`) plus:
 
-1. Manual visual review at 3 terminal sizes confirms no overflow or clipping (P2.8 sub-item 8).
-1. End-to-end test in P2.11 succeeds across all three `--output` modes.
+1. Manual visual review at 3 terminal sizes confirms no overflow or clipping (P2.12 sub-item 15).
+1. End-to-end test in P2.12 succeeds across all three `--output` modes, including the session-menu paths in TUI mode.
 
 ### Stop criteria
 
-1. **Success**: P2.1 through P2.11 all `[x]` and end-to-end review passes.
+1. **Success**: P2.1 through P2.12 all `[x]` and end-to-end review passes.
 1. **Block**: bubbletea API surprise (terminal restoration, signal handling, channel-into-`tea.Cmd`) that needs design rethink.
 1. **Human decision**: layout choices that affect UX (panel ordering, color palette, exact ETA formula). The NDJSON event schema is locked at the start of P2.3 and any change there requires human sign-off.
 
