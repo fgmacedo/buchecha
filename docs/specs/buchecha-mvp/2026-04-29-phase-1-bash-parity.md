@@ -198,11 +198,12 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 
 ### P1.1: config + spec parsers (no I/O on agent)
 
-1. [ ] `internal/config/config.go`: `Config` struct mirroring TOML schema; `Load(path) (*Config, error)`; `Discover(cwd) (*Config, error)` (walks up).
-1. [ ] `internal/config/defaults.go`: `applyDefaults(c *Config)` filling missing values per `project.language`.
-1. [ ] `internal/config/env.go`: `(c *Config) ApplyEnv(extraFlags []string) error` resolving precedence and exporting to `os.Setenv`. No values logged.
-1. [ ] `internal/spec/headings.go`, `plan.go`, `journal.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
-1. [ ] `go test ./internal/config/... ./internal/spec/...` zero failures.
+1. [x] `internal/config/config.go`: `Config` struct mirroring TOML schema; types and validation only (Load/Discover live in `configloader/toml/` per layout). Stdlib-only.
+1. [x] `internal/config/defaults.go`: `applyDefaults(c *Config)` filling missing values per `project.language`.
+1. [x] `internal/config/env.go`: `(c *Config) ApplyEnv(extraFlags []string) error` resolving precedence and exporting to `os.Setenv`. No values logged.
+1. [x] `internal/configloader/toml/toml.go`: `Load(path) (*config.Config, error)`; `Discover(cwd) (*config.Config, error)` (walks up). Uses `BurntSushi/toml`; applies defaults after parse.
+1. [x] `internal/spec/headings.go`, `plan.go`, `journal.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
+1. [x] `go test -race ./internal/config/... ./internal/configloader/... ./internal/spec/...` zero failures.
 
 ### P1.2: executor adapter with JSONL streaming
 
@@ -264,4 +265,11 @@ In addition to the guide defaults:
 
 ## Execution Journal
 
-(empty until Phase 1 is run)
+### 2026-04-29 12:00, P1.1: config + spec parsers
+
+- **Result**: ok
+- **Summary**: Implemented `internal/spec` (types, plan parser, journal parser, fixtures, table-driven tests covering en + pt-BR + edge cases) and `internal/config` (types with TOML tags, defaults per `project.language`, env merging with documented precedence and stdlib-only .env loader). Adapter `internal/configloader/toml` wraps BurntSushi/toml with `Load` and `Discover` (walks up). All P1.1 sub-items `[x]`. `gofmt`, `go vet`, `go test -race ./...`, `go build` all green. `bcc --help` builds and runs.
+- **Commits**: (forthcoming) spec: types + plan/journal parsers (P1.1); config: types, defaults, env precedence (P1.1); configloader/toml: Load and Discover (P1.1); chore: rename leftover "diary" mentions in README and cobra long descriptions
+- **Decisions**: (1) Adjusted P1.1 plan to make `internal/configloader/toml/` a separate sub-item (was implicit in original P1.1.1, conflicted with the package layout). Hexagonal layout enforced: `internal/config` is stdlib-only, `internal/configloader/toml` is the only package importing `BurntSushi/toml`. (2) Did NOT add `joho/godotenv` even though the spec mentions it; the .env subset we need (KEY=VALUE, comments, optional quotes, `${VAR}` expansion via `os.ExpandEnv`) is small enough that ~30 lines of stdlib parser in `internal/config/env.go` suffices. If we ever need `export` keyword, multi-line values, or command substitution, swap in godotenv there. (3) `Result` is an `int` enum, not a string, with `ResultUnknown` as zero value to make uninitialized states explicit. `ResultVocab` decouples the typed enum from localized surface strings. (4) Plan parser models an "implicit phase" (Title="", Line=0) for items appearing before any H3 inside the plan section, so callers do not need a special-case path. (5) Journal parser stops scanning when it finds any `- **<keyword>**: ...` matching the configured Result keyword; first match wins, matching the bash awk's behavior of taking the latest entry (top of section).
+- **Problems**: cobra command long descriptions and README still mentioned "diary" after the prior rename; caught at the end of the iteration (visible in `bcc --help`) and fixed in the same commit batch.
+- **Next**: P1.2 (executor adapter with JSONL streaming)

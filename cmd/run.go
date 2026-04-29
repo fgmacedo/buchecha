@@ -9,7 +9,7 @@ import (
 var runCmd = &cobra.Command{
 	Use:   "run <spec>",
 	Short: "Run the loop on a spec",
-	Long:  "Read a Markdown spec, invoke the configured agent in a phase-by-phase loop, and decide based on the diary entries.",
+	Long:  "Read a Markdown spec, invoke the configured agent in a phase-by-phase loop, and decide based on the journal entries.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("bcc run: not implemented yet (Phase 1)")
