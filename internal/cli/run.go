@@ -1,4 +1,4 @@
-package cmd
+package cli
 
 import (
 	"context"
@@ -73,11 +73,29 @@ func runSpec(ctx context.Context, specPath string) error {
 		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=<defaults; no .bcc.toml found>\n", specPath)
 	}
 
+	skip := cfg.Executor.ShouldSkipPermissions()
+	if skip {
+		fmt.Fprintf(os.Stderr,
+			"bcc: WARNING: agent permission prompts are SUPPRESSED (executor.skip_permissions=true).\n"+
+				"  The agent will read, write, edit, and run shell commands without confirmation.\n"+
+				"  This is required for autonomous mode. To opt out, set skip_permissions=false\n"+
+				"  in .bcc.toml; the loop will likely degrade or stall on the first tool use.\n",
+		)
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"bcc: WARNING: skip_permissions=false. The agent runs in -p mode without\n"+
+				"  --dangerously-skip-permissions. Tool calls that require user approval will\n"+
+				"  abort or be skipped silently; the loop is unlikely to converge. Use this only\n"+
+				"  for dry-runs or when the agent does not require permission prompts.\n",
+		)
+	}
+
 	executor := claude.New(claude.Config{
-		Binary:    cfg.Executor.Binary,
-		Model:     cfg.Executor.Model,
-		ExtraArgs: cfg.Executor.ExtraArgs,
-		Stderr:    os.Stderr,
+		Binary:          cfg.Executor.Binary,
+		Model:           cfg.Executor.Model,
+		ExtraArgs:       cfg.Executor.ExtraArgs,
+		SkipPermissions: skip,
+		Stderr:          os.Stderr,
 	})
 	gitProbe := gitcli.New("")
 	specReader := markdown.New()
