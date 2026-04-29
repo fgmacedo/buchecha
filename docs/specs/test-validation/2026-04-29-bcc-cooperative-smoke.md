@@ -85,6 +85,28 @@ Follows the [Autonomous execution guide](../../guides/autonomous-execution.md) d
 
 ## Execution Journal
 
+### 2026-04-29 12:52, P2: Observer-driven iteration
+
+- **Result**: blocked
+- **Summary**: P2's only sub-item is the literal placeholder `(placeholder; observer fills before next iteration)`. The cooperative protocol forbids guessing on unclear spec content, so the iteration stops without modifying the plan or the working tree (other than this journal entry). The previous entry predicted this exact outcome.
+- **Commits**: this commit docs(spec): block on P2 awaiting observer-defined sub-items
+- **Decisions**: Did not invent sub-items for P2. Did not delete or rewrite the placeholder; that is the observer's edit. Did not mark any checkbox `[x]` because no work was delivered. Did not touch `testdata/bcc-validation/` or any other file.
+- **Problems**: (none, this is a designed-in stop point)
+- **Next**: P2: Observer-driven iteration (awaiting observer to replace the placeholder with concrete `[ ]` sub-items, then re-trigger `bcc run`).
+- **Notes for observer**:
+  - **Prompt experience**: The launch prompt is identical to P1's (same ordinal-less, JSONL-path-less body). Two small frictions specific to a `blocked` iteration: (1) the prompt's procedure says "Implement that phase end to end" before "Identify the next phase", which reads as if implementation is the assumed branch; a reader optimizing for speed could miss the cooperative protocol's "do not guess, block" rule. Putting "If the next phase has only a placeholder, set `Result: blocked` and exit" as an explicit step in the procedure (or in a pre-check) would harden it. (2) The prompt's strict-rules block emphasizes `[x]` discipline and `Result` values for `ok`/`partial`/`done`, but says less about the `blocked` flow; a one-liner reminding the agent that blocked iterations still produce a journal entry and a single commit would close the gap.
+  - **Env / config**: Re-checked. `pwd=/Users/fernando.macedo/projects/buchecha`. Only `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CONFIG_DIR=/Users/fernando.macedo/.claude-pessoal`, `CLAUDECODE=1` are set. Still **no `BCC_*` env vars**, confirming P1's observation: the agent has no machine-readable signal that it is running under bcc, no iteration index, no spec path, no JSONL path. The observer's previous suggestion (#1 in P1) remains unaddressed; if you want the agent to self-verify or include the JSONL path in this entry, that change is still pending.
+  - **Friction**:
+    1. The placeholder line `1. [ ] (placeholder; observer fills before next iteration)` is a `[ ]` item from the loop's perspective; the loop will keep dispatching iterations until the observer edits the spec. A blocked result correctly stops the loop, but a future improvement could be a spec-level convention (e.g., a fenced "observer-only" tag) that the loop recognizes and skips without dispatching an iteration. Cheaper than another full agent invocation.
+    2. The journal entry I'm writing has to record `**Commits**: this commit ...` again, same workaround as P1. It is not wrong, but each blocked iteration that produces only a journal commit re-hits the same self-referential awkwardness. Suggestion #3 from P1 (a documented `<HEAD>` placeholder convention) would resolve it.
+    3. Within this iteration there is no way to confirm I'm actually running under `bcc run` (vs. the human dropping into a terminal and running me directly with the same prompt). For a cooperative validation smoke, that distinction matters; the absence of a `BCC_RUNNING=1` flag means I cannot assert the assumption.
+  - **Suggestions for bcc**:
+    1. **Fast-path for placeholder-only phases.** When the next phase contains only one sub-item whose body matches a configured "placeholder" pattern (e.g., starts with `(placeholder`), the loop could short-circuit to a `blocked` outcome itself, write a synthetic journal entry, and exit. Saves one full agent invocation per "waiting on observer" stop. Optional and behind a config flag, since it adds complexity to the loop.
+    2. **Iteration metadata in the prompt header.** Even without env vars, prefacing the prompt with a fixed block like `Iteration: 2 / spec=docs/specs/.../foo.md / branch=feat/phase-1 / jsonl=/var/folders/.../bcc-foo-iter2.jsonl` would let the agent breadcrumb that into the journal and let the observer correlate JSONL and journal trivially.
+    3. **Spec-level "observer checkpoint" as a first-class concept.** Right now the cooperative protocol piggybacks on `Result: blocked`, which is also used for technical blocks and absolute-restriction temptations. A dedicated `Result: review` (or similar) would let the outer loop and observer tell apart "the human/observer must edit the spec" from "something went wrong." Reuses the same stop mechanic, distinct semantics.
+    4. **Prompt should mention the spec's stop criteria explicitly.** The cooperative protocol's "do not guess, block" rule is in the spec body, not in the prompt. A line like "Honor the spec's own stop criteria; if it tells you to block on a placeholder, do that and exit" would prevent a future agent from over-interpreting the placeholder as work to invent.
+    5. **Surface the fact that the loop will read this entry next.** A short reminder in the prompt that the next iteration's agent will read `**Decisions**` to avoid undoing choices is a good nudge for thoughtful authoring of that field, especially in `blocked` entries where the temptation is to keep them sparse.
+
 ### 2026-04-29 12:50, P1: Smoke round-trip
 
 - **Result**: ok
