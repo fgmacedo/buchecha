@@ -248,11 +248,16 @@ type JournalEntry struct {
 	Raw map[string]any
 }
 
-// JournalStore persists per-iteration journal entries and reads back
-// the most recent one. Implementations are owned by the journal-store
-// adapter selected by [journal].store; the no-op "none" store is a
-// valid implementation that drops appends and returns an empty Latest.
-type JournalStore interface {
-	AppendEntry(ctx context.Context, e JournalEntry) error
-	Latest(ctx context.Context) (JournalEntry, error)
+// JournalReader exposes the most recent journal entry to the TUI's
+// optional viewer. bcc does not write journal entries: under the
+// bcc-markdown contract the agent owns the write side, instructed by
+// the AgentBriefing prompt. bcc does not read the journal for control
+// flow either; signal comes from the bcc_event wire protocol. This
+// port is therefore read-only and exists solely for display.
+//
+// Implementations are owned by the journal-store adapter selected by
+// [journal].store. The no-op "none" store returns ok=false from Latest
+// so the TUI viewer hides the binding.
+type JournalReader interface {
+	Latest(ctx context.Context) (entry JournalEntry, ok bool, err error)
 }
