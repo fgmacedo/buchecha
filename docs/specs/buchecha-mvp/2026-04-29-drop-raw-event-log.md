@@ -124,6 +124,13 @@ Stop and reopen the design if:
 
 Most recent entries on top. Contract in [Autonomous execution guide](../../guides/autonomous-execution.md#execution-journal).
 
+### 2026-04-29 20:55, spec verification
+
+- **Result**: done
+- **Summary**: Verified the previous iteration's work satisfies every done criterion. All plan checkboxes are `[x]`. `go build ./...`, `go vet ./...`, `gofmt -l .`, and `go test -race ./...` are clean. `grep -E 'BCC_JSONL_PATH|JSONLDir|JSONLPath|rawLog|LogPath|log_path' --include='*.go'` against the tree returns no matches. The previous entry recorded `Result: ok`; with zero `[ ]` items remaining, the correct closing value is `done`.
+- **Commits**: this commit `spec: close drop-raw-event-log spec`
+- **Next**: none
+
 ### 2026-04-29 20:30, drop the per-iteration raw event log
 
 - **Result**: ok
