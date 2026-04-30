@@ -3,7 +3,7 @@
 // Ports (interfaces) are declared here, in the consumer package, per Go
 // convention and the hexagonal-light layout in CLAUDE.md. Adapters that
 // implement them live in sibling packages: executor/<flavor>, git/<flavor>,
-// specreader/<flavor>.
+// format/<flavor>.
 //
 // Loop itself is implemented in loop.go.
 package loop
