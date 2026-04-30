@@ -31,40 +31,54 @@ cmd/                          (cobra wiring, argv parsing, exit codes)
         ↓
 internal/tui/                 (bubbletea Model/Update/View; Phase 2)
         ↓
-internal/loop/                (orchestration, decision table, prompt build,
-                              defines Executor / GitProbe / SpecReader ports)
-        ↓
-internal/spec/                (Spec/Phase/Item/JournalEntry value objects, parsers)
+internal/loop/                (orchestration, decision table, defines
+                              Executor / GitProbe / AgentBriefing ports)
+internal/loop/agentcontract/  (canonical wire protocol: Signal, BccEvent,
+                              ParseLine, plus shared markdown blocks
+                              every format adapter composes)
 internal/config/              (Config types, defaults, env precedence)
         ↑
 internal/executor/<adapter>/  (e.g. claude/) implements loop.Executor
 internal/git/<adapter>/       (e.g. cli/) implements loop.GitProbe
-internal/specreader/<adapter>/ (e.g. markdown/) implements loop.SpecReader
+internal/format/<adapter>/    (e.g. markdown_bcc/) implements loop.AgentBriefing,
+                              owns the format-specific contract.md template,
+                              composes the shared agentcontract partials
 internal/configloader/<adapter>/ (e.g. toml/) reads .bcc.toml into config.Config
 ```
 
 Rules:
 
-1. `internal/spec` and `internal/config` import **no adapters** and depend only on stdlib. They are pure value objects + pure parsers.
-1. `internal/loop` imports `spec` and `config`, and defines its own ports (`ports.go`) for what it consumes. It does not import any adapter.
-1. `internal/executor/claude/` (and future siblings) import `loop` to satisfy `loop.Executor`. It knows about subprocess, JSONL, env. The domain does not.
+1. `internal/loop/agentcontract` and `internal/config` import **no adapters** and depend only on stdlib. They are pure value objects + pure parsers.
+1. `internal/loop` imports `agentcontract` and `config`, and defines its own ports (`ports.go`) for what it consumes. It does not import any adapter.
+1. `internal/executor/claude/` (and future siblings) import `loop` to satisfy `loop.Executor`. It knows about subprocess, JSONL, env. The loop does not.
 1. `internal/git/cli/` shells out to `git` via `os/exec`. Anything else that needs git later goes through the same port.
-1. `internal/tui/` imports `loop` types and `watcher` events. Never the reverse.
+1. `internal/format/markdown_bcc/` (and future siblings) implements `loop.AgentBriefing`, owns the per-format `contract.md` template, and composes the shared markdown partials from `internal/loop/agentcontract/`.
+1. `internal/tui/` imports `loop` types and `agentcontract` types. Never the reverse.
 1. `cmd/` wires everything: load config → build adapters → build loop → run.
 
 Sign of trouble: a feature that touches 4+ packages probably crossed a layer wrongly. Stop and revisit.
+
+bcc never reads the user's spec or journal at runtime; the agent reads the spec and reports state on the wire (`bcc_event` JSONL sentinels). The loop and the TUI consume `BccEvent` from the wire stream; nothing format-shaped crosses into them.
+
+### Framework and user-space boundary
+
+`internal/` is framework space. `docs/` is user space. bcc reads from `internal/` at runtime (compiled-in resources, including embedded prompt templates); it never reads from `docs/`.
+
+The boundary cuts both ways:
+
+1. The framework cannot rely on user-space files. Project docs, `CLAUDE.md`, `AGENTS.md`, custom skills are the user's. A user running `bcc` outside this repo may have none of them, or may have ones that conflict with bcc's contract. Code that reads user-space paths from inside the framework is a leak.
+1. The framework prompt is assertive and self-contained. When bcc instructs the agent, the contract lives at `internal/format/<adapter>/contract.md` (embedded via `//go:embed`), composed with the shared markdown blocks from `internal/loop/agentcontract/` (`wire_protocol.md`, `absolute_restrictions.md`, `working_tree.md`). The agent receives the prompt content inline, never a user-space path.
 
 ## Domain language (DDD, lightweight)
 
 The domain is small. We use the parts of DDD that pay off and skip the rest.
 
-- **Value objects** (immutable, equality by value, no identity): `Result` (`ok`, `partial`, `done`, `blocked`), `Phase`, `Item`, `CommitSHA`, `IterationID`. Construct via constructors that validate; never mutate.
-- **Entities** (identity, lifecycle): `Spec` (identified by file path), `Iteration` (identified by index within a spec run).
-- **Aggregate root**: `Spec` is the root for `Phase` and `Item`. Modifications go through the root.
-- **Domain services** (behavior that does not belong on a single entity): `LoopDecider` (pure function on `(LatestResult, HEADAdvanced, UncheckedCount) → Action`), `Heuristic` (loop-suspect detector).
-- **Ports**: `Executor`, `GitProbe`, `SpecReader`, `ConfigLoader`. Interfaces in the consumer package.
+- **Value objects** (immutable, equality by value, no identity): `Signal` (`continue` / `review` / `done` / `blocked`), `BccEvent`, `CommitSHA`, `IterationID`. Wire-protocol types live in `internal/loop/agentcontract/`; format-specific value objects (if any) live inside the format adapter.
+- **Entities** (identity, lifecycle): `Iteration` (identified by index within a spec run).
+- **Domain services** (behavior that does not belong on a single entity): `LoopDecider` (pure function on `(Signal, HEADAdvanced) → Action`), `Heuristic` (loop-suspect detector).
+- **Ports**: `Executor`, `GitProbe`, `AgentBriefing`, `ConfigLoader`. Interfaces in the consumer package.
 - **Adapters**: concrete implementations of ports, each in its own package.
-- **Ubiquitous language** (use these names everywhere: code, comments, docs, prompts): spec, plan, phase, item, iteration, result, journal entry, checkbox, executor, watcher.
+- **Ubiquitous language** (use these names everywhere: code, comments, docs, prompts): spec, plan, phase, item, iteration, signal, bcc_event, contract, executor, briefing.
 
 We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory/repository ceremonies. Too much for the size of this domain.
 
@@ -72,7 +86,7 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 
 ### SOLID, applied here
 
-- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `loop` changes when iteration semantics change. `spec` changes when the journal format changes. Mixed concerns are a smell.
+- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `loop` changes when iteration semantics change. `agentcontract` changes when the wire protocol changes. `format/<adapter>` changes when the format-specific contract changes. Mixed concerns are a smell.
 - **OCP**: adding an agent is a new package under `executor/`, not edits to existing ones. Adding a heuristic is a new file in `loop/heuristics/`, not edits to the decider.
 - **LSP**: any `Executor` implementation must honor the contract (cancellable via context, exit code propagated, JSONL written line-by-line). Tests use a fake executor that proves the contract.
 - **ISP**: small interfaces. `Executor` has one method (`Run`). `GitProbe` has the few methods loop actually calls (`HeadSHA`, `IsClean`). No god interfaces.
@@ -93,7 +107,7 @@ A change in one dimension must not cascade into others.
 - Replace `bubbletea` with another TUI: touches `internal/tui/` only.
 - Add `codex` agent: new package `internal/executor/codex/`. No edit anywhere else.
 - Switch from TOML to YAML for config: new adapter under `internal/configloader/`. The `Config` type does not move.
-- Change spec format (e.g., add a new journal field): `internal/spec/` and `docs/guides/autonomous-execution.md` only.
+- Change a spec format (e.g., add a new journal field): the format adapter under `internal/format/<adapter>/` only. The wire protocol stays canonical in `internal/loop/agentcontract/`.
 
 Red flag: a feature requires editing four or more packages. Stop, revisit cohesion.
 
@@ -158,7 +172,7 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 
 We work in **TDD where it pays** and **retroactive coverage where it does not**. The areas where TDD pays in this codebase:
 
-- Spec parsers (`internal/spec/`): given a markdown fixture, produce expected structure.
+- Wire-protocol parser (`internal/loop/agentcontract/`): given a JSONL line, produce the expected `BccEvent`. Format adapters (`internal/format/<adapter>/`) get golden-output tests on the rendered prompt template.
 - Loop decider (`internal/loop/`): given inputs, produce expected action and exit code.
 - Config loader (`internal/config/`): given TOML + env, produce expected resolved Config.
 
@@ -186,7 +200,7 @@ Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sam
 
 ### Fixtures
 
-- Spec fixtures in `internal/spec/testdata/`: tiny, hand-authored, one-purpose-per-file.
+- Wire-protocol fixtures in `internal/loop/agentcontract/`: small JSONL strings inline in tests; round-trip through `ParseLine`.
 - JSONL fixtures in `internal/executor/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content.
 - End-to-end fixtures in `testdata/specs/`: sample specs in English and pt-BR to validate localization.
 
@@ -213,7 +227,7 @@ What is **not** included unless explicitly stated:
 1. Manual testing (smoke runs, exploratory testing, UI validation).
 1. Deployment, release, or distribution work (goreleaser, tagging, Homebrew updates).
 1. Communication overhead (PR review threads, follow-up clarifications, design discussions).
-1. Refactoring or scope discovered during the work (treat as new sub-items per [Discovered work](docs/guides/autonomous-execution.md#discovered-work)).
+1. Refactoring or scope discovered during the work (treat as new sub-items per the bcc-markdown contract embedded in `internal/format/markdown_bcc/`).
 1. Operational tasks (CI configuration, secrets rotation, infra changes).
 1. Time blocked waiting on human input (when the agent stops for a question).
 1. Recompiling/reinstalling the agent's environment (e.g., `go install` after self-hosted edits).
@@ -267,7 +281,7 @@ git tag -a v0.1.0 -m '...' && goreleaser release
 
 Adapters are responsible for translating the generic `SkipPermissions bool` to their concrete agent flag. New executor adapters MUST honor the field; if the upstream agent has no permission system, the field is a no-op and the adapter logs that on first invocation.
 
-The absolute restrictions in [docs/guides/autonomous-execution.md](docs/guides/autonomous-execution.md#absolute-restrictions) (no `git push`, no force operations, no touching credentials, etc.) are independent of this flag and cannot be relaxed by it.
+The absolute restrictions embedded in [`internal/loop/agentcontract/absolute_restrictions.md`](internal/loop/agentcontract/absolute_restrictions.md) (no `git push`, no force operations, no touching credentials, etc.) are independent of this flag and cannot be relaxed by it.
 
 ## Language
 
@@ -281,13 +295,13 @@ The absolute restrictions in [docs/guides/autonomous-execution.md](docs/guides/a
 - This is a solo project (one author plus you). Until `bcc` reaches the target shape, do not be conservative about existing designs: when a better port shape, type, layout, or naming choice emerges, propose the breaking change directly and ship it. No backwards-compatibility shims, deprecation aliases, or parallel old-and-new APIs unless explicitly requested. Compatibility scaffolding only matters once external users exist.
 - **Specs are normative, not historical.** Describe what to build, not how the spec got here. When refining a spec, rewrite the affected text in place. Do not narrate the change with "the previous version did X", "after the prior draft", "REMOVED:", "now we changed to Y", or "Breaking changes from previous spec". Each rewrite must read as if the doc were always this way. Design history belongs in commit messages and in the spec's Execution Journal, not in the body. Same rule applies to ADRs, PRDs, initiative docs, and any other design doc under `docs/`. Apply it equally to your own first drafts: write the target state directly, never the diff.
 - Before touching any package, scan the existing tests to understand the contract.
-- Respect layer boundaries: never import an adapter from `internal/loop/` or `internal/spec/` or `internal/config/`. Wire adapters at `cmd/`.
+- Respect layer boundaries: never import an adapter from `internal/loop/` (or its `agentcontract/` sub-package) or `internal/config/`. Wire adapters at `cmd/`.
 - Never put a god `util` or `helpers` package. If a helper is small and obvious, inline it; if it is reused, it has a real home.
 - Working tree clean between milestones. Use `git reset` (non-destructive) before `git add <specific paths>` before `git status -s` to confirm. Never `git add -A` blindly.
 - Tests must pass on `go test -race ./...` before any commit that touches concurrent code.
 - TODOs require a concrete next action. No `// TODO: improve this`.
 - Commit messages: imperative mood, lowercase prefix matching `git log` style (`spec:`, `loop:`, `executor:`, `tui:`, `cmd:`, `docs:`, `refac:`). One commit per milestone.
-- The `docs/specs/buchecha-mvp/index.md` is the live status tracker for the MVP. When a phase advances, update its checkbox in the same commit, and add a journal entry in the spec following the [Autonomous execution guide](docs/guides/autonomous-execution.md).
+- The `docs/specs/buchecha-mvp/index.md` is the live status tracker for the MVP. When a phase advances, update its checkbox in the same commit, and add a journal entry in the spec following the bcc-markdown contract at [`internal/format/markdown_bcc/contract.md`](internal/format/markdown_bcc/contract.md).
 - When in doubt about whether a piece of code belongs on the domain side or the adapter side, ask: would replacing the agent (Claude → Codex) require touching this code? If yes, it is in the wrong place; move it to an adapter.
 
 ## Open knowledge
