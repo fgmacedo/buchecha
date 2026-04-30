@@ -85,15 +85,46 @@ The design must survive contact with formats that exist today, not only with bcc
 
 1. **BMAD, spec-kit, others.** Variants on the same shape: a structured artifact captures intent, a structured artifact captures progress, the agent acts on both. The exact files and headings differ; the loop semantics ("pick a pending unit, work it, record outcome") do not.
 
-Design implication: ports speak in `Signal`, `Progress`, and `NextWorkItem`, never in `Phase` or `Item`. Format-specific data structures stay inside the adapter.
+Design implication: bcc never parses the user's spec or journal. The agent reads, the agent reports state on the wire (`bcc_event` JSONL sentinels). Format adapters live entirely in two seams: the prompt that goes out (`AgentBriefing`) and the events that come back (`AgentEvents`). Format-specific data structures stay inside the adapter; nothing format-shaped crosses into the loop or the TUI.
 
 ## Goal shape
 
-Three ports, each owned by the consumer that calls it, each implemented by the active adapter package. There is no journal port: the agent owns the write side per its contract, and bcc never reads the journal (display included; the TUI consumes the wire protocol instead).
+Four ports total. Two are existing infrastructure (`Executor`, `GitProbe`); two are the new format seam (`AgentBriefing`, `AgentEvents`). bcc never reads the user's spec, journal, or any other user-space artifact at runtime. The agent reads the spec, the agent reports progress on the wire, bcc orchestrates and renders.
 
-### Port: `SpecReader` (read-side introspection)
+### Port: `Executor`
+
+Existing port. Runs the configured agent subprocess against a prompt and emits a stream of normalized `AgentEvent`s on the events channel. Cancellable via `ctx`. Unchanged by this spec except for the additive `AgentEvents` seam below.
+
+### Port: `GitProbe`
+
+Existing port. Read-only view of the working tree (`HeadSHA`, `CurrentBranch`, `IsClean`). Unchanged.
+
+### Port: `AgentBriefing` (prompt-side)
+
+The active spec-format adapter implements it; the loop calls it once per iteration to get the prompt string.
 
 ```go
+type AgentBriefing interface {
+    BuildPrompt(ctx context.Context, in BriefingInput) (string, error)
+}
+
+type BriefingInput struct {
+    SpecPath  string
+    Iteration int
+    Mode      Mode   // ModeLoop | ModeSingleShot
+    Extra     string // user-provided extra instructions, optional
+}
+```
+
+The adapter owns the embedded operating contract for its format (bcc-markdown's contract for the markdown_bcc adapter, OpenSpec's for the openspec adapter, etc.) as a Go `text/template` rendered with the active config. The contract instructs the agent to read the spec from `SpecPath` itself; bcc does not interpolate spec content into the prompt. The contract is assertive enough to dominate user-space noise (`CLAUDE.md`, `AGENTS.md`, custom skills).
+
+### Port: `AgentEvents` (event-side)
+
+```go
+type AgentEvents interface {
+    ParseLine(line []byte) (BccEvent, bool)
+}
+
 type Signal int
 
 const (
@@ -104,93 +135,41 @@ const (
     SignalBlocked
 )
 
-type SpecReader interface {
-    // LatestSignal returns the most recent decision-relevant signal from
-    // the spec's progress record (the journal, the tasks.json status,
-    // whatever the format uses).
-    LatestSignal(ctx context.Context, specPath string) (Signal, error)
+type BccEventKind int
 
-    // WorkRemaining is true when at least one pending unit exists. The
-    // format decides what "pending" means: unchecked checkbox, open
-    // task, task with unmet dependencies, etc.
-    WorkRemaining(ctx context.Context, specPath string) (bool, error)
-
-    // Progress is an optional UI hint. Adapters with no notion of
-    // progress return ok=false and the TUI degrades to a textless
-    // progress bar.
-    Progress(ctx context.Context, specPath string) (checked, total int, ok bool, err error)
-
-    // NextWorkItem returns an opaque, format-defined identifier for the
-    // unit the agent should focus on next (phase number for
-    // bcc-markdown, task ID for Ralph or OpenSpec). Adapters with no
-    // notion of "next item" return ok=false; the briefing falls back to
-    // a generic "implement the next pending item" prompt.
-    NextWorkItem(ctx context.Context, specPath string) (id string, ok bool, err error)
-
-    // Render produces a TUI-friendly view of the spec for the optional
-    // preview panel. Adapters without a renderer return ok=false; the
-    // panel is hidden.
-    Render(ctx context.Context, specPath string, profile RenderProfile) (text string, ok bool, err error)
-}
-```
-
-### Port: `AgentBriefing` (prompt-side)
-
-```go
-type AgentBriefing interface {
-    // BuildPrompt returns the full prompt for one agent invocation. The
-    // adapter owns the per-format operating contract (today's
-    // autonomous-execution.md content for bcc-markdown), embedded in
-    // the binary via //go:embed and stitched into the prompt here.
-    BuildPrompt(ctx context.Context, in BriefingInput) (string, error)
-}
-
-type BriefingInput struct {
-    SpecPath   string
-    Iteration  int
-    NextItemID string // empty when SpecReader.NextWorkItem returned ok=false
-    Mode       Mode   // ModeLoop | ModeSingleShot
-}
-```
-
-The loop no longer constructs prompts directly. It calls `BuildPrompt` and passes the result to the executor. This retires `internal/loop/prompt.go` into the adapter.
-
-### Port: `AgentEvents` (event-side)
-
-```go
-type AgentEvents interface {
-    // ParseLine inspects one JSONL line from the executor's stdout and
-    // returns a normalized BccEvent if the line matches the adapter's
-    // wire protocol. Returns ok=false when the line is unrelated; the
-    // executor falls through to its existing handling.
-    ParseLine(line []byte) (BccEvent, bool)
-}
+const (
+    BccEventUnknown BccEventKind = iota
+    BccEventTaskStarted
+    BccEventTaskCompleted
+    BccEventIterationResult
+    BccEventProgressTick
+)
 
 type BccEvent struct {
-    Kind    BccEventKind // TaskStarted | TaskCompleted | IterationResult | ProgressTick
-    ID      string       // task or phase ID, format-defined
-    Signal  Signal       // populated for IterationResult
+    Kind    BccEventKind
+    ID      string
+    Signal  Signal // populated only for BccEventIterationResult
     Summary string
     Raw     map[string]any
 }
 ```
 
-The wire protocol agents are taught to emit (via the briefing's contract text):
+The executor's adapter (claude, codex, gemini) parses its own native event types and forwards normalized lines. Lines its switch does not recognize are routed through the active spec adapter's `AgentEvents.ParseLine` for the `bcc_event` JSONL sentinel:
 
 ```jsonc
 {"type":"bcc_event","event":"task_started","id":"P1.2","summary":"..."}
 {"type":"bcc_event","event":"task_completed","id":"P1.2"}
-{"type":"bcc_event","event":"iteration_result","value":"ok","summary":"..."}
+{"type":"bcc_event","event":"iteration_result","value":"continue","summary":"..."}
 ```
 
-The executor's claude adapter routes lines its own type switch does not recognize through `AgentEvents.ParseLine`. The seam is `internal/executor/claude/claude.go:192-213`: a new `case "bcc_event":` arm wraps the adapter call. markdown_bcc returns `(BccEvent{}, false)` for everything in this iteration; parser remains the source of truth. Adapters for formats whose source-of-truth is hard to parse (Ralph DAGs, multi-file OpenSpec) lean on this from day one.
+`iteration_result.value` is the canonical English signal (`continue` / `review` / `done` / `blocked`). The journal text the agent writes to disk may be in the user's language; the wire protocol is fixed. The agent emits `iteration_result` exactly once per iteration, immediately before exit. Missing or malformed events fall through to the existing `unknown line, drop` path; the loop treats a missing `iteration_result` as `SignalUnknown` and exits invalid.
 
 ### Adapters
 
-- `internal/specreader/markdown_bcc/`: the rename of today's `markdown` adapter. Owns `Plan`, `Phase`, `Item`, `Result`. Implements `SpecReader`, `AgentBriefing`, `AgentEvents`. Today's `internal/spec/` types **move into this package** as adapter-private types.
-- `internal/specreader/openspec/`, `.../kiro/`, `.../speckit/`, `.../bmad/`: future siblings. Each one knows its own format's notion of "task complete", "phase done", "review needed".
+- `internal/specreader/markdown_bcc/`: implements `AgentBriefing` and `AgentEvents`. Owns the embedded operating contract (`prompt.md`, `//go:embed`) and the `bcc_event` recognition. Per-format Config (heading text, etc.) feeds the template.
+- `internal/specreader/openspec/`, `.../kiro/`, `.../speckit/`, `.../bmad/`: future siblings.
 
-There is no `internal/journal/` adapter tree. `[journal].store` is **prompt input**, not a port: it selects which journal-writing fragment the `AgentBriefing` template injects ("append to spec", "write to sidecar at `<path>`", "skip"). The agent is the only writer; bcc never reads.
+There is no `internal/spec/` package, no `internal/specreader/markdown/` adapter, no `internal/journal/` tree, no parsing helpers. `[journal].store` is **prompt input** for `AgentBriefing`: the active format adapter consumes it to choose which journal-writing fragment its template injects ("append to spec", "write to sidecar at `<path>`", "skip"). bcc never reads the journal, the user reads it in their editor.
 
 ### `.bcc.toml` shape
 
@@ -203,7 +182,9 @@ format = "markdown_bcc"      # active format; markdown_bcc | openspec | kiro | s
 [spec.markdown_bcc]
 plan_heading    = "Implementation Plan"
 journal_heading = "Execution Journal"
-result_vocab    = { ok = "ok", partial = "partial", done = "done", blocked = "blocked", review = "review" }
+# All fields are template inputs to the AgentBriefing prompt: bcc does
+# not parse the spec, so localizing the headings only changes what the
+# agent is told to write. Wire protocol stays in canonical English.
 
 [spec.openspec]
 tasks_path    = "tasks.md"
@@ -246,23 +227,23 @@ Rules:
 1. `format = "auto"` (and the agent equivalent) is explicitly **not** offered. The value must name a known adapter.
 1. CLI flags `--spec-format <name>` and `--agent <name>` override the active selectors for one run; they never modify the file.
 
-## Discovery strategies
+## Discovery strategy
 
-Three strategies for "how does bcc know what's pending":
+bcc's only signal channel is the wire protocol. The agent emits `bcc_event` JSONL sentinels on stdout; bcc's executor adapter routes unknown lines through the active spec adapter's `AgentEvents.ParseLine`. The loop, the TUI panels, and the decision table all consume `BccEvent`s; nothing parses the spec or the journal.
 
-| Strategy | When | Pros | Cons |
-|---|---|---|---|
-| **Native parser** (per-format adapter) | Default for known formats | Cheap, deterministic, no agent call | Requires per-format code |
-| **Agent-reported events** (always-on supplement) | Real-time UI; primary signal between iterations | Format-agnostic, real-time | Trust agent reliability |
-| **Agent-mediated discovery** (one-shot constrained call at startup) | Unknown/exotic formats | Universal | Slow, costs tokens |
+Failure modes:
 
-Decision: default for any supported format is parser-as-source-of-truth plus event-stream-as-real-time-feed. The spec deliberately does not introduce agent-mediated discovery; if a user's format is unsupported, they pick a closer adapter or open an issue. Adding adapters is cheaper than reinventing the loop around one-shot LLM parsing. Agent-mediated discovery is parked, not killed, see [Out of scope](#out-of-scope).
+1. **Agent does not emit `iteration_result`.** Loop receives `SignalUnknown`, exits invalid. The agent contract makes this a hard requirement; missing it is a contract violation, not a soft state.
+1. **Agent emits a malformed event.** Adapter's `ParseLine` returns `(BccEvent{}, false)`; the line falls through to existing handling. The event is effectively absent; same fate as case 1 if it was the iteration's `iteration_result`.
+1. **Agent lies (`value=done` while items pending).** bcc trusts the wire signal. The agent's contract treats this as a contract violation the user catches when they review the spec; bcc does not double-check by parsing.
+
+The HEAD-stuck check (no commit during an iteration) is the orthogonal safety net: if the agent did nothing, it surfaces regardless of what the wire protocol said.
 
 ## Framework and user-space boundary
 
 `internal/` is framework space. `docs/` is user space. bcc reads from the former at runtime; it never reads from the latter.
 
-Framework prompts live under `internal/specreader/<format>/` (and similarly for any other framework-owned text), embedded via `//go:embed`. They are Go `text/template`s where customization is supported. Substitutions provided by the active config include `{{.PlanHeading}}`, `{{.JournalHeading}}`, `{{.ResultVocab.OK}}`, etc.; conditional sections such as `{{if .JournalEnabled}}...{{end}}` cover features that toggle by config.
+Framework prompts live under `internal/specreader/<format>/` (and similarly for any other framework-owned text), embedded via `//go:embed`. They are Go `text/template`s where customization is supported. Substitutions provided by the active config include `{{.PlanHeading}}`, `{{.JournalHeading}}`, `{{.JournalStore}}`, `{{.SpecPath}}`, etc.; conditional sections such as `{{if eq .JournalStore "none"}}...{{end}}` cover features that toggle by config.
 
 The user's project `docs/`, `CLAUDE.md`, `AGENTS.md`, and agent skills are theirs. They may inject content the agent reads, but bcc neither depends on them nor defends against them. The framework prompt is **assertive**: a clear, prescriptive contract with the agent that defines required behavior regardless of surrounding noise. Tone is rule-based and unambiguous, not advisory. Where user-space content could plausibly conflict (custom commit-message conventions, alternate review workflows), the prompt names the conflict and tells the agent how to resolve it (e.g., "follow the project's convention if visible from `git log`, otherwise use the lowercase prefix from this contract").
 
@@ -327,56 +308,54 @@ store = "none"
 | `**Result**:` | `bcc_event` of kind `iteration_result`, field `value` |
 | `**Commits**:` | `git log <baseline>..HEAD` (already feeds the run-local commit count) |
 | `**Summary**:` (mandatory) | Commit messages plus per-task `bcc_event` summaries |
-| `**Next**:` | `SpecReader.NextWorkItem()` |
+| `**Next**:` | The agent picks the next pending unit itself when it reads the spec; bcc does not parse a "next item" |
 | `**Notes for observer**` | The spec's phase body; for actionable signal, `bcc_event` with `value=review` and a short prose `summary` |
 
 ## TUI items pulled in from Phase 2
 
-These were originally scoped inside [Phase 2](./2026-04-29-phase-2-tui-dashboard.md) but cannot land without the ports defined here. They live under this spec's umbrella so the work stays in one place. Each ships as a follow-up commit after the corresponding port is in place; the bcc-markdown adapter implements the per-format details.
+These were originally scoped inside [Phase 2](./2026-04-29-phase-2-tui-dashboard.md). The phase-2 design assumed bcc would parse the spec for display; this spec retires that assumption. The carried-over items become event-driven; everything that depended on `SpecReader.Render`, `Progress`, or `LatestSignal` (the parser-based TUI features) is dropped.
 
-1. [ ] **Spec parsed at startup** (was P2.9 sub-item 4). Once `SpecReader.Progress()` and `LatestSignal()` exist, dispatch them from `Model.Init()` so the progress and risk panels populate on the first render rather than waiting for the first `IterationFinished`. No-op when the adapter returns `ok=false` from `Progress()`.
-1. [ ] **Optional spec preview panel** (was P2.10 sub-item 6). Uses `SpecReader.Render(profile)`. The bcc-markdown adapter implements it via `charm.land/glamour/v2`; other adapters return their own pretty-printer output or `ok=false`. The TUI keybinding (`s`) toggles a modal viewport; absent renderers hide the binding.
-1. [ ] **Edit-spec post-edit refresh** (was P2.11 sub-item 6). After the user returns from `$EDITOR`, the menu's data is refreshed by re-calling the `SpecReader` signals; the editor-suspension mechanics (`ReleaseTerminal` / `RestoreTerminal`) stay in `internal/tui/` and are format-neutral.
-1. [ ] **Edit-spec end-to-end smoke** (was P2.12 sub-item 11). End-to-end test: edit the spec from the session menu, confirm the progress and risk panels reflect the edited content via re-parse through `SpecReader`. (The phase-2 "journal viewer" sub-item is dropped; the journal is a user-space artifact bcc does not surface.)
+1. [ ] **Risk and progress panels migrate to event-driven state.** `progressPanel` consumes `BccEventTaskStarted` / `BccEventTaskCompleted` to track checked-vs-total per run; the totals come from cumulative observations rather than a parse. `riskPanel` consumes the most recent `BccEventIterationResult.Signal`. Initial render (before any event arrives) shows empty placeholders; no parse, no first-render hack.
+1. [ ] **Edit-spec post-edit re-trigger** (was P2.11 sub-item 6). After the user returns from `$EDITOR`, the session menu offers `[r]` to start the next iteration. The agent re-reads the spec on its own; bcc does nothing format-aware. Editor-suspension mechanics (`ReleaseTerminal` / `RestoreTerminal`) stay in `internal/tui/` and are format-neutral.
+
+The phase-2 "spec parsed at startup", "optional spec preview panel", "journal viewer", and "edit-spec end-to-end smoke (journal-driven)" sub-items are dropped. The user opens the spec in their editor for any in-depth view; bcc's TUI surfaces only what the wire protocol delivers.
 
 ## Implementation Plan
 
 Items are intentionally not numbered as P-X.Y; this spec stands on its own.
 
-1. [x] **Inventory and freeze.** Capture the coupling map (table in [Coupling inventory](#coupling-inventory)) and the prompt-template references (`internal/loop/loop.go:81`, `internal/loop/prompt.go:36`, `internal/loop/prompt.go:78`) into this spec body so reviewers see the full surface area before any code moves.
-1. [x] **Define `Signal` and the three ports** (`SpecReader`, `AgentBriefing`, `AgentEvents`) in `internal/loop/ports.go`. Types and doc comments only, no implementation.
-1. [ ] **Refactor `LoopDecider`** (`internal/loop/decider.go`) to consume `Signal` and `WorkRemaining bool` instead of `spec.Result` and `UncheckedAfter`. Update callers in `internal/loop/loop.go` and tests.
-1. [ ] **Carve the `markdown_bcc` adapter.** Create `internal/specreader/markdown_bcc/` with the existing parsing code. Move `internal/spec/` types in as `markdown_bcc`-private types. The adapter implements `SpecReader`, mapping its `Result` to `Signal` and `unchecked > 0` to `WorkRemaining`. Wire it from `cmd/bcc/` as the default when `[spec].format = "markdown_bcc"`.
-1. [ ] **Author the bcc-markdown agent contract in framework space.** Create the prompt files at `internal/specreader/markdown_bcc/prompt-*.md` (single file or split, implementing PR's call), authored as Go `text/template` with substitutions (`{{.PlanHeading}}`, `{{.JournalHeading}}`, `{{.ResultVocab.*}}`, `{{.JournalEnabled}}`, ...) and embedded via `//go:embed`. Write the content to match the [bcc-markdown contract](#bcc-markdown-contract) rules: the journal is optional and never load-bearing for bcc; no-op entries are forbidden; the entry shape is heading + lead with optional Decisions/Problems/Discovered callouts; observer-driven steps live in the spec body. Implement `AgentBriefing.BuildPrompt` so the adapter, not `internal/loop/prompt.go`, owns prompt construction; render the templates with the active config. Delete `PromptInput.GuidePath`, the prompt-template references at `internal/loop/loop.go:81`, `internal/loop/prompt.go:36`, `internal/loop/prompt.go:78`, and the file `docs/guides/autonomous-execution.md` (per the [retiring plan](#retiring-the-legacy-guide)).
-1. [ ] **Plumb `AgentEvents`.** Add a `case "bcc_event":` arm in the executor's type switch (`internal/executor/claude/claude.go:199-211`) that calls the active adapter's `AgentEvents.ParseLine` and forwards the resulting `BccEvent` on the existing event channel. markdown_bcc returns `(BccEvent{}, false)` for everything in this iteration; the executor falls through to its existing "unknown line, drop" behavior. Plumbing in place; non-breaking.
-1. [ ] **Decouple TUI panels.** `progressPanel` consumes `(checked, total, ok)` from `SpecReader.Progress()`; degrades to a textless ratio bar when `ok=false`. `riskPanel` reads `LatestSignal()` instead of `spec.Result`. Re-introduce the immediate-on-startup parse only via the new port, not via `parseSpecCmd` directly.
-1. [ ] **Wire `[journal].store` into the AgentBriefing template.** The store value selects which journal-writing fragment the embedded contract injects: `markdown_inspec` instructs the agent to append entries inside the spec file; `file` instructs it to write to `<path>` from `[journal.file].path`; `none` suppresses the journal-writing block entirely (the agent receives no instruction to journal). No journal adapter package is created; bcc never reads the journal. Add the four values to the wizard's discrete choice list.
-1. [ ] **Wire the hierarchical config.** Global selectors (`[spec].format`, `[journal].store`, `[agent].name`) plus per-adapter subtables (`[spec.markdown_bcc]`, `[spec.openspec]`, `[journal.file]`, `[agent.claude]`, ...). Each adapter validates its own subtable at startup and fails fast on unknown keys. `bcc init` writes sane defaults for every known adapter. CLI flags `--spec-format <name>` and `--agent <name>` override the active selectors for a single run without modifying `.bcc.toml`. This step absorbs and supersedes today's flat `[executor]` block.
-1. [ ] **Tests.** Adapter round-trip per port (parse a fixture, assert the right signal and progress emerge). Decider tests re-expressed in `Signal` (no `spec.Result` import in `internal/loop/`). Smoke test that `bcc run` works against a fixture project with **no** `docs/guides/autonomous-execution.md`.
-1. [ ] **Migration note.** Update `CLAUDE.md`'s architecture section: `internal/spec/` is gone (or shrunk to truly format-neutral helpers); `markdown_bcc` is the default adapter, not the assumed format; the agent contract is per-adapter, embedded in the binary.
-1. [ ] **Open questions for follow-ups (do not block this spec).** Whether `Phase` is a TUI-only concept (some formats may not have phases). Whether `WorkRemaining` should be richer (e.g., ETA hints). Whether the loop should support format-specific extensions (Ralph-style `Dependencies()`, OpenSpec multi-file context). Whether `AgentEvents` should grow a `ProgressTick` for streamed sub-task progress.
+1. [x] **Inventory and freeze.** Coupling map and prompt-template references captured in [Coupling inventory](#coupling-inventory) and [The agent-contract leak](#the-agent-contract-leak) above.
+1. [x] **Define `Signal`, `BccEvent`, and the new ports** (`AgentBriefing`, `AgentEvents`) in `internal/loop/ports.go`. Types and doc comments only.
+1. [ ] **Author the bcc-markdown agent contract in framework space.** Create `internal/specreader/markdown_bcc/prompt.md` (or split files, implementing PR's call), authored as a Go `text/template` and embedded via `//go:embed`. Substitutions include `{{.SpecPath}}`, `{{.PlanHeading}}`, `{{.JournalHeading}}`, `{{.JournalStore}}`, `{{.Iteration}}`, `{{.Mode}}`, `{{.Extra}}`. The contract instructs the agent to (a) read the spec from `SpecPath` itself; (b) emit `bcc_event` of kind `task_started` / `task_completed` around each work unit; (c) emit exactly one `bcc_event` of kind `iteration_result` with `value` in `{continue, review, done, blocked}` immediately before exit; (d) write the journal entry to disk per `[journal].store`, in the user's natural-language vocabulary if any; (e) follow the [bcc-markdown contract](#bcc-markdown-contract) rules (optional, minimally structured, no no-op entries, no "Notes for observer" walls). Implement `markdown_bcc.New(Config)` with `BuildPrompt` rendering this template.
+1. [ ] **Plumb `AgentEvents` in the executor.** Add a `case "bcc_event":` arm in the executor's type switch (`internal/executor/claude/claude.go:199-211`) that calls the active adapter's `AgentEvents.ParseLine` and forwards the resulting `BccEvent` on the existing event channel as a new `AgentEventKind`. Implement `markdown_bcc.AgentEvents.ParseLine` to recognize the four `event` values and produce normalized `BccEvent`s.
+1. [ ] **Refactor `LoopDecider` to consume `Signal`.** `Decide(latest Signal, headAdvanced bool) Action`. Drop `LatestResult`, `UncheckedAfter`, and `ExitDoneWithLeftovers`: bcc trusts the wire signal for done-verification, the user catches lies when reviewing the spec, and HEAD-stuck remains the orthogonal safety net. Update tests accordingly.
+1. [ ] **Rewrite `Loop.Run` to consume the wire protocol.** Drop the spec-content read at the top of the iteration. Drop the `ParsePlan` / `ParseLatestResult` calls between iterations. Tracking-state for the iteration becomes "the latest `BccEventIterationResult` seen on the event channel", which feeds the decider after the executor returns. Loop's struct loses the `SpecContent` and `GuidePath` fields. Loop gains a `Briefing AgentBriefing` field and an `Events AgentEvents` field (the latter is forwarded to the executor adapter at construction).
+1. [ ] **Migrate TUI panels to event-driven state** per the [TUI items](#tui-items-pulled-in-from-phase-2) section. `progressPanel` and `riskPanel` re-route to `BccEvent`s. The `tui.SpecReader` port and `tui.SpecConfig.ResultVocab` are removed.
+1. [ ] **Wire the hierarchical config.** Global selectors (`[spec].format`, `[journal].store`, `[agent].name`) plus per-adapter subtables. Drop `[loop.results]` (vocab mapping no longer exists; wire is canonical English). Drop `[specs]` (its fields move into `[spec.markdown_bcc]` as adapter-private inputs). `bcc init` writes sane defaults for every known adapter; CLI flags `--spec-format <name>` and `--agent <name>` override the active selectors for one run.
+1. [ ] **Delete `internal/spec/`, `internal/specreader/markdown/`, `internal/loop/prompt.go`, `docs/guides/autonomous-execution.md`.** All four are superseded by the per-adapter contract embedded in `markdown_bcc`. Drop the `loop.SpecContent` and `loop.SpecReader` (parser-style) ports from `internal/loop/ports.go` if any residue remains.
+1. [ ] **Tests.** `markdown_bcc.AgentBriefing` golden-output tests (template rendering for each `Mode` × `JournalStore` combination). `markdown_bcc.AgentEvents` parsing fixtures for each `event` value. Decider tests in `Signal`. End-to-end fake-executor test where the fake emits a scripted `bcc_event` stream; the loop converges to the right exit code.
+1. [ ] **Migration note in `CLAUDE.md`.** Update the architecture section: `internal/spec/` is gone, `markdown_bcc` is the default format adapter, the agent contract is per-format and embedded, the four ports are `Executor`/`GitProbe`/`AgentBriefing`/`AgentEvents`. Drop the line in the [Orthogonality](CLAUDE.md#orthogonality-pragmatic-programmer) section that mentions `docs/guides/autonomous-execution.md` as a single-package change.
+1. [ ] **Open questions for follow-ups (do not block this spec).** Whether `Mode = ModeSingleShot` survives in its current form once the contract is per-format. Whether the executor needs a generic `bcc_event` parser (independent of the spec adapter) so future agents can emit events without a per-format adapter. Whether `BccEventProgressTick` is worth keeping or dropping until a use case appears.
 
 ## Done criteria
 
 - `go test -race ./...` clean.
-- No package outside `internal/specreader/markdown_bcc/` imports `internal/spec/` (or its successor).
-- A second adapter (even a minimal stub) can be added under `internal/specreader/` without editing `loop/`, `tui/`, or `executor/`.
-- bcc reads no file from the user's `docs/` directory at runtime. The framework prompt lives in `internal/specreader/<format>/` and ships embedded; `bcc run` works in a project that has no `docs/` directory at all.
-- bcc never reads the in-spec journal for control flow; the loop's continue/stop decision is driven entirely by the `bcc_event` wire protocol and the plan checkboxes.
-- `[journal].store = "none"` is a supported setting; a full loop run with that store completes without writing or reading any journal entry.
-- A no-op iteration (no commits, no decisions, no discovered work) writes no journal entry. The phase-2 spec's three "no-op review checkpoint" entries cannot be reproduced under the new contract.
+- `internal/spec/`, `internal/specreader/markdown/`, `internal/loop/prompt.go`, and `docs/guides/autonomous-execution.md` are deleted.
+- `internal/loop/ports.go` exposes only `Executor`, `GitProbe`, `AgentBriefing`, `AgentEvents` (plus shared types `Signal`, `BccEvent`, `BriefingInput`, etc.). No `SpecContent`, no `SpecReader`, no parser surface.
+- A second spec-format adapter (even a minimal stub) can be added under `internal/specreader/` without editing `loop/`, `tui/`, or `executor/`.
+- bcc reads no file from the user's `docs/` directory or anywhere else under the user's project at runtime, except for the spec path validation (`os.Stat`) and what the executor adapter does to launch the agent. `bcc run` works in a project that has no `docs/` directory at all.
+- The loop's continue/stop decision is driven entirely by the `bcc_event` wire protocol and the HEAD-advanced check.
 - `bcc init` prompts for `[spec].format` and `[agent].name` from discrete lists, and writes sane defaults for **every** known adapter (not only the active ones) into the corresponding subtables.
 - `--spec-format` and `--agent` CLI flags override the active selectors for a single run without modifying `.bcc.toml`.
-- `.bcc.toml` with default values produces the same observable behavior as today.
+- `[journal].store` values (`markdown_inspec`, `file`, `none`) flow into the embedded contract template; bcc never reads or writes the journal regardless of the value.
 
 ## Stop criteria
 
 Reverse the work and reopen the design if:
 
-- The signal shape proves too lossy for a real adapter (e.g., BMAD cannot be expressed in `Continue/Review/Done/Blocked`). In that case, expand the `Signal` set rather than leaking format types upward.
-- TUI panels degrade so far that the dashboard stops being useful for the bcc-markdown default. Adjust the `Progress()` contract to give the panels enough to render.
-- The four-port split proves over-engineered when applied to the second adapter (e.g., `AgentBriefing` and `SpecReader` collapse into one). Revert and reopen the design before adding a third adapter.
-- After the contract rewrite, the next-round agent demonstrably loses information that today's verbose journal carried (e.g., a Decision is missed because the new format made it too easy to omit). Tighten the contract by elevating one or more callouts from optional to recommended; do not roll back to the mandatory schema.
+- A real-world adapter (OpenSpec, Kiro) needs the loop to know something the wire protocol does not carry, and extending the protocol is more invasive than restoring a small read-side port.
+- The agent reliably fails to emit `iteration_result` (across model versions, prompt variations, etc.) such that the loop cannot make progress. In that case, restore a minimal verification port; do not silently fall back to parsing.
+- The 4-port split proves over-engineered (e.g., `AgentBriefing` and `AgentEvents` collapse into one because the same per-format Config drives both). Merge them in a follow-up; do not re-introduce parser surface.
 
 ## Out of scope
 
@@ -395,17 +374,23 @@ Reverse the work and reopen the design if:
 
 Most recent entries on top. Contract in [bcc-markdown contract](#bcc-markdown-contract).
 
+### 2026-04-30 01:30, drop SpecReader and SpecContent (wire-protocol-first)
+
+Reviewer pushed back on `SpecReader` for the same reason `JournalReader` was dropped: parsing the user's spec is brittle and bcc has no good reason to do it once the wire protocol carries every signal it needs. Five `SpecReader` methods (`LatestSignal`, `WorkRemaining`, `Progress`, `NextWorkItem`, `Render`) all have wire-protocol equivalents (`bcc_event` for the first three; the agent picks the next item from the spec itself; `Render` was for a preview panel that has no business existing). `SpecContent` follows: bcc has no reason to inject spec content into the prompt either, the agent reads `SpecPath` itself.
+
+Result: bcc never reads any user-space file at runtime. Four ports total: `Executor`, `GitProbe`, `AgentBriefing`, `AgentEvents`. Loop's `SpecContent` field, `GuidePath` field, and the inline parser calls all retire in the next commit. `internal/spec/` and `internal/specreader/markdown/` are deleted as part of the same migration.
+
+- **Decisions**: Wire protocol's `iteration_result.value` is canonical English (`continue` / `review` / `done` / `blocked`); journal localization stays a per-adapter prompt-template concern. `[loop.results]` config section is dropped entirely (was the surface-vocab mapping). `[specs].PlanHeading` / `JournalHeading` / `ResultKeyword` move into `[spec.markdown_bcc]` as adapter-private template inputs that the agent uses when writing, not for bcc to parse. `BriefingInput` stops carrying `NextItemID` and `JournalEnabled`; the adapter's Config holds the journal-store hint as a template variable. `RenderProfile` is removed. The TUI items "spec parsed at startup", "optional spec preview panel", "journal viewer", and the original "edit-spec end-to-end smoke" are all dropped; preview is what the user's editor is for. Done-verification (no leftover `[ ]` after `done` signal) is the agent's responsibility per the contract; bcc trusts the signal, the user catches lies on review. Implementation Plan rewritten end to end around the 4-port shape.
+
 ### 2026-04-30 00:48, drop JournalReader entirely
 
 Removed `JournalReader`, `JournalEntry`, and the `internal/journal/` adapter family from the design. The port existed only to feed the `[j]` TUI viewer, and the only viable read path was a markdown parser over the user's spec file, which the new contract makes brittle by allowing free-form prose between heading and bullets. The wire protocol already covers display: `bcc_event` of kind `iteration_result` carries signal and a short summary; richer payload extends that event, not a new port. The `[j]` viewer is dropped; the user opens the spec in their editor if they want the journal.
 
-- **Decisions**: `[journal].store` survives as **template input** to `AgentBriefing`, not as a port selector. The store value picks which journal-writing fragment the embedded contract injects (`markdown_inspec` → "append to the spec", `file` → "write to `<path>`", `none` → block omitted). bcc never reads the journal; the agent is the sole writer, the user the sole reader. Plan items 8 and 8.5 were rewritten as a single template-wiring task; no `internal/journal/` packages exist.
+- **Decisions**: `[journal].store` survives as **template input** to `AgentBriefing`, not as a port selector. The store value picks which journal-writing fragment the embedded contract injects (`markdown_inspec` → "append to the spec", `file` → "write to `<path>`", `none` → block omitted). bcc never reads the journal; the agent is the sole writer, the user the sole reader.
 
+### 2026-04-30 00:23, JournalStore → JournalReader (intermediate step, superseded)
 
-
-bcc has no journal write port. `AppendEntry` was a fossil from the pre-event-protocol design where bcc owned the write; under the contract codified in this spec, the agent owns journal writes (instructed via `AgentBriefing` per `[journal].store`), and bcc only reads, and only for the optional TUI viewer. Renamed the port to `JournalReader`, dropped `AppendEntry`, added an `ok` return on `Latest` so the `none` store can signal "nothing to show" cleanly.
-
-- **Decisions**: Adapters under `internal/journal/<store>/` own reading only. Writing lives entirely inside the embedded markdown_bcc contract, conditional on `{{.JournalEnabled}}`. `[journal].store = "none"` resolves to a `JournalReader` that returns `ok=false`, and the briefing template suppresses journal-writing instructions, so the off-switch is "agent does not write" plus "TUI viewer hides binding". No write port to drop, only an instruction to suppress.
+bcc has no journal write port. `AppendEntry` was a fossil from the pre-event-protocol design where bcc owned the write; under the contract codified in this spec, the agent owns journal writes (instructed via `AgentBriefing`), and bcc only reads, and only for the optional TUI viewer. Renamed the port to `JournalReader`, dropped `AppendEntry`, added an `ok` return on `Latest` so the `none` store can signal "nothing to show" cleanly. Superseded by the 00:48 entry which dropped the port entirely.
 
 ### 2026-04-30 00:07, plan items 1 and 2
 

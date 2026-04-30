@@ -99,53 +99,6 @@ func (s Signal) String() string {
 	}
 }
 
-// RenderProfile selects how SpecReader.Render produces a TUI-friendly
-// representation of the spec. Adapters may treat this as a hint or
-// ignore it.
-type RenderProfile int
-
-const (
-	// RenderTerminal targets a terminal viewport with ANSI styling.
-	RenderTerminal RenderProfile = iota
-	// RenderPlain targets a no-color, ASCII-only output.
-	RenderPlain
-)
-
-// SpecReader is the read-side introspection port for a spec format.
-// The active spec-format adapter implements it; the loop and the TUI
-// consume it for decisions and progress display.
-//
-// Methods may read the spec from disk; implementations should be
-// re-entrant and tolerate concurrent calls from different goroutines.
-type SpecReader interface {
-	// LatestSignal returns the most recent decision-relevant signal
-	// from the spec's progress record (the journal, a tasks.json
-	// status, whatever the format uses to record per-iteration
-	// outcome).
-	LatestSignal(ctx context.Context, specPath string) (Signal, error)
-
-	// WorkRemaining is true when at least one pending unit exists. The
-	// format decides what "pending" means: unchecked checkbox, open
-	// task, task with unmet dependencies, etc.
-	WorkRemaining(ctx context.Context, specPath string) (bool, error)
-
-	// Progress is an optional UI hint. Adapters with no notion of
-	// progress return ok=false; consumers degrade gracefully.
-	Progress(ctx context.Context, specPath string) (checked, total int, ok bool, err error)
-
-	// NextWorkItem returns an opaque, format-defined identifier for
-	// the unit the agent should focus on next (phase number for
-	// bcc-markdown, task ID for Ralph or OpenSpec). Adapters with no
-	// notion of "next item" return ok=false; the briefing falls back
-	// to a generic "implement the next pending item" prompt.
-	NextWorkItem(ctx context.Context, specPath string) (id string, ok bool, err error)
-
-	// Render produces a TUI-friendly view of the spec for the optional
-	// preview panel. Adapters without a renderer return ok=false; the
-	// panel is hidden.
-	Render(ctx context.Context, specPath string, profile RenderProfile) (text string, ok bool, err error)
-}
-
 // Mode is the loop execution mode the briefing is being built for.
 type Mode int
 
@@ -159,7 +112,9 @@ const (
 )
 
 // BriefingInput carries the orchestration context AgentBriefing.BuildPrompt
-// uses to render a per-iteration prompt.
+// uses to render a per-iteration prompt. Per-format options (heading
+// text, journal store, etc.) live on the adapter's Config and are not
+// passed per-iteration.
 type BriefingInput struct {
 	// SpecPath is the absolute or cwd-relative path to the spec.
 	SpecPath string
@@ -167,18 +122,13 @@ type BriefingInput struct {
 	// Iteration is the 1-based index of the iteration about to run.
 	Iteration int
 
-	// NextItemID is the SpecReader.NextWorkItem result for this
-	// iteration; empty when the adapter returned ok=false.
-	NextItemID string
-
 	// Mode tells the briefing whether to render loop-mode framing or
 	// single-shot framing.
 	Mode Mode
 
-	// JournalEnabled is false when [journal].store = "none". The
-	// briefing should suppress journal-writing instructions in that
-	// mode.
-	JournalEnabled bool
+	// Extra is user-provided extra instructions appended to the prompt
+	// (sourced from --extra). Empty when not set.
+	Extra string
 }
 
 // AgentBriefing builds the per-iteration prompt for the active spec
