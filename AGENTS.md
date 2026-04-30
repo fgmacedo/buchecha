@@ -58,7 +58,7 @@ Sign of trouble: a feature that touches 4+ packages probably crossed a layer wro
 
 The domain is small. We use the parts of DDD that pay off and skip the rest.
 
-- **Value objects** (immutable, equality by value, no identity): `Result` (`ok`, `partial`, `done`, `blocked`), `Phase`, `Item`, `CommitSHA`, `JSONLPath`, `IterationID`. Construct via constructors that validate; never mutate.
+- **Value objects** (immutable, equality by value, no identity): `Result` (`ok`, `partial`, `done`, `blocked`), `Phase`, `Item`, `CommitSHA`, `IterationID`. Construct via constructors that validate; never mutate.
 - **Entities** (identity, lifecycle): `Spec` (identified by file path), `Iteration` (identified by index within a spec run).
 - **Aggregate root**: `Spec` is the root for `Phase` and `Item`. Modifications go through the root.
 - **Domain services** (behavior that does not belong on a single entity): `LoopDecider` (pure function on `(LatestResult, HEADAdvanced, UncheckedCount) → Action`), `Heuristic` (loop-suspect detector).

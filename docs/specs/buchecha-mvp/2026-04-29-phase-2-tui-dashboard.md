@@ -44,7 +44,7 @@ A third use case is structural: when `bcc` itself is invoked by another agent, b
 - [ ] `--verbosity <level>` filters the event stream: `error` | `warn` | `info` (default) | `debug` | `trace`. Each event has an implicit level; the flag drops anything below it before the render backend sees it. Applies to `text` and `json`; ignored for `tui` (TUI panels are already curated). Default `info` is the right shape for orchestrators that want signal without noise.
 - [ ] Normalized event model in `internal/loop`: `IterationStarted`, `AgentEventReceived` (Init, Thinking, ToolUse, ToolResult, AssistantText, RateLimit, ResultSummary), `IterationFinished`, `LoopFinished`. All three modes consume the same channel.
 - [ ] `Executor` port emits typed events on a channel. Adapters translate native agent formats.
-- [ ] Claude adapter: parses Claude Code's `--output-format stream-json` into normalized events. Persists raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` for audit. (Raw agent log is per-adapter and distinct from the loop-level NDJSON of `--output json`.)
+- [ ] Claude adapter: parses Claude Code's `--output-format stream-json` into normalized events.
 - [ ] 5-panel TUI layout: header, now/health, progress, risk, recent actions.
 - [ ] Visual polish: lipgloss colors, spinner on active tool, progress bar (items checked / total), ETA (rolling iteration time).
 - [ ] Controls in TUI: `q` / Ctrl+C (graceful shutdown), `space` (pause between iterations), `?` (help overlay), mouse wheel scroll on history panels.
@@ -52,7 +52,7 @@ A third use case is structural: when `bcc` itself is invoked by another agent, b
 - [ ] Graceful resize, no terminal corruption on exit (panic / signal / kill).
 - [ ] Live-update contract: tokens, cost, heartbeat, plan progress, and the run-local commit count change in real time during an iteration, not only at iteration boundaries. A panel that stays visibly empty during work in progress is a bug.
 - [ ] Charm v2 stack: `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `charm.land/bubbles/v2` (with `charm.land/glamour/v2` for the optional spec preview). No v1 imports; greenfield project pins to current latest stable.
-- [ ] Post-loop session contract (TUI mode): the agent's terminal `Result` (`review`, `done`, `blocked`, `max iterations`) is a signal that the human is needed, not a process exit. `bcc` keeps the alt-screen, freezes the dashboard, and shows a menu (resume / edit spec / view journal / show audit log / quit). Text and JSON modes still exit immediately so orchestrators are unaffected.
+- [ ] Post-loop session contract (TUI mode): the agent's terminal `Result` (`review`, `done`, `blocked`, `max iterations`) is a signal that the human is needed, not a process exit. `bcc` keeps the alt-screen, freezes the dashboard, and shows a menu (resume / edit spec / view journal / quit). Text and JSON modes still exit immediately so orchestrators are unaffected.
 
 ### Non-goals
 
@@ -113,7 +113,6 @@ type IterationFinished struct {
     HEADAdvanced bool
     NewlyChecked int
     DurationMS   int64
-    LogPath      string         // raw agent log for this iteration
 }
 
 type AgentEventReceived struct{ Event AgentEvent }
@@ -149,7 +148,7 @@ Each loop event serialises to one NDJSON line on stdout. The wire format:
 {"type":"agent_event","at":"...","level":"info","kind":"tool_use","tool":{"id":"toolu_01","name":"Edit","args":{"file_path":"internal/spec/plan.go"}}}
 {"type":"agent_event","at":"...","level":"debug","kind":"tool_result","tool":{"id":"toolu_01","is_error":false,"summary":"file edited"}}
 {"type":"agent_event","at":"...","level":"info","kind":"result_summary","done":{"num_turns":12,"total_cost_usd":0.34,"input_tokens":12000,"output_tokens":2300,"duration_ms":42100}}
-{"type":"iter_finished","at":"...","level":"info","index":3,"result":"partial","head_advanced":true,"newly_checked":2,"duration_ms":420000,"log_path":".bcc/logs/foo-iter3.jsonl"}
+{"type":"iter_finished","at":"...","level":"info","index":3,"result":"partial","head_advanced":true,"newly_checked":2,"duration_ms":420000}
 {"type":"loop_finished","at":"...","level":"info","reason":"spec done","exit_code":0}
 ```
 
@@ -170,7 +169,6 @@ type Executor interface {
 
 type ExecResult struct {
     ExitCode int
-    LogPath  string  // raw native log, written by adapter
 }
 ```
 
@@ -272,8 +270,7 @@ internal/
 │   ├── eventjson.go              # NDJSON serialiser for --output json
 │   └── loop.go                   # Loop.Run drives iterations, emits Events
 ├── executor/claude/
-│   ├── claude.go                 # parses stream-json into AgentEvent
-│   └── log.go                    # raw stream persistence to .bcc/logs/
+│   └── claude.go                 # parses stream-json into AgentEvent
 └── tui/
     ├── tui.go                    # bubbletea Model/Update/View root
     ├── header.go                 # spec, branch, iter, elapsed, alive dot
@@ -309,7 +306,6 @@ bcc run <spec> [flags]
 ### P2.2: claude adapter emits typed events
 
 1. [x] `internal/executor/claude/claude.go`: parse stream-json line-by-line into `AgentEvent`. Map every Claude event subtype to a `Kind`.
-1. [x] `internal/executor/claude/log.go`: persist raw stream to `.bcc/logs/<spec-slug>-<iter>.jsonl` as the parser reads it. `ExecResult.LogPath` returns the path.
 1. [x] Tests: replay a captured stream-json fixture (`testdata/full-iter.jsonl`) and assert the produced `AgentEvent` sequence.
 
 ### P2.3: text and json output modes
@@ -402,7 +398,6 @@ Menu actions:
 - `[r] Resume loop`: builds a fresh `loop.Loop` with the same Config and SpecPath, re-attaches it to the existing TUI Model (panels reset to per-iteration counters, run-local commit count keeps its baseline), and starts a new iteration. Useful after the user edited the spec from outside or used `[e]`.
 - `[e] Edit spec in $EDITOR`: suspends the program with `program.ReleaseTerminal()`, runs `$EDITOR <spec-path>` (falls back to `$VISUAL`, then prints a hint and returns to menu when neither is set), restores the terminal with `program.RestoreTerminal()`. Edit time is unbounded; nothing is running.
 - `[j] View latest journal entry`: format-dependent; carved out to [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md).
-- `[l] Audit log path`: prints the JSONL audit log path in a copyable form. Optional: copy to clipboard via the bubbletea v2 OSC-52 helper.
 - `[q] Exit`: `tea.Quit`. Process exits with the loop's terminal exit code.
 
 Behavior matrix per terminal reason:
@@ -419,12 +414,11 @@ Behavior matrix per terminal reason:
 Sub-items:
 
 1. [ ] **Default output regression test**: assert `runCmd.Flags().Lookup("output").DefValue == "tui"` in `internal/cli/run_test.go`. Locks the contract so a future flag-tweak cannot silently change the default.
-1. [ ] **Loop-control change**: in TUI mode, `LoopFinished` no longer schedules `tea.Quit`. The Model latches `sessionMode = true`, captures the latest signal (today: `spec.Result`; once the new ports land, the format-neutral `Signal` from [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md)), the JSONL path, and the run-local commit count from the current panel state.
-1. [ ] **Session overlay**: new `internal/tui/session.go` renders the menu over the last frame of the dashboard (frozen). Uses `bubbles/v2/key` for the bindings (`Resume`, `Edit`, `Log`, `Quit`) and `bubbles/v2/help` for the inline help footer; the `?` overlay still works inside session mode. The `Journal` binding lands together with the journal viewer (carved out, see below).
+1. [ ] **Loop-control change**: in TUI mode, `LoopFinished` no longer schedules `tea.Quit`. The Model latches `sessionMode = true`, captures the latest signal (today: `spec.Result`; once the new ports land, the format-neutral `Signal` from [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md)), and the run-local commit count from the current panel state.
+1. [ ] **Session overlay**: new `internal/tui/session.go` renders the menu over the last frame of the dashboard (frozen). Uses `bubbles/v2/key` for the bindings (`Resume`, `Edit`, `Quit`) and `bubbles/v2/help` for the inline help footer; the `?` overlay still works inside session mode. The `Journal` binding lands together with the journal viewer (carved out, see below).
 1. [~] **Carved out** to [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md). Original scope: `[j]` swaps the overlay for a `bubbles/v2/viewport` displaying the last journal entry via `charm.land/glamour/v2`. Reason: depends on a `JournalStore.Latest()` port (today the journal is parsed from the spec markdown by `internal/spec/`), and rendering via glamour assumes markdown content. Will return as a per-adapter render path on top of the new ports.
 1. [ ] **Resume action**: pressing `[r]` returns a `tea.Cmd` that emits a `restartLoopMsg` containing the same Config / SpecPath. `runWithTUI` recognises the message, tears down the current `loop.Loop` cleanly, builds a fresh one, and re-binds the new events channel into the existing Model. Iteration counter resets per session; run-local baseline SHA is preserved (the run, not the iteration, is the baseline).
 1. [~] **Carved out** to [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md). Original scope: `[e]` invokes `$EDITOR`, then re-parses the spec via `parseSpecCmd` so the menu's data reflects the edits. Reason: same coupling as P2.9 sub-item 4; the post-edit refresh must go through the new `SpecReader` port. The terminal-suspend / `$EDITOR` mechanics survive (format-neutral); only the post-edit re-parse is gated on the new port.
-1. [ ] **Audit log action**: `[l]` shows the `.bcc/logs/<slug>-iter<N>.jsonl` path. OSC-52 clipboard copy is best-effort; failure to copy is silent.
 1. [ ] **Header state badge**: the header box gains a state indicator while in session mode: `idle (review) • r resume • e edit • j journal • q exit`. Replaces the alive dot in the same slot. The "review/done/blocked" label is the format-neutral `Signal` once the new ports land (today: `spec.Result.String()`).
 1. [ ] **Ctrl+C in session mode**: exits immediately, no confirmation. The loop is already done; the menu is convenience, not commitment.
 1. [ ] **Text/JSON parity**: `LoopFinished` in those modes still produces an immediate exit with the loop's exit code. Add a regression test in `render_test.go` that asserts text and json render goroutines drain and return without waiting for any user input.

@@ -33,7 +33,7 @@ The current shell wrapper works but is opaque, bash-bound, and project-specific.
 - [ ] `bcc init` interactive wizard generates `.bcc.toml` with sensible defaults.
 - [ ] Config layer (`internal/config`) loads `.bcc.toml`, applies defaults by `project.language`, supports `[env]` with `.env` files and `[env.vars]` inline.
 - [ ] Spec parser (`internal/spec`) extracts plan headings, counts `[x]`/`[ ]` items, parses latest journal `**Result**`. Pure functions, table-driven tests.
-- [ ] Executor (`internal/executor`) runs the agent subprocess, streams JSONL events to a per-iteration file, captures exit code.
+- [ ] Executor (`internal/executor`) runs the agent subprocess, streams agent events, captures exit code.
 - [ ] Loop controller (`internal/loop`) implements the decision table with same semantics as the bash `case`.
 - [ ] Localization: a `.bcc.toml` set to `language = "pt-BR"` makes `bcc run` work on `condo-fiscal` specs without rewriting them.
 
@@ -57,8 +57,7 @@ buchecha/
 ├── cmd/                          # cobra commands; wires adapters into loop
 │   ├── root.go
 │   ├── run.go
-│   ├── init.go
-│   └── watch.go                  # stub until Phase 2
+│   └── init.go
 ├── internal/
 │   ├── config/                   # domain: typed Config, defaults, env merge
 │   │   ├── config.go
@@ -76,7 +75,7 @@ buchecha/
 │   │   └── exitcodes.go          # constants 0..5
 │   ├── executor/                 # adapters
 │   │   └── claude/
-│   │       └── claude.go         # implements loop.Executor (JSONL stream)
+│   │       └── claude.go         # implements loop.Executor (parses stream-json)
 │   ├── git/                      # adapters
 │   │   └── cli/
 │   │       └── cli.go            # implements loop.GitProbe via os/exec
@@ -87,11 +86,9 @@ buchecha/
 │       └── toml/
 │           └── toml.go           # reads .bcc.toml into config.Config
 └── testdata/
-    ├── specs/
-    │   ├── sample-en.md
-    │   └── sample-pt-br.md
-    └── jsonl/
-        └── sample-events.jsonl
+    └── specs/
+        ├── sample-en.md
+        └── sample-pt-br.md
 ```
 
 ### Configuration: `.bcc.toml`
@@ -157,8 +154,6 @@ bcc run <spec> [flags]
 bcc init                         # interactive wizard
   --force                        # overwrite existing .bcc.toml
   --language <code>              # skip language prompt
-
-bcc watch <spec>                 # Phase 2 stub: prints "not implemented yet"
 ```
 
 ### Exit codes (parity with bash)
@@ -205,12 +200,12 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 1. [x] `internal/spec/headings.go`, `plan.go`, `journal.go`: `ParsePlan`, `CountChecked`, `CountUnchecked`, `ParseLatestResult`. Pure, table-driven tests against `testdata/specs/`.
 1. [x] `go test -race ./internal/config/... ./internal/configloader/... ./internal/spec/...` zero failures.
 
-### P1.2: executor adapter with JSONL streaming
+### P1.2: executor adapter
 
-1. [x] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, jsonlOut) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
-1. [x] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, streaming stdout directly to `jsonlOut` (`cmd.Stdout = jsonlOut`), propagating exit code.
-1. [x] Cancellation via `context.Context`. `cmd.Cancel` sends SIGINT; `cmd.WaitDelay` (default 5s) escalates to SIGKILL; a final `{"type":"interrupted"}` line is appended to `jsonlOut`. Run returns `ctx.Err()` so callers can `errors.Is` it.
-1. [x] Fake executor under `internal/executor/fake/` for tests: replays a scripted sequence of `Step{JSONL, ExitCode, Err}`; records prompts received. Used by loop tests in P1.3.
+1. [x] `internal/loop/ports.go`: define `Executor` interface (`Run(ctx, prompt, ...) (exitCode int, err error)`), plus `GitProbe`, `SpecReader`. All consumed by `Loop`.
+1. [x] `internal/executor/claude/claude.go`: implements `loop.Executor` invoking `claude -p --output-format stream-json --verbose ...`, parsing stdout into agent events, propagating exit code.
+1. [x] Cancellation via `context.Context`. `cmd.Cancel` sends SIGINT; `cmd.WaitDelay` (default 5s) escalates to SIGKILL. Run returns `ctx.Err()` so callers can `errors.Is` it.
+1. [x] Fake executor under `internal/executor/fake/` for tests: replays a scripted sequence of `Step{ExitCode, Err}`; records prompts received. Used by loop tests in P1.3.
 
 ### P1.3: loop controller
 
@@ -219,7 +214,7 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 1. [x] `internal/loop/prompt.go`: `BuildPromptLoop` and `BuildPromptSingleShot` via `text/template`, parameterized by spec path, guide path, full localized vocabulary (plan/journal headings, Result keyword, four Result values), and an optional `Extra` block.
 1. [x] `internal/loop/decider.go`: pure `Decide(DeciderInput) Decision`. HEADAdvanced checked first; switch on Result; `done` with leftovers maps to ExitDoneWithLeftovers.
 1. [x] Single-shot mode: max iterations forced to 1; uses the single-shot prompt template variant.
-1. [x] Table-driven tests for the decider (8 cases); loop tests in external `loop_test` package using `executor/fake` + scripted `GitProbe` + scripted `SpecReader` (12 cases covering all decision branches, single-shot cap, pt-BR localization, port-error propagation, JSONL file emission).
+1. [x] Table-driven tests for the decider (8 cases); loop tests in external `loop_test` package using `executor/fake` + scripted `GitProbe` + scripted `SpecReader` (covering all decision branches, single-shot cap, pt-BR localization, port-error propagation).
 
 ### P1.4: cobra wiring + end-to-end
 
@@ -228,8 +223,7 @@ Each phase below is a checkbox group. The autonomous execution agent (when this 
 1. [x] `cmd.ExitCode` package-level int + main.go threading: lets RunE handlers set the bash-compatible exit code; main.go reads it after Execute. Discovered while wiring `cmd/run`.
 1. [x] `cmd/run.go`: parse flags, load config via `configloader/toml` (`--config` overrides Discover), apply env (`--env` overrides everything), instantiate `executor/claude` + `git/cli` + `specreader/markdown`, build `Loop`, invoke. SIGINT/SIGTERM handled via `signal.NotifyContext`. Sets `cmd.ExitCode`.
 1. [x] `cmd/init.go`: linear stdin wizard with pure `WriteConfigTOML(path, initInput)` underneath (testable). `--force` and `--language` honored.
-1. [x] `cmd/watch.go`: stub from Phase 0 returns "not implemented yet (Phase 2)"; kept as-is.
-1. [x] End-to-end smoke test (`internal/loop/integration_test.go`): real git repo + real `specreader/markdown` + a wrapper around `executor/fake` that mutates the spec and commits between iterations. Two scenarios: two-iter to done with exit 0 and JSONL files emitted; HEAD-stuck on no-commit returns exit 3.
+1. [x] End-to-end smoke test (`internal/loop/integration_test.go`): real git repo + real `specreader/markdown` + a wrapper around `executor/fake` that mutates the spec and commits between iterations. Two scenarios: two-iter to done with exit 0; HEAD-stuck on no-commit returns exit 3.
 
 ### P1.5: validation against `condo-fiscal`
 
@@ -254,7 +248,7 @@ In addition to the guide defaults:
 ### Stop criteria
 
 1. Success: P1.1 through P1.5 all `[x]`, criteria above all green, manual smoke on `condo-fiscal` confirms localization works.
-1. Block: 3 consecutive validation failures after `git revert`. Or if the `claude` JSONL contract changes mid-development.
+1. Block: 3 consecutive validation failures after `git revert`. Or if the `claude` stream-json contract changes mid-development.
 1. Human decision: any deviation from the journal contract semantics (e.g., new `Result` value needed). Requires guide update first.
 
 ## Risks and mitigations
@@ -262,7 +256,7 @@ In addition to the guide defaults:
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Claude `stream-json` event shape changes | Medium | High | Tolerant parser: pass through unknown event types; tests against captured fixtures |
-| Subprocess buffering breaks JSONL streaming | Medium | Medium | Use `bufio.Scanner` with explicit buffer size; test with slow producer |
+| Subprocess buffering breaks stream-json parsing | Medium | Medium | Use `bufio.Scanner` with explicit buffer size; test with slow producer |
 | Localization defaults drift from `condo-fiscal` strings | Low | High | Snapshot test loading the actual `condo-fiscal` spec headings |
 | Cobra flag handling diverges from bash flag order | Low | Low | Document flag mapping in README; tests cover all flags |
 

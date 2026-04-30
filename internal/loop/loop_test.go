@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -122,7 +120,6 @@ func TestRun_OkThenDone(t *testing.T) {
 		Executor:   exec,
 		Git:        git,
 		SpecReader: reader,
-		JSONLDir:   t.TempDir(),
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -145,7 +142,7 @@ func TestRun_BlockedStops(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -165,7 +162,7 @@ func TestRun_DoneWithLeftovers(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -185,7 +182,7 @@ func TestRun_HEADStuck(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -205,7 +202,7 @@ func TestRun_UnknownResultIsInvalid(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -230,7 +227,7 @@ func TestRun_MaxIterationsReached(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -249,7 +246,7 @@ func TestRun_ExecutorErrorPropagates(t *testing.T) {
 	reader := &stepfulSpecReader{} // never reached
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if !errors.Is(err, wantErr) {
@@ -267,7 +264,7 @@ func TestRun_GitErrorPropagates(t *testing.T) {
 	reader := &stepfulSpecReader{}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err == nil {
@@ -285,7 +282,7 @@ func TestRun_SpecReaderErrorPropagates(t *testing.T) {
 	reader := &errSpecReader{err: errors.New("read boom")}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err == nil {
@@ -307,7 +304,7 @@ func TestRun_SingleShotCapsAtOne(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(), SingleShot: true,
+		SpecReader: reader, SingleShot: true,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -347,7 +344,7 @@ func TestRun_PortugueseLocalized(t *testing.T) {
 	reader := &stepfulSpecReader{contents: []string{specPt}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -367,7 +364,6 @@ func TestRun_RejectsZeroMaxIterations(t *testing.T) {
 		Executor:   fake.New(),
 		Git:        &fakeGit{},
 		SpecReader: &stepfulSpecReader{},
-		JSONLDir:   t.TempDir(),
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err == nil {
@@ -387,39 +383,6 @@ func TestRun_NilPortsRejected(t *testing.T) {
 	}
 	if code != loop.ExitInvalid {
 		t.Errorf("code = %d, want loop.ExitInvalid", code)
-	}
-}
-
-func TestRun_RawLogWrittenAtBCCJSONLPath(t *testing.T) {
-	cfg := newTestConfig()
-	dir := t.TempDir()
-	exec := fake.New(fake.Step{RawLog: `{"type":"hello"}` + "\n", ExitCode: 0})
-	git := &fakeGit{heads: []string{"A", "B"}}
-	reader := &stepfulSpecReader{contents: []string{
-		specWith([]string{"[x]", "[x]"}, "done"),
-	}}
-	l := &loop.Loop{
-		SpecPath: "/tmp/sample-spec.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: dir,
-	}
-	if _, err, _ := runWithEvents(t, l); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	// The fake executor writes RawLog to BCC_JSONL_PATH (set by the
-	// loop). Confirm it landed in jsonlDir with the expected slug.
-	matches, err := filepath.Glob(filepath.Join(dir, "sample-spec-iter1.jsonl"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("expected 1 jsonl file, got %d", len(matches))
-	}
-	b, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if !strings.Contains(string(b), `"hello"`) {
-		t.Errorf("jsonl missing scripted content: %q", string(b))
 	}
 }
 
@@ -524,7 +487,6 @@ func TestRun_EventSequence(t *testing.T) {
 				Executor:   exec,
 				Git:        git,
 				SpecReader: reader,
-				JSONLDir:   t.TempDir(),
 			}
 			_, _, got := runWithEvents(t, l)
 			gotTypes := make([]string, len(got))
@@ -547,7 +509,7 @@ func TestRun_LoopFinishedCarriesExitCode(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	code, _, got := runWithEvents(t, l)
 	if len(got) == 0 {
@@ -590,7 +552,6 @@ func TestRun_PauseGateBlocksBetweenIterations(t *testing.T) {
 		Executor:   exec,
 		Git:        git,
 		SpecReader: reader,
-		JSONLDir:   t.TempDir(),
 		PauseGate:  gate,
 	}
 	events := make(chan loop.Event, 1024)
@@ -648,7 +609,7 @@ func TestRun_IterationFinishedCarriesResult(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, JSONLDir: t.TempDir(),
+		SpecReader: reader,
 	}
 	_, _, got := runWithEvents(t, l)
 	var fin *loop.IterationFinished

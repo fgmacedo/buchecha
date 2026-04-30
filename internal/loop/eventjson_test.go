@@ -47,14 +47,13 @@ func TestMarshalJSONEvent_IterFinished(t *testing.T) {
 		HEADAdvanced: true,
 		NewlyChecked: 2,
 		DurationMS:   420000,
-		LogPath:      ".bcc/logs/foo-iter3.jsonl",
 		At:           at,
 	}
 	got, err := loop.MarshalJSONEvent(ev)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-04-29T14:35:00Z","duration_ms":420000,"head_advanced":true,"index":3,"level":"info","log_path":".bcc/logs/foo-iter3.jsonl","newly_checked":2,"result":"partial","type":"iter_finished"}`
+	want := `{"at":"2026-04-29T14:35:00Z","duration_ms":420000,"head_advanced":true,"index":3,"level":"info","newly_checked":2,"result":"partial","type":"iter_finished"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}

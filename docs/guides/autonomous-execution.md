@@ -185,7 +185,6 @@ Behavior:
 | `BCC_ITERATION` | 1-based index of the current iteration |
 | `BCC_MAX_ITERATIONS` | iteration cap configured for this run |
 | `BCC_SPEC_PATH` | absolute path of the spec being implemented |
-| `BCC_JSONL_PATH` | absolute path of this iteration's raw event log |
 | `BCC_BRANCH` | current git branch (best-effort; may be empty in detached HEAD) |
 
 ## When not to use

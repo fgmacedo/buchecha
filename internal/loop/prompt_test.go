@@ -36,7 +36,6 @@ func TestBuildPromptLoop_IncludesAllVocab(t *testing.T) {
 		"ONE pending phase",
 		"BCC_RUNNING",
 		"BCC_ITERATION",
-		"BCC_JSONL_PATH",
 		"placeholder",
 		"<HEAD>",
 	} {

@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/config"
@@ -38,13 +36,6 @@ type Loop struct {
 
 	// Extra is an optional extra-instructions block injected into prompts.
 	Extra string
-
-	// JSONLDir is the directory where per-iteration JSONL files are
-	// written by the executor adapter. Defaults to ".bcc/logs"
-	// (project-relative; the adapter creates it lazily) when empty. The
-	// loop sets BCC_JSONL_PATH = <JSONLDir>/<spec-slug>-iter<n>.jsonl
-	// per iteration so the agent and adapter share the path.
-	JSONLDir string
 
 	// SingleShot, when true, runs single-shot mode: max iterations is
 	// forced to 1 and the single-shot prompt template is used.
@@ -89,10 +80,6 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 	if guidePath == "" {
 		guidePath = "docs/guides/autonomous-execution.md"
 	}
-	jsonlDir := l.JSONLDir
-	if jsonlDir == "" {
-		jsonlDir = filepath.Join(".bcc", "logs")
-	}
 
 	cfg := l.Config
 	if cfg == nil {
@@ -108,10 +95,6 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 	}
 	if maxIter <= 0 {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: max_iterations must be > 0, got %d", maxIter)
-	}
-
-	if err := os.MkdirAll(jsonlDir, 0o755); err != nil {
-		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("create jsonl dir %s: %w", jsonlDir, err)
 	}
 
 	promptInput := PromptInput{
@@ -146,13 +129,11 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 		Review:  cfg.Loop.Results.Review,
 	}
 
-	slug := slugFromPath(l.SpecPath)
 	startedAt := time.Now()
 	logger.Info("loop start",
 		"spec", l.SpecPath,
 		"max_iterations", maxIter,
 		"single_shot", l.SingleShot,
-		"jsonl_dir", jsonlDir,
 	)
 
 	for iter := 1; iter <= maxIter; iter++ {
@@ -179,21 +160,17 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 			At:          iterStart,
 		})
 
-		jsonlPath := filepath.Join(jsonlDir, fmt.Sprintf("%s-iter%d.jsonl", slug, iter))
-
 		// Set BCC_* env vars before invoking the executor. The subprocess
 		// inherits them via exec.Cmd default env. The agent uses them to:
 		//   - confirm it is running under bcc (BCC_RUNNING=1)
-		//   - breadcrumb iteration / spec / jsonl / branch in journal entries
+		//   - breadcrumb iteration / spec / branch in journal entries
 		//   - self-check (refuse to proceed if expected vars are absent)
-		// The adapter reads BCC_JSONL_PATH to know where to persist the
-		// raw event log. Each iteration overwrites; last-write-wins is
-		// fine because these values are well-defined per iteration.
+		// Each iteration overwrites; last-write-wins is fine because
+		// these values are well-defined per iteration.
 		os.Setenv("BCC_RUNNING", "1")
 		os.Setenv("BCC_ITERATION", strconv.Itoa(iter))
 		os.Setenv("BCC_MAX_ITERATIONS", strconv.Itoa(maxIter))
 		os.Setenv("BCC_SPEC_PATH", l.SpecPath)
-		os.Setenv("BCC_JSONL_PATH", jsonlPath)
 		if branch, gerr := l.Git.CurrentBranch(ctx); gerr == nil && branch != "" {
 			os.Setenv("BCC_BRANCH", branch)
 		}
@@ -214,7 +191,6 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 		logger.Info("iter executor returned",
 			"iter", iter,
 			"agent_exit", execResult.ExitCode,
-			"jsonl", execResult.LogPath,
 			"err", execErrMsg(execErr),
 		)
 		if execErr != nil {
@@ -274,7 +250,6 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 			HEADAdvanced: headAfter != headBefore,
 			NewlyChecked: plan.CountChecked(),
 			DurationMS:   iterEnd.Sub(iterStart).Milliseconds(),
-			LogPath:      execResult.LogPath,
 			At:           iterEnd,
 		})
 
@@ -316,14 +291,6 @@ func emit(events chan<- Event, ev Event) {
 		return
 	}
 	events <- ev
-}
-
-func slugFromPath(path string) string {
-	base := filepath.Base(path)
-	if dot := strings.LastIndexByte(base, '.'); dot > 0 {
-		base = base[:dot]
-	}
-	return base
 }
 
 func execErrMsg(err error) string {

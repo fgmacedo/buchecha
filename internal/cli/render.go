@@ -114,7 +114,6 @@ func textRenderEvent(ev loop.Event) (string, []slog.Attr) {
 			slog.Bool("head_advanced", e.HEADAdvanced),
 			slog.Int("newly_checked", e.NewlyChecked),
 			slog.Int64("duration_ms", e.DurationMS),
-			slog.String("log_path", e.LogPath),
 		}
 	case loop.LoopFinished:
 		return "loop finished", []slog.Attr{

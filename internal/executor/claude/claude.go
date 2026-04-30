@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -78,32 +77,19 @@ func New(cfg Config) *Executor {
 }
 
 // Run invokes the binary with print mode and stream-json output. For
-// each line emitted on stdout the adapter:
-//
-//  1. appends the verbatim line plus a newline to the raw log file at
-//     BCC_JSONL_PATH (when set) for audit;
-//  2. parses the line into zero or more loop.AgentEvents;
-//  3. forwards each AgentEvent on the events channel.
+// each line emitted on stdout the adapter parses it into zero or more
+// loop.AgentEvents and forwards each event on the events channel.
 //
 // On context cancellation the subprocess receives SIGINT first; if it
 // fails to exit within CancelGrace it is killed via SIGKILL (handled by
-// exec.Cmd via WaitDelay). After waiting, if the cancel path was taken,
-// a synthetic {"type":"interrupted"} terminator is appended to the log
-// so downstream parsers can detect abnormal end-of-stream.
+// exec.Cmd via WaitDelay).
 //
-// Returns (ExecResult{ExitCode: 0, LogPath}, nil) on natural completion.
-// Returns (ExecResult{ExitCode: n, LogPath}, nil) when the agent exits
-// non-zero (a normal control-flow signal, not a Run failure). Returns
-// (ExecResult, ctx.Err()) on cancellation. Returns
-// (ExecResult{ExitCode: -1}, err) on invocation failure (binary missing,
-// pipe setup error, log create error).
+// Returns (ExecResult{ExitCode: 0}, nil) on natural completion. Returns
+// (ExecResult{ExitCode: n}, nil) when the agent exits non-zero (a
+// normal control-flow signal, not a Run failure). Returns (ExecResult,
+// ctx.Err()) on cancellation. Returns (ExecResult{ExitCode: -1}, err)
+// on invocation failure (binary missing, pipe setup error).
 func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
-	rl, err := openRawLog(os.Getenv("BCC_JSONL_PATH"))
-	if err != nil {
-		return loop.ExecResult{ExitCode: -1}, err
-	}
-	defer rl.close()
-
 	// -p, --output-format stream-json, and --verbose are required for
 	// the loop to function (line-by-line JSONL events). They are not
 	// configurable.
@@ -128,7 +114,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 	cmd := exec.CommandContext(ctx, e.cfg.Binary, args...)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return loop.ExecResult{ExitCode: -1, LogPath: rl.Path()}, fmt.Errorf("stdout pipe: %w", err)
+		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("stdout pipe: %w", err)
 	}
 	if e.cfg.Stderr != nil {
 		cmd.Stderr = e.cfg.Stderr
@@ -140,7 +126,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 	cmd.WaitDelay = e.cfg.CancelGrace
 
 	if err := cmd.Start(); err != nil {
-		return loop.ExecResult{ExitCode: -1, LogPath: rl.Path()}, fmt.Errorf("run %s: %w", e.cfg.Binary, err)
+		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("run %s: %w", e.cfg.Binary, err)
 	}
 
 	// Drain the stdout pipe in a goroutine. The pipe EOFs naturally when
@@ -150,7 +136,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamLines(ctx, pipe, rl, events, e.cfg.MaxLineBytes)
+		streamLines(ctx, pipe, events, e.cfg.MaxLineBytes)
 	}()
 
 	// Per Cmd.StdoutPipe doc: callers must finish reading before Wait.
@@ -158,37 +144,35 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 	runErr := cmd.Wait()
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		rl.writeInterruptedTerminator()
 		exitCode := -1
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		}
-		return loop.ExecResult{ExitCode: exitCode, LogPath: rl.Path()}, ctxErr
+		return loop.ExecResult{ExitCode: exitCode}, ctxErr
 	}
 
 	if runErr == nil {
-		return loop.ExecResult{ExitCode: 0, LogPath: rl.Path()}, nil
+		return loop.ExecResult{ExitCode: 0}, nil
 	}
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
 		// Agent exited non-zero; that is a normal control-flow signal,
 		// not a Run failure. Caller decides what to do.
-		return loop.ExecResult{ExitCode: ee.ExitCode(), LogPath: rl.Path()}, nil
+		return loop.ExecResult{ExitCode: ee.ExitCode()}, nil
 	}
-	return loop.ExecResult{ExitCode: -1, LogPath: rl.Path()}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
+	return loop.ExecResult{ExitCode: -1}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
 }
 
-// streamLines reads stream-json from r line by line, persists each line
-// to the raw log, parses it into zero or more AgentEvents, and forwards
-// each event on the events channel. Returns when r EOFs or ctx is done.
-func streamLines(ctx context.Context, r io.Reader, rl *rawLog, events chan<- loop.AgentEvent, maxLine int) {
+// streamLines reads stream-json from r line by line, parses each line
+// into zero or more AgentEvents, and forwards each event on the events
+// channel. Returns when r EOFs or ctx is done.
+func streamLines(ctx context.Context, r io.Reader, events chan<- loop.AgentEvent, maxLine int) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), maxLine)
 	for sc.Scan() {
 		// Scanner.Bytes is reused across Scan calls; copy before forwarding.
 		raw := append([]byte(nil), sc.Bytes()...)
-		rl.writeLine(raw)
 		for _, ev := range parseLine(raw, time.Now()) {
 			select {
 			case events <- ev:

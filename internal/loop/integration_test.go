@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/fgmacedo/buchecha/internal/config"
@@ -86,8 +85,8 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 
 	executor := &editingExec{
 		fake: fake.New(
-			fake.Step{RawLog: `{"type":"system"}` + "\n", ExitCode: 0},
-			fake.Step{RawLog: `{"type":"result"}` + "\n", ExitCode: 0},
+			fake.Step{ExitCode: 0},
+			fake.Step{ExitCode: 0},
 		),
 		specPath: specPath,
 		repoDir:  dir,
@@ -96,7 +95,6 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 	}
 
 	cfg := newTestConfig()
-	jsonlDir := t.TempDir()
 
 	l := &loop.Loop{
 		SpecPath:   specPath,
@@ -104,7 +102,6 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 		Executor:   executor,
 		Git:        gitcli.New(dir),
 		SpecReader: markdown.New(),
-		JSONLDir:   jsonlDir,
 	}
 
 	events := make(chan loop.Event, 1024)
@@ -120,23 +117,6 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 	if executor.fake.CallCount() != 2 {
 		t.Errorf("executor calls = %d, want 2", executor.fake.CallCount())
 	}
-
-	// Raw logs (written by the fake adapter to BCC_JSONL_PATH) should
-	// exist for both iterations.
-	matches, err := filepath.Glob(filepath.Join(jsonlDir, "spec-iter*.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 2 {
-		t.Errorf("expected 2 jsonl files, got %d: %v", len(matches), matches)
-	}
-	iter1JSONL, err := os.ReadFile(filepath.Join(jsonlDir, "spec-iter1.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(iter1JSONL), `"system"`) {
-		t.Errorf("iter1 jsonl missing scripted content: %q", string(iter1JSONL))
-	}
 }
 
 func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
@@ -144,7 +124,7 @@ func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
 
 	// Agent runs but does NOT commit anything; spec file is unchanged.
 	executor := &editingExec{
-		fake:     fake.New(fake.Step{RawLog: `{"type":"system"}` + "\n", ExitCode: 0}),
+		fake:     fake.New(fake.Step{ExitCode: 0}),
 		updates:  nil,
 		specPath: specPath,
 		repoDir:  dir,
@@ -159,7 +139,6 @@ func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
 		Executor:   executor,
 		Git:        gitcli.New(dir),
 		SpecReader: markdown.New(),
-		JSONLDir:   t.TempDir(),
 	}
 
 	events := make(chan loop.Event, 1024)

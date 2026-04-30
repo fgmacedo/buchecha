@@ -88,6 +88,7 @@ graph LR
 | Phase 6+ | (placeholder) | future | Self-hosting, multi-agent support, PRD→Spec→bcc flow, releases |
 | [2026-04-29-spec-vendor-neutrality.md](./2026-04-29-spec-vendor-neutrality.md) | spec | draft | Carve `internal/spec/` out of the domain; signal-shaped `SpecReader` and `JournalStore` ports so other formats (open-spec, spec-kit, bmad) plug in as adapters. Floating priority. |
 | [2026-04-29-skill-spec-authoring.md](./2026-04-29-skill-spec-authoring.md) | spec | draft | Author-side skill: active-phase scoping, `Relevant files` blocks, journal Context-summary block. Floating priority. |
+| [2026-04-29-drop-raw-event-log.md](./2026-04-29-drop-raw-event-log.md) | spec | draft | Drop the per-iteration raw event log file (`.bcc/logs/...`), `BCC_JSONL_PATH`, `ExecResult.LogPath`, and the unused `bcc watch` stub. Floating priority. |
 
 ## Cross-cutting decisions
 
@@ -116,7 +117,7 @@ Repo skeleton, templates, this initiative, Phase 1 and Phase 2 specs, first comm
 
 1. [x] Create repo at `~/projects/buchecha` with mise (Go 1.24.2), `go.mod`, MIT license.
 1. [x] Set up directory structure: `cmd/`, `internal/{config,spec,loop,executor,git}`, `docs/{specs,adrs,templates,guides}`, `testdata/`.
-1. [x] Wire cobra root command and stubs for `run`, `init`, `watch`. `bcc --help` works.
+1. [x] Wire cobra root command and stubs for `run`, `init`. `bcc --help` works.
 1. [x] Port doc templates (initiative, spec, prd, adr) to English.
 1. [x] Port autonomous execution guide to English at `docs/guides/autonomous-execution.md`.
 1. [x] Write this initiative document.
@@ -171,11 +172,11 @@ Specs whose priority is fluid and not part of the holistic phase plan. Pulled in
 
 - [Spec-format vendor neutrality](./2026-04-29-spec-vendor-neutrality.md): unwind `internal/spec/`'s coupling to bcc-markdown by introducing signal-shaped `SpecReader` / `JournalStore` ports. Pull forward when we want to run `bcc` on a non-bcc-markdown spec, or when a feature would otherwise deepen the coupling.
 - [Skill: fast-iteration spec authoring](./2026-04-29-skill-spec-authoring.md): author-side guidance (Relevant files, scoped phases, journal Context summary) packaged as a Claude Code skill. Independent of the framework; can land any time.
+- [Drop the per-iteration raw event log](./2026-04-29-drop-raw-event-log.md): remove the `.bcc/logs/<slug>-iter<n>.jsonl` artifact, the `BCC_JSONL_PATH` env var, `ExecResult.LogPath`, the `log_path` NDJSON field, and the unused `bcc watch` stub. Small, isolated; pull forward whenever.
 
 ## Open questions
 
 - [ ] Naming of the journal contract keyword for "spec fully done": `done` (English), or `finished`? Picked `done` for brevity; revisit if it conflicts with something common.
-- [ ] Should `bcc watch` auto-attach to a running `bcc run` via PID file, or always require the spec path argument? Defaulting to "always require spec path" for Phase 2 simplicity.
 - [ ] Plug-in surface for custom heuristics (e.g., "loop-suspect" detector) in Phase 3+. TBD.
 - [ ] Handling of `.bcc.toml` discovery: walk up from cwd to find one (like `git`), or require `--config` flag? Lean toward walking up.
 

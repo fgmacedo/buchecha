@@ -152,15 +152,15 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	}
 
 	// Print the BCC_* contract once at startup so the user (and observer)
-	// know what the agent will see in each iteration. Per-iteration values
-	// (BCC_ITERATION, BCC_JSONL_PATH) vary; the names and meanings are fixed.
+	// know what the agent will see in each iteration. BCC_ITERATION
+	// varies per iteration; the names and meanings are fixed.
 	branchHint := ""
 	if br, gerr := gitProbe.CurrentBranch(ctx); gerr == nil {
 		branchHint = br
 	}
 	fmt.Fprintf(os.Stderr,
 		"bcc: agent subprocess will see: BCC_RUNNING=1, BCC_ITERATION=<n>, "+
-			"BCC_MAX_ITERATIONS=%d, BCC_SPEC_PATH=%s, BCC_JSONL_PATH=<per-iter>, BCC_BRANCH=%s\n",
+			"BCC_MAX_ITERATIONS=%d, BCC_SPEC_PATH=%s, BCC_BRANCH=%s\n",
 		cfg.Loop.MaxIterations, specPath, branchHint,
 	)
 

@@ -110,7 +110,7 @@ These were originally scoped inside [Phase 2](./2026-04-29-phase-2-tui-dashboard
 1. [ ] **Edit-spec post-edit refresh** (was P2.11 sub-item 6). After the user returns from `$EDITOR`, the menu's data is refreshed by re-calling the `SpecReader` signals; the editor-suspension mechanics (`ReleaseTerminal` / `RestoreTerminal`) stay in `internal/tui/` and are format-neutral.
 1. [ ] **Edit-spec end-to-end smoke** (was P2.12 sub-item 11). End-to-end test: edit the spec from the session menu, confirm the journal viewer reflects the edited content. Depends on the journal viewer above.
 
-## Implementation plan
+## Implementation Plan
 
 Items are intentionally not numbered as P-X.Y; this spec stands on its own.
 

@@ -3,8 +3,6 @@ package fake
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
@@ -64,29 +62,6 @@ func TestRun_PropagatesScriptedError(t *testing.T) {
 	_, err := f.Run(context.Background(), "p", ch)
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err = %v, want %v", err, wantErr)
-	}
-}
-
-func TestRun_RawLogWrittenAtBCCJSONLPath(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.jsonl")
-	t.Setenv("BCC_JSONL_PATH", path)
-
-	f := New(Step{RawLog: `{"type":"hello"}` + "\n", ExitCode: 0})
-	ch := make(chan loop.AgentEvent, 4)
-	res, err := f.Run(context.Background(), "p", ch)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.LogPath != path {
-		t.Errorf("LogPath = %q, want %q", res.LogPath, path)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read log: %v", err)
-	}
-	if string(b) != `{"type":"hello"}`+"\n" {
-		t.Errorf("log content = %q", string(b))
 	}
 }
 

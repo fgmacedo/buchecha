@@ -42,7 +42,6 @@ func jsonPayload(ev Event) map[string]any {
 			"head_advanced": e.HEADAdvanced,
 			"newly_checked": e.NewlyChecked,
 			"duration_ms":   e.DurationMS,
-			"log_path":      e.LogPath,
 		}
 	case LoopFinished:
 		return map[string]any{

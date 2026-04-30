@@ -40,9 +40,7 @@ Context from bcc (env vars set in your subprocess):
 - BCC_ITERATION is the 1-based index of this iteration.
 - BCC_MAX_ITERATIONS is the cap configured for this run.
 - BCC_SPEC_PATH is the absolute path of the spec you are implementing.
-- BCC_JSONL_PATH is the path of this iteration's raw event log.
 - BCC_BRANCH is the current git branch.
-Cite BCC_JSONL_PATH (or its short form) in your "Notes for observer" so the observer can correlate.
 
 Procedure:
 1. Read the autonomous-execution guide.
@@ -79,7 +77,7 @@ const promptSingleShotTmpl = `You are running in autonomous single-shot mode, co
 Spec: {{.SpecPath}}
 Guide: {{.GuidePath}} (read it first).
 
-Context from bcc (env vars in your subprocess): BCC_RUNNING, BCC_ITERATION, BCC_MAX_ITERATIONS, BCC_SPEC_PATH, BCC_JSONL_PATH, BCC_BRANCH.
+Context from bcc (env vars in your subprocess): BCC_RUNNING, BCC_ITERATION, BCC_MAX_ITERATIONS, BCC_SPEC_PATH, BCC_BRANCH.
 
 Update the "{{.JournalHeading}}" at every milestone (new entry on TOP, strict format from the guide). Mark [x] in the same commit that delivers each item. Working tree must be clean when you exit. Do not ask for confirmation. Stop when a stop criterion is met.{{if .Extra}}
 

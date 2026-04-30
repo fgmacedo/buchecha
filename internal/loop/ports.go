@@ -28,9 +28,6 @@ import (
 // Return contract:
 //
 //   - ExecResult.ExitCode is the agent's process exit code (0 on success).
-//   - ExecResult.LogPath is the path of the raw native event log written
-//     by the adapter (e.g., captured stream-json for claude). Empty when
-//     the adapter did not persist a log.
 //   - err is nil when the subprocess started, completed, and the parser
 //     finished without I/O errors. err is non-nil for invocation failures
 //     (binary not found), context cancellation, or stream-write errors.

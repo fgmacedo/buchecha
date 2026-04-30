@@ -85,11 +85,6 @@ type ResultSummaryInfo struct {
 type ExecResult struct {
 	// ExitCode is the agent's process exit code. 0 on success.
 	ExitCode int
-
-	// LogPath is the path of the raw native event log the adapter wrote
-	// (e.g., the captured stream-json for claude). Empty when the
-	// adapter did not write a log.
-	LogPath string
 }
 
 // Event is the union of loop-level events emitted on the loop's events
@@ -125,7 +120,6 @@ type IterationFinished struct {
 	HEADAdvanced bool
 	NewlyChecked int
 	DurationMS   int64
-	LogPath      string
 	At           time.Time
 }
 
