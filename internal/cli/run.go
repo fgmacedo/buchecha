@@ -177,25 +177,25 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	})
 
 	l := &loop.Loop{
-		SpecPath:   specPath,
-		Config:     cfg,
-		Executor:   executor,
-		Git:        gitProbe,
-		SpecReader: specReader,
-		Extra:      runExtra,
-		SingleShot: runSingleShot,
+		SpecPath:    specPath,
+		Config:      cfg,
+		Executor:    executor,
+		Git:         gitProbe,
+		SpecContent: specReader,
+		Extra:       runExtra,
+		SingleShot:  runSingleShot,
 	}
 
 	if runOutput == OutputTUI {
 		buildLoop := func() *loop.Loop {
 			return &loop.Loop{
-				SpecPath:   specPath,
-				Config:     cfg,
-				Executor:   executor,
-				Git:        gitProbe,
-				SpecReader: specReader,
-				Extra:      runExtra,
-				SingleShot: runSingleShot,
+				SpecPath:    specPath,
+				Config:      cfg,
+				Executor:    executor,
+				Git:         gitProbe,
+				SpecContent: specReader,
+				Extra:       runExtra,
+				SingleShot:  runSingleShot,
 			}
 		}
 		return runWithTUI(ctx, cancel, buildLoop, specPath, branchHint, verbosity, runNoColor)
@@ -262,7 +262,7 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, buildLoop func()
 	}
 
 	gitProbeAdapter, _ := first.Git.(tui.GitProbe)
-	specReaderAdapter, _ := first.SpecReader.(tui.SpecReader)
+	specReaderAdapter, _ := first.SpecContent.(tui.SpecReader)
 
 	type runResult struct {
 		code int
@@ -383,7 +383,7 @@ func validOutputMode(s string) bool {
 // entry in the spec, or empty string when the journal has no entry yet
 // (first run) or the parse fails (malformed journal). Best-effort; not
 // fatal.
-func readPreviousResult(specPath string, cfg *config.Config, reader loop.SpecReader) string {
+func readPreviousResult(specPath string, cfg *config.Config, reader loop.SpecContent) string {
 	content, err := reader.Read(specPath)
 	if err != nil {
 		return ""

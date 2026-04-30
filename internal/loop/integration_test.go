@@ -97,11 +97,11 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 	cfg := newTestConfig()
 
 	l := &loop.Loop{
-		SpecPath:   specPath,
-		Config:     cfg,
-		Executor:   executor,
-		Git:        gitcli.New(dir),
-		SpecReader: markdown.New(),
+		SpecPath:    specPath,
+		Config:      cfg,
+		Executor:    executor,
+		Git:         gitcli.New(dir),
+		SpecContent: markdown.New(),
 	}
 
 	events := make(chan loop.Event, 1024)
@@ -134,11 +134,11 @@ func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
 	cfg := newTestConfig()
 
 	l := &loop.Loop{
-		SpecPath:   specPath,
-		Config:     cfg,
-		Executor:   executor,
-		Git:        gitcli.New(dir),
-		SpecReader: markdown.New(),
+		SpecPath:    specPath,
+		Config:      cfg,
+		Executor:    executor,
+		Git:         gitcli.New(dir),
+		SpecContent: markdown.New(),
 	}
 
 	events := make(chan loop.Event, 1024)

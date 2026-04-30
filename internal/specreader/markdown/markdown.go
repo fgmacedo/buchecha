@@ -1,4 +1,4 @@
-// Package markdown implements loop.SpecReader by reading files from disk.
+// Package markdown implements loop.SpecContent by reading files from disk.
 package markdown
 
 import (
@@ -8,8 +8,8 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
-// Compile-time check that *Reader satisfies loop.SpecReader.
-var _ loop.SpecReader = (*Reader)(nil)
+// Compile-time check that *Reader satisfies loop.SpecContent.
+var _ loop.SpecContent = (*Reader)(nil)
 
 // Reader reads markdown spec files from the local filesystem.
 type Reader struct{}

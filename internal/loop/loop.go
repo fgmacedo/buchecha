@@ -15,9 +15,9 @@ import (
 
 // Loop orchestrates phase-by-phase iteration over a spec.
 //
-// Construct it with the wired adapters (Executor, Git, SpecReader) and a
-// loaded Config, then call Run. Run is single-call; do not reuse a Loop
-// across multiple specs in the same process.
+// Construct it with the wired adapters (Executor, Git, SpecContent) and
+// a loaded Config, then call Run. Run is single-call; do not reuse a
+// Loop across multiple specs in the same process.
 type Loop struct {
 	// SpecPath is the absolute or cwd-relative path to the spec markdown.
 	SpecPath string
@@ -26,9 +26,9 @@ type Loop struct {
 	Config *config.Config
 
 	// Ports.
-	Executor   Executor
-	Git        GitProbe
-	SpecReader SpecReader
+	Executor    Executor
+	Git         GitProbe
+	SpecContent SpecContent
 
 	// GuidePath is the path/identifier passed into the prompt template.
 	// Defaults to "docs/guides/autonomous-execution.md" when empty.
@@ -85,8 +85,8 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 	if cfg == nil {
 		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Config is nil")
 	}
-	if l.Executor == nil || l.Git == nil || l.SpecReader == nil {
-		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Executor, Git, and SpecReader are required")
+	if l.Executor == nil || l.Git == nil || l.SpecContent == nil {
+		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Executor, Git, and SpecContent are required")
 	}
 
 	maxIter := cfg.Loop.MaxIterations
@@ -197,7 +197,7 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 			return l.terminate(events, "fatal", ExitInvalid), execErr
 		}
 
-		content, err := l.SpecReader.Read(l.SpecPath)
+		content, err := l.SpecContent.Read(l.SpecPath)
 		if err != nil {
 			return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("read spec after iter %d: %w", iter, err)
 		}

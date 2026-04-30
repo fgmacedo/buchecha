@@ -115,11 +115,11 @@ func TestRun_OkThenDone(t *testing.T) {
 		specWith([]string{"[x]", "[x]", "[x]"}, "done"),
 	}}
 	l := &loop.Loop{
-		SpecPath:   "x.md",
-		Config:     cfg,
-		Executor:   exec,
-		Git:        git,
-		SpecReader: reader,
+		SpecPath:    "x.md",
+		Config:      cfg,
+		Executor:    exec,
+		Git:         git,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestRun_BlockedStops(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -162,7 +162,7 @@ func TestRun_DoneWithLeftovers(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -182,7 +182,7 @@ func TestRun_HEADStuck(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestRun_UnknownResultIsInvalid(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestRun_MaxIterationsReached(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -246,7 +246,7 @@ func TestRun_ExecutorErrorPropagates(t *testing.T) {
 	reader := &stepfulSpecReader{} // never reached
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if !errors.Is(err, wantErr) {
@@ -264,7 +264,7 @@ func TestRun_GitErrorPropagates(t *testing.T) {
 	reader := &stepfulSpecReader{}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err == nil {
@@ -275,14 +275,14 @@ func TestRun_GitErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestRun_SpecReaderErrorPropagates(t *testing.T) {
+func TestRun_SpecContentErrorPropagates(t *testing.T) {
 	cfg := newTestConfig()
 	exec := fake.New(fake.Step{ExitCode: 0})
 	git := &fakeGit{heads: []string{"A", "B"}}
 	reader := &errSpecReader{err: errors.New("read boom")}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err == nil {
@@ -304,7 +304,7 @@ func TestRun_SingleShotCapsAtOne(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader, SingleShot: true,
+		SpecContent: reader, SingleShot: true,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestRun_PortugueseLocalized(t *testing.T) {
 	reader := &stepfulSpecReader{contents: []string{specPt}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err != nil {
@@ -359,11 +359,11 @@ func TestRun_RejectsZeroMaxIterations(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.Loop.MaxIterations = 0 // explicit override after defaults
 	l := &loop.Loop{
-		SpecPath:   "x.md",
-		Config:     cfg,
-		Executor:   fake.New(),
-		Git:        &fakeGit{},
-		SpecReader: &stepfulSpecReader{},
+		SpecPath:    "x.md",
+		Config:      cfg,
+		Executor:    fake.New(),
+		Git:         &fakeGit{},
+		SpecContent: &stepfulSpecReader{},
 	}
 	code, err, _ := runWithEvents(t, l)
 	if err == nil {
@@ -482,11 +482,11 @@ func TestRun_EventSequence(t *testing.T) {
 			git := &fakeGit{heads: tt.heads}
 			reader := &stepfulSpecReader{contents: tt.contents}
 			l := &loop.Loop{
-				SpecPath:   "x.md",
-				Config:     cfg,
-				Executor:   exec,
-				Git:        git,
-				SpecReader: reader,
+				SpecPath:    "x.md",
+				Config:      cfg,
+				Executor:    exec,
+				Git:         git,
+				SpecContent: reader,
 			}
 			_, _, got := runWithEvents(t, l)
 			gotTypes := make([]string, len(got))
@@ -509,7 +509,7 @@ func TestRun_LoopFinishedCarriesExitCode(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	code, _, got := runWithEvents(t, l)
 	if len(got) == 0 {
@@ -547,12 +547,12 @@ func TestRun_PauseGateBlocksBetweenIterations(t *testing.T) {
 	}}
 	gate := make(chan struct{}, 1)
 	l := &loop.Loop{
-		SpecPath:   "x.md",
-		Config:     cfg,
-		Executor:   exec,
-		Git:        git,
-		SpecReader: reader,
-		PauseGate:  gate,
+		SpecPath:    "x.md",
+		Config:      cfg,
+		Executor:    exec,
+		Git:         git,
+		SpecContent: reader,
+		PauseGate:   gate,
 	}
 	events := make(chan loop.Event, 1024)
 	doneCh := make(chan int, 1)
@@ -609,7 +609,7 @@ func TestRun_IterationFinishedCarriesResult(t *testing.T) {
 	}}
 	l := &loop.Loop{
 		SpecPath: "x.md", Config: cfg, Executor: exec, Git: git,
-		SpecReader: reader,
+		SpecContent: reader,
 	}
 	_, _, got := runWithEvents(t, l)
 	var fin *loop.IterationFinished
