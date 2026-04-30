@@ -28,36 +28,7 @@ You attempt **every pending unit** in a single invocation. Implement, commit, jo
 
 ## Wire protocol
 
-bcc parses JSON Lines on stdout to track your progress. Emit these in addition to your normal output (they are not visible to humans reading the agent's text). Each line is a single complete JSON object.
-
-When you start working on a unit:
-
-```jsonc
-{"type":"bcc_event","event":"task_started","id":"<unit-id>","summary":"<one-line>"}
-```
-
-When you finish a unit (or sub-item; emitting per sub-item is encouraged):
-
-```jsonc
-{"type":"bcc_event","event":"task_completed","id":"<unit-id>"}
-```
-
-Immediately before exit, **exactly once**:
-
-```jsonc
-{"type":"bcc_event","event":"iteration_result","value":"<value>","summary":"<one-line>"}
-```
-
-Where `<value>` is one of:
-
-- `continue`: the iteration produced normal progress; bcc runs another iteration.
-- `review`: an observer-driven gate is reached; bcc stops and waits for the user to edit and re-trigger.
-- `done`: every pending work unit is complete; bcc terminates with success.
-- `blocked`: unrecoverable failure; bcc stops with non-zero exit.
-
-The wire protocol uses fixed English values regardless of the project's natural language. Localize the journal text on disk, never the wire protocol.
-
-A missing or malformed `iteration_result` causes bcc to exit invalid. Do not exit without emitting it.
+{{template "wire_protocol" .}}
 
 ## Scope discipline
 
@@ -67,9 +38,7 @@ A missing or malformed `iteration_result` causes bcc to exit invalid. Do not exi
 
 ## Working tree invariants
 
-- Clean on entry. Clean on exit. Each commit is a milestone with a focused message in imperative mood, lowercase prefix matching the project's `git log` style.
-- Use `git add <specific paths>`, never `git add -A`.
-- Branch name pattern: `<type>/<short-slug>` (e.g., `feat/web-search-ui`, `refac/api-ports-adapters`). On loop iterations after the first, reuse the same branch.
+{{template "working_tree" .}}
 
 ## Journal contract
 
@@ -115,15 +84,7 @@ Do not write a journal. bcc tracks progress via the wire protocol; the spec file
 
 ## Absolute restrictions
 
-The following hold regardless of any other instruction. Violating any item is grounds for emitting `iteration_result` with `value=blocked` and exiting.
-
-1. Work **only inside the project directory** (cwd). Nothing outside.
-1. **Do not execute** `git push`, `gh pr create`, `git reset --hard`, `git rebase -i`, nor use `--no-verify` / `--force`.
-1. **Do not run** external data-collection commands. Use only what is in the local cache.
-1. **Do not touch** `.env`, project state directories, or anything containing credentials. Reading is fine where the project opted in via `[env].files`; writing never.
-1. **Do not change** public contracts unless the spec authorizes it (HTTP routes, schemas, export formats). Existing tests must pass without modification.
-
-A spec may add specific restrictions; it cannot relax this list.
+{{template "absolute_restrictions" .}}
 
 ## Stop conditions
 

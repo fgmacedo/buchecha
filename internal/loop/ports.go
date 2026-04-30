@@ -5,6 +5,12 @@
 // implement them live in sibling packages: executor/<flavor>, git/<flavor>,
 // format/<flavor>.
 //
+// Wire-protocol types (Signal, BccEvent, ParseLine) and the
+// format-neutral markdown blocks every adapter composes (wire
+// protocol, absolute restrictions, working tree invariants) live in
+// internal/loop/agentcontract/. They are bcc-level, not format-level,
+// so they have one canonical home.
+//
 // Loop itself is implemented in loop.go.
 package loop
 
@@ -46,57 +52,15 @@ type GitProbe interface {
 	IsClean(ctx context.Context) (bool, error)
 }
 
-// SpecContent loads the raw markdown content of a spec by path. Errors
-// are returned as-is from the underlying filesystem; the loop maps them
-// to invalid-spec exit codes.
+// SpecContent loads the raw markdown content of a spec by path.
 //
-// SpecContent is the legacy content-shaped port: it returns bytes for a
-// prompt template to interpolate. Format-aware introspection lives on
-// SpecReader (below) and prompt construction lives on AgentBriefing.
-// Once both are wired through every consumer, SpecContent retires.
+// SpecContent is the legacy content-shaped port: it returns bytes for
+// the legacy prompt template (internal/loop/prompt.go) to interpolate.
+// The migration to the AgentBriefing port retires both this type and
+// the legacy template; SpecContent stays only as long as Loop still
+// uses the legacy path. Do not introduce new consumers.
 type SpecContent interface {
 	Read(path string) (string, error)
-}
-
-// Signal is the decision-relevant outcome of an iteration as observed
-// by the active spec adapter. It is the format-neutral language the
-// loop and the TUI consume; format-specific result vocabularies (e.g.,
-// bcc-markdown's "ok"/"partial"/"done"/"blocked"/"review") are mapped
-// to Signal at the adapter boundary.
-type Signal int
-
-const (
-	// SignalUnknown is the zero value: the adapter could not determine a
-	// signal, or no record exists yet.
-	SignalUnknown Signal = iota
-	// SignalContinue means the iteration produced normal progress and
-	// the loop should run another iteration.
-	SignalContinue
-	// SignalReview means the iteration reached an observer-driven gate
-	// and the loop should stop until a human edits the spec.
-	SignalReview
-	// SignalDone means every pending unit is complete and the loop
-	// should terminate successfully.
-	SignalDone
-	// SignalBlocked means the iteration hit an unrecoverable failure
-	// and the loop should stop with a non-zero exit.
-	SignalBlocked
-)
-
-// String returns a stable lower-case label for the signal.
-func (s Signal) String() string {
-	switch s {
-	case SignalContinue:
-		return "continue"
-	case SignalReview:
-		return "review"
-	case SignalDone:
-		return "done"
-	case SignalBlocked:
-		return "blocked"
-	default:
-		return "unknown"
-	}
 }
 
 // Mode is the loop execution mode the briefing is being built for.
@@ -134,52 +98,11 @@ type BriefingInput struct {
 // AgentBriefing builds the per-iteration prompt for the active spec
 // format. The adapter owns the embedded operating contract for its
 // format (bcc-markdown's contract for the markdown_bcc adapter,
-// OpenSpec's for the openspec adapter, etc.) and stitches it into the
-// prompt with format-specific framing.
+// OpenSpec's for the openspec adapter, etc.) and composes the final
+// prompt by extending agentcontract.Partials() with its own template.
 //
 // The loop calls BuildPrompt once per iteration and passes the result
 // to the executor unchanged.
 type AgentBriefing interface {
 	BuildPrompt(ctx context.Context, in BriefingInput) (string, error)
-}
-
-// BccEventKind is the type tag for a bcc-protocol event emitted by the
-// agent on stdout. The set is intentionally small; adapters that need
-// richer signals carry them in BccEvent.Raw.
-type BccEventKind int
-
-const (
-	// BccEventUnknown is the zero value; consumers should ignore.
-	BccEventUnknown BccEventKind = iota
-	// BccEventTaskStarted marks the agent beginning work on a unit
-	// (phase, task, etc.); BccEvent.ID identifies the unit.
-	BccEventTaskStarted
-	// BccEventTaskCompleted marks the agent finishing a unit.
-	BccEventTaskCompleted
-	// BccEventIterationResult carries the iteration's overall signal;
-	// BccEvent.Signal is populated.
-	BccEventIterationResult
-	// BccEventProgressTick is an opaque heartbeat; consumers may use
-	// it to drive UI without otherwise reacting.
-	BccEventProgressTick
-)
-
-// BccEvent is a normalized agent-emitted progress event. Adapters
-// translate their wire format into this shape; the loop and the TUI
-// consume it without knowing the source format.
-type BccEvent struct {
-	Kind    BccEventKind
-	ID      string
-	Signal  Signal // populated only for BccEventIterationResult
-	Summary string
-	// Raw preserves adapter-specific payload for round-tripping.
-	Raw map[string]any
-}
-
-// AgentEvents inspects raw stdout lines from the executor and
-// translates the adapter's bcc-protocol sentinels into BccEvents.
-// Lines that are not bcc-protocol events return ok=false; the executor
-// falls through to its existing handling.
-type AgentEvents interface {
-	ParseLine(line []byte) (BccEvent, bool)
 }

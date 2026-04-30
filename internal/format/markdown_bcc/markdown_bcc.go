@@ -2,33 +2,38 @@
 // convention: an Implementation Plan with [x]/[ ] checkboxes and an
 // Execution Journal section, both inside one Markdown file.
 //
-// The package implements two ports from internal/loop:
-//
-//   - AgentBriefing: BuildPrompt renders the embedded contract.md
-//     template with the active config and per-iteration BriefingInput.
-//   - AgentEvents: ParseLine recognizes the bcc_event JSONL sentinels
-//     emitted by the agent and normalizes them to loop.BccEvent.
+// The package implements loop.AgentBriefing by embedding contract.md
+// (the format-specific contract) and composing it with the shared
+// blocks from internal/loop/agentcontract (wire protocol, absolute
+// restrictions, working tree invariants).
 //
 // bcc never reads the user's spec file; the contract instructs the
-// agent to read it. This package owns the prompt that goes out and the
-// events that come back. Nothing else.
+// agent to read it. This package owns the prompt that goes out.
+// Wire-event parsing (the inbound side) lives in agentcontract because
+// the wire protocol is canonical English regardless of format and has
+// no per-format variation.
 package markdown_bcc
 
 import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"text/template"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 //go:embed contract.md
 var contractTemplate string
 
-var contractT = template.Must(template.New("contract").Parse(contractTemplate))
+// contractT is the parsed contract template, composed with the shared
+// agentcontract partials. Built once at init time.
+var contractT = func() *template.Template {
+	t := agentcontract.Partials()
+	return template.Must(t.New("contract").Parse(contractTemplate))
+}()
 
 // Config carries the per-format options the adapter consumes when
 // rendering the contract template. Sourced from [spec.markdown_bcc] in
@@ -84,14 +89,12 @@ func New(cfg Config) *Reader {
 	return &Reader{cfg: cfg}
 }
 
-// Compile-time checks that *Reader satisfies both ports.
-var (
-	_ loop.AgentBriefing = (*Reader)(nil)
-	_ loop.AgentEvents   = (*Reader)(nil)
-)
+// Compile-time check that *Reader satisfies AgentBriefing.
+var _ loop.AgentBriefing = (*Reader)(nil)
 
-// templateData is the struct passed to contract.md template execution.
-// Keeps the template fields stable even if loop.BriefingInput changes.
+// templateData is the struct passed to the contract template at
+// execution time. Keeps the template's field surface stable even if
+// loop.BriefingInput changes.
 type templateData struct {
 	SpecPath       string
 	Iteration      int
@@ -104,8 +107,8 @@ type templateData struct {
 	JournalPath    string
 }
 
-// BuildPrompt renders the embedded contract.md template with the
-// active config and per-iteration BriefingInput.
+// BuildPrompt renders the embedded contract.md template (composed with
+// the shared agentcontract partials) for one agent invocation.
 func (r *Reader) BuildPrompt(_ context.Context, in loop.BriefingInput) (string, error) {
 	mode := "loop"
 	if in.Mode == loop.ModeSingleShot {
@@ -123,70 +126,8 @@ func (r *Reader) BuildPrompt(_ context.Context, in loop.BriefingInput) (string, 
 		JournalPath:    r.cfg.JournalPath,
 	}
 	var buf bytes.Buffer
-	if err := contractT.Execute(&buf, data); err != nil {
+	if err := contractT.ExecuteTemplate(&buf, "contract", data); err != nil {
 		return "", fmt.Errorf("render bcc-markdown contract: %w", err)
 	}
 	return buf.String(), nil
-}
-
-// wireEvent is the on-the-wire JSON shape the agent emits.
-type wireEvent struct {
-	Type    string `json:"type"`
-	Event   string `json:"event"`
-	ID      string `json:"id,omitempty"`
-	Value   string `json:"value,omitempty"`
-	Summary string `json:"summary,omitempty"`
-}
-
-// ParseLine inspects a single JSONL line from the executor's stdout.
-// Returns ok=true when the line is a recognized bcc_event sentinel;
-// ok=false for anything else (the executor falls through to its
-// existing handling).
-func (r *Reader) ParseLine(line []byte) (loop.BccEvent, bool) {
-	var raw map[string]any
-	if err := json.Unmarshal(line, &raw); err != nil {
-		return loop.BccEvent{}, false
-	}
-	t, _ := raw["type"].(string)
-	if t != "bcc_event" {
-		return loop.BccEvent{}, false
-	}
-	var w wireEvent
-	if err := json.Unmarshal(line, &w); err != nil {
-		return loop.BccEvent{}, false
-	}
-	out := loop.BccEvent{
-		ID:      w.ID,
-		Summary: w.Summary,
-		Raw:     raw,
-	}
-	switch w.Event {
-	case "task_started":
-		out.Kind = loop.BccEventTaskStarted
-	case "task_completed":
-		out.Kind = loop.BccEventTaskCompleted
-	case "iteration_result":
-		out.Kind = loop.BccEventIterationResult
-		out.Signal = parseSignal(w.Value)
-	case "progress_tick":
-		out.Kind = loop.BccEventProgressTick
-	default:
-		return loop.BccEvent{}, false
-	}
-	return out, true
-}
-
-func parseSignal(v string) loop.Signal {
-	switch v {
-	case "continue":
-		return loop.SignalContinue
-	case "review":
-		return loop.SignalReview
-	case "done":
-		return loop.SignalDone
-	case "blocked":
-		return loop.SignalBlocked
-	default:
-		return loop.SignalUnknown
-	}
 }
