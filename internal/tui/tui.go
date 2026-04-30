@@ -12,8 +12,11 @@ import (
 	"context"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/spec"
@@ -24,8 +27,50 @@ import (
 // data-source contract.
 const gitProbeInterval = 2 * time.Second
 
-// spinnerInterval is the per-frame tick for the now-panel spinner.
-const spinnerInterval = 100 * time.Millisecond
+// nowHealthSplit is the fraction of the layout's full width allocated to
+// the now box; the health box receives the rest. Centralised so future
+// tuning is one edit (kept in code, not config, per the spec).
+const nowHealthSplit = 0.6
+
+// keyMap is the single source of truth for every keybinding the model
+// honors. The handler matches via key.Matches; the help model derives
+// both the inline footer and the ? overlay from the same set, so a new
+// binding lights up in both places without an extra edit.
+type keyMap struct {
+	Quit  key.Binding
+	Pause key.Binding
+	Help  key.Binding
+}
+
+// ShortHelp returns the bindings rendered as a single inline footer line
+// (the help.Model's ShortHelp mode).
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Quit, k.Pause, k.Help}
+}
+
+// FullHelp returns the bindings grouped by column for the ? overlay
+// (help.Model's FullHelp mode). One column today; columns are added by
+// returning more nested slices.
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Quit, k.Pause, k.Help}}
+}
+
+func defaultKeyMap() keyMap {
+	return keyMap{
+		Quit: key.NewBinding(
+			key.WithKeys("q", "ctrl+c"),
+			key.WithHelp("q / Ctrl+C", "cancel the loop and quit"),
+		),
+		Pause: key.NewBinding(
+			key.WithKeys(" ", "space"),
+			key.WithHelp("space", "pause / resume between iterations"),
+		),
+		Help: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "toggle this help overlay"),
+		),
+	}
+}
 
 // Model is the bubbletea model for the dashboard.
 type Model struct {
@@ -52,6 +97,10 @@ type Model struct {
 	paused         bool
 	helpVisible    bool   // true while the ? overlay is up
 	runBaselineSHA string // captured from the first IterationStarted
+
+	// Keybindings + help renderer (single source of truth).
+	keys     keyMap
+	helpView help.Model
 
 	// Terminal state.
 	finished  bool // true once the loop emitted LoopFinished or events closed
@@ -97,7 +146,12 @@ func New(opts Options) Model {
 		health: healthPanel{startedAt: now},
 		progress: progressPanel{
 			currentPhaseIdx: -1,
+			bar:             newProgressBar(),
 		},
+		actions:  newActionsPanel(),
+		now:      newNowPanel(),
+		keys:     defaultKeyMap(),
+		helpView: help.New(),
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
@@ -113,7 +167,7 @@ func (m Model) Init() tea.Cmd {
 	if m.events != nil {
 		cmds = append(cmds, readEventCmd(m.events))
 	}
-	cmds = append(cmds, spinnerTickCmd())
+	cmds = append(cmds, m.now.spinner.Tick)
 	if m.gitProbe != nil {
 		cmds = append(cmds, gitProbeCmd(m.gitCtx, m.gitProbe, m.runBaselineSHA))
 	}
@@ -129,9 +183,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout = computeLayout(m.width)
+		m.actions.SetSize(m.layout.actionsW, actionsViewportHeight)
+		m.progress.bar.SetWidth(progressBarWidth)
+		m.helpView.SetWidth(m.width)
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
 	case eventMsg:
@@ -141,12 +198,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleLoopEvent(msg.ev)
 
-	case spinnerTickMsg:
-		m.now.tick()
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.now.spinner, cmd = m.now.spinner.Update(msg)
 		if m.finished {
 			return m, nil
 		}
-		return m, spinnerTickCmd()
+		return m, cmd
 
 	case gitProbeMsg:
 		if msg.dirtyKnown {
@@ -166,6 +224,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.risk.onSpecParsed(msg.plan, msg.latest, msg.latestKnown)
 		}
 		return m, nil
+
+	case tea.MouseWheelMsg:
+		var cmd tea.Cmd
+		m.actions.viewport, cmd = m.actions.viewport.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
@@ -173,23 +236,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey implements the keyboard contract: q / Ctrl+C cancel the
 // loop ctx and ask bubbletea to quit; space toggles the pause gate;
-// ? toggles the help overlay.
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c":
+// ? toggles the help overlay. Bindings live in keyMap (single source
+// of truth shared with the help renderer).
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Quit):
 		if !m.cancelled && m.cancel != nil {
 			m.cancel()
 		}
 		m.cancelled = true
 		return m, tea.Quit
-	case " ", "space":
+	case key.Matches(msg, m.keys.Pause):
 		if m.gate != nil {
 			m.paused = !m.paused
 			m.gate.SetPaused(m.paused)
 			m.header.paused = m.paused
 		}
 		return m, nil
-	case "?":
+	case key.Matches(msg, m.keys.Help):
 		m.helpVisible = !m.helpVisible
 		return m, nil
 	}
@@ -258,7 +322,22 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 // two-column row pairing now (wider) with health (narrower), then
 // progress, risk, and recent actions each as full-width rows, then
 // the keybinding footer below.
-func (m Model) View() string {
+//
+// AltScreen and MouseMode live on the View struct in v2: the program
+// enters alt-screen mode and starts capturing mouse cell motion as
+// soon as the first View arrives, no ProgramOption needed.
+func (m Model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// viewContent composes the dashboard body so View() can wrap it in a
+// tea.View. Kept separate so tests that read the rendered string can
+// call m.View().Content directly without losing the AltScreen / mouse
+// metadata.
+func (m Model) viewContent() string {
 	if m.finished && m.cancelled {
 		return "bcc: cancelled\n"
 	}
@@ -267,7 +346,7 @@ func (m Model) View() string {
 	}
 
 	if m.helpVisible {
-		return renderHelp()
+		return renderHelpOverlay(m.helpView, m.keys)
 	}
 
 	lay := m.activeLayout()
@@ -284,7 +363,7 @@ func (m Model) View() string {
 	progressBox := box("progress", m.progress.view(lay.progressW), lay.progressW)
 	riskBox := box("if you close now", m.risk.view(now, lay.riskW), lay.riskW)
 	actionsBox := box("recent actions", m.actions.view(lay.actionsW), lay.actionsW)
-	footer := "[q]uit  [space]pause  [?]help"
+	footer := m.helpView.View(m.keys)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		headerBox,
@@ -308,16 +387,6 @@ func (m Model) activeLayout() layout {
 }
 
 // --- internal tea.Msg / tea.Cmd plumbing -----------------------------
-
-// spinnerTickMsg fires every spinnerInterval to advance the now-panel
-// spinner frame.
-type spinnerTickMsg struct{}
-
-func spinnerTickCmd() tea.Cmd {
-	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg {
-		return spinnerTickMsg{}
-	})
-}
 
 // gitProbeMsg carries the periodic git-state snapshot the risk panel
 // consumes: dirty-file count and the run-local commit count (number of

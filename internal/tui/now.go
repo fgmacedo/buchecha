@@ -5,8 +5,16 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+
 	"github.com/fgmacedo/buchecha/internal/loop"
 )
+
+// nowSpinnerStyle is the spinner frame set the now panel uses. Dot is
+// the visually closest match to the manual ⠋⠙⠹⠸... ring P2.10 replaces.
+// Single named constant so future tuning (Line, MiniDot, Pulse) is one
+// edit.
+var nowSpinnerStyle = spinner.Dot
 
 // nowPanel surfaces what the agent is doing at this instant: the latest
 // in-flight tool call, its elapsed time, and the most recent assistant
@@ -16,12 +24,16 @@ type nowPanel struct {
 	currentTool   *loop.ToolCallInfo
 	currentToolAt time.Time
 	lastAssistant string
-	spinnerFrame  int
+	spinner       spinner.Model
 }
 
-// spinnerFrames is the static cycle the panel walks through on each
-// spinnerTick. Eight frames is a smooth enough loop at 100ms/frame.
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+// newNowPanel builds a nowPanel with the bubbles/v2 spinner pre-styled
+// with the panel's "ok" colour so an active tool reads as "alive".
+func newNowPanel() nowPanel {
+	s := spinner.New(spinner.WithSpinner(nowSpinnerStyle))
+	s.Style = theme.ok
+	return nowPanel{spinner: s}
+}
 
 // onAgentEvent folds a single agent event into the panel state.
 func (n *nowPanel) onAgentEvent(ev loop.AgentEvent) {
@@ -56,11 +68,6 @@ func (n *nowPanel) onIterStarted() {
 	// still the most recent thing the agent said.
 }
 
-// tick advances the spinner frame. Called from a 100ms tea.Tick cmd.
-func (n *nowPanel) tick() {
-	n.spinnerFrame = (n.spinnerFrame + 1) % len(spinnerFrames)
-}
-
 // view renders the panel body. width is the total column the box
 // wrapper will allocate; long content (assistant text especially) is
 // truncated to fit so the rendered lines never overflow the box.
@@ -73,9 +80,8 @@ func (n nowPanel) view(now time.Time, width int) string {
 		b.WriteString(theme.subtle.Render("idle"))
 		b.WriteByte('\n')
 	} else {
-		spin := spinnerFrames[n.spinnerFrame]
 		b.WriteString("  ")
-		b.WriteString(theme.ok.Render(spin))
+		b.WriteString(n.spinner.View())
 		b.WriteByte(' ')
 		headline := formatToolHeadline(*n.currentTool)
 		if room := max - 4; room > 0 { // 2 indent + spinner + space

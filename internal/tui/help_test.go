@@ -4,34 +4,73 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	tea "charm.land/bubbletea/v2"
 )
 
-func TestRenderHelp_ListsAllKeybindings(t *testing.T) {
-	out := renderHelp()
+// TestRenderHelpOverlay_ListsAllKeybindings exercises the bubbles/v2/help
+// FullHelp path: the overlay must surface every binding from keyMap so a
+// new binding lights up in the modal without an extra edit.
+func TestRenderHelpOverlay_ListsAllKeybindings(t *testing.T) {
+	keys := defaultKeyMap()
+	out := renderHelpOverlay(help.New(), keys)
 	if !strings.Contains(out, "[ help ]") {
-		t.Errorf("renderHelp missing title:\n%s", out)
+		t.Errorf("renderHelpOverlay missing title:\n%s", out)
 	}
-	for _, e := range helpEntries {
-		if !strings.Contains(out, e.key) {
-			t.Errorf("renderHelp missing key %q:\n%s", e.key, out)
+	for _, b := range []struct{ label, desc string }{
+		{"q / Ctrl+C", "cancel the loop and quit"},
+		{"space", "pause / resume between iterations"},
+		{"?", "toggle this help overlay"},
+	} {
+		if !strings.Contains(out, b.label) {
+			t.Errorf("renderHelpOverlay missing key %q:\n%s", b.label, out)
 		}
-		if !strings.Contains(out, e.desc) {
-			t.Errorf("renderHelp missing description %q:\n%s", e.desc, out)
+		if !strings.Contains(out, b.desc) {
+			t.Errorf("renderHelpOverlay missing description %q:\n%s", b.desc, out)
+		}
+	}
+}
+
+// TestKeyMap_FullHelpListsEveryBinding asserts the key.Binding source of
+// truth surfaces every binding the model handles, so the help renderer
+// stays in sync with the handler automatically.
+func TestKeyMap_FullHelpListsEveryBinding(t *testing.T) {
+	keys := defaultKeyMap()
+	groups := keys.FullHelp()
+	flat := []string{}
+	for _, g := range groups {
+		for _, b := range g {
+			flat = append(flat, b.Help().Key+" "+b.Help().Desc)
+		}
+	}
+	for _, want := range []string{
+		"q / Ctrl+C cancel the loop and quit",
+		"space pause / resume between iterations",
+		"? toggle this help overlay",
+	} {
+		found := false
+		for _, got := range flat {
+			if strings.Contains(got, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("FullHelp missing binding %q\nflat=%v", want, flat)
 		}
 	}
 }
 
 func TestUpdate_QuestionTogglesHelp(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	got, cmd := m.Update(keyPress("?"))
 	if cmd != nil {
 		t.Errorf("? must not return a cmd; got %v", cmd)
 	}
 	if !got.(Model).helpVisible {
 		t.Errorf("helpVisible = false after first ?, want true")
 	}
-	got2, _ := got.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	got2, _ := got.(Model).Update(keyPress("?"))
 	if got2.(Model).helpVisible {
 		t.Errorf("helpVisible = true after second ?, want false")
 	}
@@ -39,8 +78,8 @@ func TestUpdate_QuestionTogglesHelp(t *testing.T) {
 
 func TestView_HelpOverlayReplacesPanels(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
-	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	out := got.(Model).View()
+	got, _ := m.Update(keyPress("?"))
+	out := got.(Model).View().Content
 	if !strings.Contains(out, "[ help ]") {
 		t.Errorf("View did not show help overlay:\n%s", out)
 	}
@@ -54,7 +93,7 @@ func TestView_HelpOverlayReplacesPanels(t *testing.T) {
 func TestView_HelpHiddenByDefault(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	out := mm.(Model).View()
+	out := mm.(Model).View().Content
 	if strings.Contains(out, "[ help ]") {
 		t.Errorf("View showed help overlay by default:\n%s", out)
 	}

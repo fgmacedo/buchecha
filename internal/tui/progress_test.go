@@ -37,7 +37,7 @@ func samplePlan() spec.Plan {
 }
 
 func TestProgress_view_RendersCheckboxesAndCounts(t *testing.T) {
-	p := progressPanel{currentPhaseIdx: -1}
+	p := progressPanel{currentPhaseIdx: -1, bar: newProgressBar()}
 	p.onSpecParsed(samplePlan())
 
 	out := p.view(80)
@@ -80,28 +80,35 @@ func TestComputeETA_NoDurationsOrNoRemaining(t *testing.T) {
 	}
 }
 
-func TestRenderBar_ProportionalFill(t *testing.T) {
-	out := renderBar(5, 10, 20)
-	// 5/10 of 20 = 10 filled chars.
-	if !strings.Contains(out, strings.Repeat("█", 10)) {
-		t.Errorf("expected 10 filled chars in %q", out)
-	}
-	if !strings.Contains(out, strings.Repeat("░", 10)) {
-		t.Errorf("expected 10 empty chars in %q", out)
+// TestProgressBar_DrivenByPlan asserts the bubbles/v2/progress component
+// reflects the plan ratio after onSpecParsed: the rendered bar at the
+// computed percent must match what view emits for that same plan, so the
+// component truly drives the visible bar (not an ad-hoc renderer).
+func TestProgressBar_DrivenByPlan(t *testing.T) {
+	p := progressPanel{currentPhaseIdx: -1, bar: newProgressBar()}
+	p.onSpecParsed(samplePlan()) // 3 of 6 checked → 0.5
+
+	// view() includes a "<bar>  3/6 items" line; the bar segment is the
+	// bubbles/v2/progress output for percent=0.5.
+	out := p.view(80)
+	want := p.bar.ViewAs(0.5)
+	if !strings.Contains(out, want) {
+		t.Errorf("progress.view does not contain bubbles/v2/progress bar for 0.5\nview:\n%s\nwant bar:\n%s",
+			out, want)
 	}
 }
 
-func TestRenderBar_ZeroTotal(t *testing.T) {
-	out := renderBar(0, 0, 4)
-	if !strings.Contains(out, strings.Repeat("░", 4)) {
-		t.Errorf("zero total should render full empty bar, got %q", out)
+// TestProgressBar_ZeroTotalRendersZero asserts an empty plan does not
+// crash and produces a zero-percent bar (the bubbles component handles
+// the math; we just verify the wiring).
+func TestProgressBar_ZeroTotalRendersZero(t *testing.T) {
+	p := progressPanel{currentPhaseIdx: -1, bar: newProgressBar()}
+	out := p.view(80)
+	if out == "" {
+		t.Fatalf("expected fallback text, got empty")
 	}
-}
-
-func TestRenderBar_NonZeroSmallProgressShowsAtLeastOne(t *testing.T) {
-	out := renderBar(1, 100, 10) // 0.1 chars rounds to 0 in math but should show 1.
-	if !strings.Contains(out, "█") {
-		t.Errorf("any progress should yield at least one █, got %q", out)
+	if !strings.Contains(out, "plan not parsed yet") {
+		t.Errorf("expected fallback text, got:\n%s", out)
 	}
 }
 

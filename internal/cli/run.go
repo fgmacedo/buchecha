@@ -11,7 +11,8 @@ import (
 	"runtime/debug"
 	"syscall"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/spf13/cobra"
 
 	"github.com/fgmacedo/buchecha/internal/config"
@@ -70,10 +71,6 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	if !validOutputMode(runOutput) {
 		ExitCode = loop.ExitInvalid
 		return fmt.Errorf("unknown --output %q (want tui|text|json)", runOutput)
-	}
-
-	if runNoColor {
-		tui.DisableColor()
 	}
 
 	// In text mode the user expects events at their level on stderr.
@@ -189,7 +186,7 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	}
 
 	if runOutput == OutputTUI {
-		return runWithTUI(ctx, cancel, l, specPath, branchHint, verbosity)
+		return runWithTUI(ctx, cancel, l, specPath, branchHint, verbosity, runNoColor)
 	}
 
 	events, drained, err := dispatchEvents(runOutput, verbosity)
@@ -213,7 +210,7 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 // the TUI Model: the user toggles paused via the keyboard, the gate
 // posts release tokens, and the Loop blocks on PauseGate before each
 // iteration after the first.
-func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, specPath, branch string, verbosity loop.Level) error {
+func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, specPath, branch string, verbosity loop.Level, noColor bool) error {
 	// The TUI ignores --verbosity per the Phase 2 spec ("TUI panels are
 	// already curated"); raw is consumed directly. The verbosity arg is
 	// kept on the function signature so callers do not branch.
@@ -261,12 +258,21 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 		SpecConfig: specCfg,
 	})
 	// WithoutSignalHandler: signal.NotifyContext in RunE owns SIGINT /
-	// SIGTERM; bubbletea must not install a competing handler.
-	program := tea.NewProgram(model,
-		tea.WithAltScreen(),
+	// SIGTERM; bubbletea must not install a competing handler. Alt-screen
+	// and mouse cell motion are now properties of the Model's tea.View
+	// (set in Model.View), no longer ProgramOptions in v2. --no-color
+	// becomes a colour-profile override on the Program: passing
+	// colorprofile.NoTTY forces the renderer to strip every SGR escape
+	// (colours and resets) so the output reaches the terminal as plain
+	// text, matching the v1 behaviour of termenv.Ascii.
+	progOpts := []tea.ProgramOption{
 		tea.WithContext(ctx),
 		tea.WithoutSignalHandler(),
-	)
+	}
+	if noColor {
+		progOpts = append(progOpts, tea.WithColorProfile(colorprofile.NoTTY))
+	}
+	program := tea.NewProgram(model, progOpts...)
 
 	// Belt-and-braces terminal restoration: program.Run() restores the
 	// terminal during normal exit and bubbletea installs its own panic

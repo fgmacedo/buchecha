@@ -7,11 +7,30 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/spec"
 )
+
+// keyPress builds a tea.KeyPressMsg for the given key string. v2 replaces
+// the v1 tea.KeyMsg{Type, Runes} struct with a Key/KeyPressMsg shape; this
+// helper keeps test bodies readable.
+func keyPress(k string) tea.KeyPressMsg {
+	switch k {
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	case "space", " ":
+		return tea.KeyPressMsg{Code: ' ', Text: " "}
+	default:
+		runes := []rune(k)
+		if len(runes) == 1 {
+			return tea.KeyPressMsg{Code: runes[0], Text: k}
+		}
+		return tea.KeyPressMsg{Text: k}
+	}
+}
 
 // fakeGitProbe counts calls and returns canned values.
 type fakeGitProbe struct {
@@ -61,7 +80,7 @@ func TestUpdate_WindowSizeStored(t *testing.T) {
 
 func TestUpdate_QuitKeyCancelsAndQuits(t *testing.T) {
 	m, _, _, cancelled := newTestModel(t)
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got, cmd := m.Update(keyPress("q"))
 	if cmd == nil {
 		t.Fatalf("expected tea.Quit cmd, got nil")
 	}
@@ -79,7 +98,7 @@ func TestUpdate_QuitKeyCancelsAndQuits(t *testing.T) {
 
 func TestUpdate_CtrlCQuitsAndCancels(t *testing.T) {
 	m, _, _, cancelled := newTestModel(t)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(keyPress("ctrl+c"))
 	if cmd == nil {
 		t.Fatalf("expected tea.Quit cmd, got nil")
 	}
@@ -96,7 +115,7 @@ func TestUpdate_SpaceTogglesPause(t *testing.T) {
 	if gate.Paused() {
 		t.Fatalf("gate should start unpaused")
 	}
-	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	got, cmd := m.Update(keyPress("space"))
 	if cmd != nil {
 		t.Errorf("space must not return a cmd; got %v", cmd)
 	}
@@ -110,7 +129,7 @@ func TestUpdate_SpaceTogglesPause(t *testing.T) {
 	if !mm.paused {
 		t.Errorf("Model.paused = false after space")
 	}
-	got2, _ := mm.Update(tea.KeyMsg{Type: tea.KeySpace})
+	got2, _ := mm.Update(keyPress("space"))
 	if gate.Paused() {
 		t.Errorf("gate not resumed after second space")
 	}
@@ -341,13 +360,18 @@ func TestInit_ChannelCloseSurfacesAsClosed(t *testing.T) {
 func TestView_FivePanelTitlesPresent(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	out := mm.(Model).View()
+	out := mm.(Model).View().Content
 	for _, name := range []string{"now", "health", "progress", "if you close now", "recent actions"} {
 		if !strings.Contains(out, name) {
 			t.Errorf("View missing panel title %q\n%s", name, out)
 		}
 	}
-	for _, ctl := range []string{"[q]uit", "[space]pause", "[?]help"} {
+	// The footer is now rendered by bubbles/v2/help; the keymap exposes
+	// the same bindings under their human labels. At narrow widths the
+	// help.Model truncates the tail with an ellipsis, so we only assert
+	// the first two bindings appear; the ? overlay test exercises the
+	// full keymap path.
+	for _, ctl := range []string{"q / Ctrl+C", "space"} {
 		if !strings.Contains(out, ctl) {
 			t.Errorf("View missing footer hint %q\n%s", ctl, out)
 		}
@@ -356,11 +380,11 @@ func TestView_FivePanelTitlesPresent(t *testing.T) {
 
 func TestView_PausedTagAppearsInHeader(t *testing.T) {
 	m, _, gate, _ := newTestModel(t)
-	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	mm, _ := m.Update(keyPress("space"))
 	if !gate.Paused() {
 		t.Fatalf("setup: gate not paused")
 	}
-	out := mm.(Model).View()
+	out := mm.(Model).View().Content
 	if !strings.Contains(out, "[paused]") {
 		t.Errorf("View missing [paused] tag while paused\n%s", out)
 	}
@@ -388,15 +412,15 @@ func TestUpdate_AgentEventRoutesToPanels(t *testing.T) {
 	}
 }
 
-func TestUpdate_SpinnerTickAdvancesAndReschedules(t *testing.T) {
+// TestUpdate_SpinnerTickReschedules forwards a bubbles/v2/spinner.TickMsg
+// addressed to the embedded spinner and asserts the spinner.Update path
+// returns a follow-up cmd so the animation keeps advancing.
+func TestUpdate_SpinnerTickReschedules(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
-	got, cmd := m.Update(spinnerTickMsg{})
+	tick := m.now.spinner.Tick().(spinner.TickMsg)
+	_, cmd := m.Update(tick)
 	if cmd == nil {
-		t.Fatalf("spinner tick must reschedule itself")
-	}
-	mm := got.(Model)
-	if mm.now.spinnerFrame != 1 {
-		t.Errorf("spinnerFrame = %d, want 1", mm.now.spinnerFrame)
+		t.Fatalf("spinner.TickMsg must reschedule itself via the embedded spinner")
 	}
 }
 

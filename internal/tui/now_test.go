@@ -45,7 +45,7 @@ func TestNow_onAgentEvent_RecordsLatestAssistantText(t *testing.T) {
 }
 
 func TestNow_view_IdleWhenNoTool(t *testing.T) {
-	n := nowPanel{}
+	n := newNowPanel()
 	out := n.view(time.Now(), 80)
 	if !strings.Contains(out, "idle") {
 		t.Errorf("idle state not rendered: %q", out)
@@ -54,11 +54,10 @@ func TestNow_view_IdleWhenNoTool(t *testing.T) {
 
 func TestNow_view_RendersToolHeadline(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 30, 12, 0, time.UTC)
-	n := nowPanel{
-		currentTool:   &loop.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}},
-		currentToolAt: now.Add(-10 * time.Second),
-		lastAssistant: "Adjusting parser",
-	}
+	n := newNowPanel()
+	n.currentTool = &loop.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}}
+	n.currentToolAt = now.Add(-10 * time.Second)
+	n.lastAssistant = "Adjusting parser"
 	out := n.view(now, 80)
 	if !strings.Contains(out, "Bash") {
 		t.Errorf("missing tool name in view: %q", out)
@@ -71,18 +70,6 @@ func TestNow_view_RendersToolHeadline(t *testing.T) {
 	}
 	if !strings.Contains(out, "Adjusting parser") {
 		t.Errorf("missing assistant text in view: %q", out)
-	}
-}
-
-func TestNow_tick_AdvancesSpinnerFrame(t *testing.T) {
-	n := nowPanel{}
-	start := n.spinnerFrame
-	for i := 0; i < len(spinnerFrames)+1; i++ {
-		n.tick()
-	}
-	// After len(frames)+1 ticks, frame should be (start+len+1) % len = (start+1) % len.
-	if n.spinnerFrame != (start+len(spinnerFrames)+1)%len(spinnerFrames) {
-		t.Errorf("spinner frame did not wrap as expected: got %d", n.spinnerFrame)
 	}
 }
 

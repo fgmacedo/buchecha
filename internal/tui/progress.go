@@ -5,8 +5,15 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/progress"
+
 	"github.com/fgmacedo/buchecha/internal/spec"
 )
+
+// progressBarWidth is the cell count for the bubbles/v2 progress bar.
+// Fixed so the panel renders the same shape regardless of the panel
+// width; the bar is laid out below the phase row, not inline.
+const progressBarWidth = 32
 
 // progressPanel renders the plan as phase-by-phase checkboxes with a
 // progress bar and an ETA derived from the rolling iteration time.
@@ -22,15 +29,42 @@ type progressPanel struct {
 	// touch (the first phase containing any [ ] item). -1 when no phase
 	// has unchecked items.
 	currentPhaseIdx int
+
+	// bar is the bubbles/v2/progress component. The animated transitions
+	// land for free; SetPercent is called whenever the plan changes.
+	bar progress.Model
 }
 
-const progressBarWidth = 32
+// newProgressBar configures the bubbles progress bar with a fixed
+// width (the bar is below the phase row, not inline) and the panel's
+// "bar" colour scheme.
+func newProgressBar() progress.Model {
+	return progress.New(
+		progress.WithWidth(progressBarWidth),
+		progress.WithoutPercentage(),
+		progress.WithColors(theme.bar.GetForeground()),
+	)
+}
 
 // onSpecParsed swaps in a freshly parsed plan and recomputes the
-// "current phase" pointer.
+// "current phase" pointer plus the bar's percent.
 func (p *progressPanel) onSpecParsed(plan spec.Plan) {
 	p.plan = plan
 	p.currentPhaseIdx = firstUncheckedPhase(plan)
+
+	checked := plan.CountChecked()
+	total := checked + plan.CountUnchecked()
+	if total > 0 {
+		// SetPercent returns a tea.Cmd to drive the spring-animated
+		// transition; the caller (Model.Update) ignores it because the
+		// bar is rendered with ViewAs(percent) directly, not its own
+		// internal animator. Static value renders are fine here: the
+		// dashboard repaints continuously via spinner ticks, so the bar
+		// follows along without per-frame coordination.
+		_ = p.bar.SetPercent(float64(checked) / float64(total))
+	} else {
+		_ = p.bar.SetPercent(0)
+	}
 }
 
 // onIterationFinished records the duration so the ETA can average the
@@ -83,9 +117,12 @@ func (p progressPanel) view(_ int) string {
 
 	checked := p.plan.CountChecked()
 	total := checked + p.plan.CountUnchecked()
-	bar := renderBar(checked, total, progressBarWidth)
+	pct := 0.0
+	if total > 0 {
+		pct = float64(checked) / float64(total)
+	}
 	b.WriteString("  ")
-	b.WriteString(bar)
+	b.WriteString(p.bar.ViewAs(pct))
 	b.WriteString(fmt.Sprintf("  %d/%d items", checked, total))
 
 	if eta := computeETA(p.durations, p.plan.CountUnchecked()); eta > 0 {
@@ -126,26 +163,6 @@ func phaseLabel(i int, ph spec.Phase) string {
 		}
 	}
 	return fmt.Sprintf("P%d", i+1)
-}
-
-// renderBar draws a progress bar of width characters, with checked /
-// total filled. Empty total renders an all-empty bar.
-func renderBar(checked, total, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if total <= 0 {
-		return theme.barEmpty.Render(strings.Repeat("░", width))
-	}
-	filled := checked * width / total
-	if checked > 0 && filled == 0 {
-		filled = 1
-	}
-	if filled > width {
-		filled = width
-	}
-	return theme.bar.Render(strings.Repeat("█", filled)) +
-		theme.barEmpty.Render(strings.Repeat("░", width-filled))
 }
 
 // computeETA averages the recent iteration durations and multiplies

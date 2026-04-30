@@ -4,15 +4,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
 )
 
-// theme bundles the lipgloss styles the panels share. Style construction
-// reads the lipgloss default renderer's color profile lazily, so calling
-// DisableColor before any panel renders produces an Ascii (no-color)
-// output without changing any panel code. Panels reference the styles
-// by name (theme.title, theme.ok, ...).
+// theme bundles the lipgloss styles the panels share. v2 styles emit ANSI
+// regardless of profile; the active program's color profile (set via
+// tea.WithColorProfile in cli/run) down-converts the ANSI sequences at
+// write time. To run without color, the caller passes the colorprofile.Ascii
+// profile to tea.NewProgram, which strips colour escapes from every render.
 //
 // Color choice rationale: ANSI-16 indexed colors keep the output legible
 // across nearly every terminal palette (light or dark, default or
@@ -36,18 +35,6 @@ var theme = struct {
 	bar:      lipgloss.NewStyle().Foreground(lipgloss.Color("12")),
 	barEmpty: lipgloss.NewStyle().Faint(true),
 	keyHint:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14")),
-}
-
-// DisableColor forces the lipgloss default renderer into the Ascii
-// profile so every theme.* style renders as plain text. Wired to
-// `--output tui --no-color` in cmd/run; safe to call before
-// tea.NewProgram or after (subsequent renders pick up the new profile).
-//
-// Also affects any non-TUI render path that happens to use lipgloss
-// styles. The text and json backends do not use lipgloss today, so the
-// flag is effectively a TUI-only switch in practice.
-func DisableColor() {
-	lipgloss.SetColorProfile(termenv.Ascii)
 }
 
 // formatDuration renders a short human-readable duration: 12s,

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 func TestComputeLayout_FullWidthAndNowHealthSplit(t *testing.T) {
@@ -63,7 +63,7 @@ func TestView_NoLineExceedsWidth(t *testing.T) {
 	for _, w := range []int{80, 120, 200} {
 		m, _, _, _ := newTestModel(t)
 		mm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 40})
-		out := mm.(Model).View()
+		out := mm.(Model).View().Content
 		for i, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 			if got := lipgloss.Width(line); got > w {
 				t.Errorf("width=%d line %d exceeds terminal: lipgloss.Width=%d\n%q",
@@ -80,7 +80,7 @@ func TestView_NoLineExceedsWidth(t *testing.T) {
 func TestView_NowAndHealthShareTopBand(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	out := mm.(Model).View()
+	out := mm.(Model).View().Content
 	lines := strings.Split(out, "\n")
 
 	// Find the top-border line that carries the "now" title; that same
@@ -106,7 +106,7 @@ func TestView_HeaderTitleContainsBranchAndIter(t *testing.T) {
 	m.header.branch = "feat/x"
 	m.header.iter = 3
 	m.header.maxIter = 5
-	out := m.View()
+	out := m.View().Content
 	lines := strings.Split(out, "\n")
 	if len(lines) == 0 {
 		t.Fatal("View() returned empty output")
@@ -127,7 +127,7 @@ func TestView_BelowThresholdFallsBackToPlain(t *testing.T) {
 	const w = 30
 	m, _, _, _ := newTestModel(t)
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
-	out := mm.(Model).View()
+	out := mm.(Model).View().Content
 	// Plain fallback: no rounded-border characters anywhere.
 	for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
 		if strings.Contains(out, glyph) {
