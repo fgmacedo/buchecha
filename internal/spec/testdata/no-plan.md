@@ -1,5 +1,0 @@
-# Foo
-
-## Other Section
-
-Hello.
