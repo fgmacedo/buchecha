@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
-	"github.com/fgmacedo/buchecha/internal/spec"
 )
 
 // AgentEventKind classifies a normalized agent event. Adapters translate
@@ -119,11 +118,12 @@ type AgentEventReceived struct {
 func (AgentEventReceived) isLoopEvent() {}
 
 // IterationFinished marks the end of one iteration with its outcome.
+// Signal carries the value the agent emitted via the wire protocol's
+// iteration_result event; bcc trusts it without parsing the spec.
 type IterationFinished struct {
 	Index        int
-	Result       spec.Result
+	Signal       agentcontract.Signal
 	HEADAdvanced bool
-	NewlyChecked int
 	DurationMS   int64
 	At           time.Time
 }

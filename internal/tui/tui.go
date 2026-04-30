@@ -19,7 +19,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // gitProbeInterval is the cadence at which the dashboard polls the
@@ -75,13 +75,11 @@ func defaultKeyMap() keyMap {
 // Model is the bubbletea model for the dashboard.
 type Model struct {
 	// Inputs wired by the caller (cmd/run.go).
-	events     <-chan loop.Event
-	cancel     context.CancelFunc
-	gate       *Gate
-	specReader SpecReader
-	gitProbe   GitProbe
-	gitCtx     context.Context
-	specCfg    SpecConfig
+	events   <-chan loop.Event
+	cancel   context.CancelFunc
+	gate     *Gate
+	gitProbe GitProbe
+	gitCtx   context.Context
 
 	// newEvents builds a fresh loop, spawns its goroutine, and returns
 	// the new events channel. Invoked when the user presses [r] in the
@@ -110,11 +108,10 @@ type Model struct {
 	helpVisible    bool   // true while the ? overlay is up
 	runBaselineSHA string // captured from the first IterationStarted
 
-	// Last per-iteration result, latched onto the session badge when the
-	// loop finishes. Today this is spec.Result; once
-	// spec-vendor-neutrality lands the field becomes a format-neutral
-	// Signal sourced from the SpecReader port.
-	lastIterResult spec.Result
+	// lastIterSignal latches the most recent iteration_result signal
+	// the agent emitted via the wire protocol. The session badge reads
+	// it when the loop terminates.
+	lastIterSignal agentcontract.Signal
 
 	// Session-mode state (P2.11). sessionMode latches when LoopFinished
 	// arrives with a reason other than "user cancelled" or "fatal";
@@ -143,49 +140,41 @@ func (m *Model) SetProgram(p *tea.Program) {
 // Options bundles construction parameters for New. Optional fields may
 // be left zero.
 type Options struct {
-	Events     <-chan loop.Event
-	Cancel     context.CancelFunc
-	Gate       *Gate
-	SpecPath   string
-	Branch     string
-	MaxIter    int
-	SpecReader SpecReader
-	GitProbe   GitProbe
-	GitCtx     context.Context
-	SpecConfig SpecConfig
+	Events   <-chan loop.Event
+	Cancel   context.CancelFunc
+	Gate     *Gate
+	SpecPath string
+	Branch   string
+	MaxIter  int
+	GitProbe GitProbe
+	GitCtx   context.Context
 
 	// NewEvents is the host's factory for a fresh loop run. Invoked when
-	// the user presses [r] in the session menu (P2.11.5). Nil disables
-	// the resume action.
+	// the user presses [r] in the session menu. Nil disables the resume
+	// action.
 	NewEvents func() <-chan loop.Event
 }
 
 // New returns a Model wired to the given event channel and cancel
 // callback. The gate is required; nil disables the pause feature
-// silently. SpecReader / GitProbe are optional: nil disables the
-// corresponding panel data source (panels still render with empty
-// placeholders).
+// silently. GitProbe is optional: nil disables the commit-count and
+// dirty-file probes (panels still render with empty placeholders).
 func New(opts Options) Model {
 	now := time.Now()
 	m := Model{
-		events:     opts.Events,
-		cancel:     opts.Cancel,
-		gate:       opts.Gate,
-		specReader: opts.SpecReader,
-		gitProbe:   opts.GitProbe,
-		gitCtx:     opts.GitCtx,
-		specCfg:    opts.SpecConfig,
+		events:   opts.Events,
+		cancel:   opts.Cancel,
+		gate:     opts.Gate,
+		gitProbe: opts.GitProbe,
+		gitCtx:   opts.GitCtx,
 		header: header{
 			specPath:  opts.SpecPath,
 			branch:    opts.Branch,
 			maxIter:   opts.MaxIter,
 			startedAt: now,
 		},
-		health: healthPanel{startedAt: now},
-		progress: progressPanel{
-			currentPhaseIdx: -1,
-			bar:             newProgressBar(),
-		},
+		health:      healthPanel{startedAt: now},
+		progress:    progressPanel{bar: newProgressBar()},
 		actions:     newActionsPanel(),
 		now:         newNowPanel(),
 		keys:        defaultKeyMap(),
@@ -261,7 +250,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionMode = false
 		m.sessionReason = ""
 		m.sessionExitMsg = ""
-		m.lastIterResult = spec.ResultUnknown
+		m.lastIterSignal = agentcontract.SignalUnknown
 		m.finished = false
 		// Iteration counter resets per session; run-local baseline SHA
 		// is preserved (the run, not the iteration, is the baseline).
@@ -299,13 +288,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, gitProbeCmd(m.gitCtx, m.gitProbe, m.runBaselineSHA)
-
-	case specParsedMsg:
-		if msg.ok {
-			m.progress.onSpecParsed(msg.plan)
-			m.risk.onSpecParsed(msg.plan, msg.latest, msg.latestKnown)
-		}
-		return m, nil
 
 	case tea.MouseWheelMsg:
 		var cmd tea.Cmd
@@ -402,14 +384,10 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.progress.onIterationFinished(time.Duration(e.DurationMS) * time.Millisecond)
 		m.header.onAny(e.At)
 		m.health.onAny(e.At)
-		m.lastIterResult = e.Result
+		m.lastIterSignal = e.Signal
 		// Release the gate (no-op if paused).
 		if m.gate != nil {
 			m.gate.IterDone()
-		}
-		// Re-parse the spec asynchronously: progress + journal status.
-		if m.specReader != nil {
-			cmds = append(cmds, parseSpecCmd(m.specReader, m.header.specPath, m.specCfg))
 		}
 	case loop.LoopFinished:
 		m.finished = true
@@ -439,6 +417,10 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.actions.onAgentEvent(e.Event)
 		m.risk.onAgentEvent(e.Event)
 		m.header.onAny(e.Event.At)
+		if e.Event.Kind == loop.KindBccEvent && e.Event.Bcc != nil {
+			m.progress.onBccEvent(*e.Event.Bcc)
+			m.risk.onBccEvent(*e.Event.Bcc)
+		}
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -497,7 +479,7 @@ func (m Model) viewSession() string {
 		return renderHelpOverlay(m.helpView, m.sessionKeys)
 	}
 	dashboard := m.viewDashboard(true)
-	status := sessionStatus(m.sessionReason, m.lastIterResult)
+	status := sessionStatus(m.sessionReason, m.lastIterSignal)
 	menu := renderSessionMenu(m.helpView, m.sessionKeys, status)
 	hint := ""
 	if m.sessionExitMsg != "" {
@@ -514,7 +496,7 @@ func (m Model) viewDashboard(session bool) string {
 
 	headerView := m.header.view(now, lay.headerW)
 	if session {
-		headerView = m.header.viewSession(sessionStatus(m.sessionReason, m.lastIterResult))
+		headerView = m.header.viewSession(sessionStatus(m.sessionReason, m.lastIterSignal))
 	}
 	headerBox := box(
 		m.header.titleText(now),
@@ -594,37 +576,5 @@ func gitProbeCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea.Cm
 func gitProbeNowCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea.Cmd {
 	return func() tea.Msg {
 		return doGitProbe(ctx, probe, baselineSHA)
-	}
-}
-
-// specParsedMsg carries a freshly parsed plan and latest result.
-type specParsedMsg struct {
-	ok          bool
-	plan        spec.Plan
-	latest      spec.LatestResult
-	latestKnown bool
-}
-
-// parseSpecCmd reads the spec file and parses the plan + latest
-// journal Result. Errors silently downgrade to ok=false; the panels
-// then keep their previous state instead of flashing partial output.
-func parseSpecCmd(reader SpecReader, path string, cfg SpecConfig) tea.Cmd {
-	return func() tea.Msg {
-		content, err := reader.Read(path)
-		if err != nil {
-			return specParsedMsg{ok: false}
-		}
-		plan, err := spec.ParsePlan(content, cfg.PlanHeading)
-		if err != nil {
-			return specParsedMsg{ok: false}
-		}
-		latest, lerr := spec.ParseLatestResult(
-			content, cfg.JournalHeading, cfg.ResultKeyword, cfg.ResultVocab)
-		return specParsedMsg{
-			ok:          true,
-			plan:        plan,
-			latest:      latest,
-			latestKnown: lerr == nil,
-		}
 	}
 }

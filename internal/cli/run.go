@@ -19,10 +19,9 @@ import (
 	"github.com/fgmacedo/buchecha/internal/config"
 	configloader "github.com/fgmacedo/buchecha/internal/configloader/toml"
 	"github.com/fgmacedo/buchecha/internal/executor/claude"
+	markdown_bcc "github.com/fgmacedo/buchecha/internal/format/markdown_bcc"
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
-	"github.com/fgmacedo/buchecha/internal/specreader/markdown"
 	"github.com/fgmacedo/buchecha/internal/tui"
 )
 
@@ -127,7 +126,6 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	}
 
 	gitProbe := gitcli.New("")
-	specReader := markdown.New()
 
 	// Pre-flight: refuse to run on a dirty working tree unless the user
 	// explicitly allowed it. The agent assumes a clean entry tree to
@@ -162,12 +160,6 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		cfg.Loop.MaxIterations, specPath, branchHint,
 	)
 
-	// Print the previous Result (if any) so a re-run after stop has clear
-	// context. Useful when re-triggering after Result: review.
-	if prev := readPreviousResult(specPath, cfg, specReader); prev != "" {
-		fmt.Fprintf(os.Stderr, "bcc: previous run stopped on Result: %s\n", prev)
-	}
-
 	executor := claude.New(claude.Config{
 		Binary:          cfg.Executor.Binary,
 		Model:           cfg.Executor.Model,
@@ -176,26 +168,32 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		Stderr:          os.Stderr,
 	})
 
+	briefing := markdown_bcc.New(markdown_bcc.Config{
+		PlanHeading:    cfg.Specs.PlanHeading,
+		JournalHeading: cfg.Specs.JournalHeading,
+		MaxIterations:  cfg.Loop.MaxIterations,
+	})
+
 	l := &loop.Loop{
-		SpecPath:    specPath,
-		Config:      cfg,
-		Executor:    executor,
-		Git:         gitProbe,
-		SpecContent: specReader,
-		Extra:       runExtra,
-		SingleShot:  runSingleShot,
+		SpecPath:   specPath,
+		Config:     cfg,
+		Executor:   executor,
+		Git:        gitProbe,
+		Briefing:   briefing,
+		Extra:      runExtra,
+		SingleShot: runSingleShot,
 	}
 
 	if runOutput == OutputTUI {
 		buildLoop := func() *loop.Loop {
 			return &loop.Loop{
-				SpecPath:    specPath,
-				Config:      cfg,
-				Executor:    executor,
-				Git:         gitProbe,
-				SpecContent: specReader,
-				Extra:       runExtra,
-				SingleShot:  runSingleShot,
+				SpecPath:   specPath,
+				Config:     cfg,
+				Executor:   executor,
+				Git:        gitProbe,
+				Briefing:   briefing,
+				Extra:      runExtra,
+				SingleShot: runSingleShot,
 			}
 		}
 		return runWithTUI(ctx, cancel, buildLoop, specPath, branchHint, verbosity, runNoColor)
@@ -248,21 +246,7 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, buildLoop func()
 	first.Logger = discard
 	first.PauseGate = gate.Chan()
 
-	specCfg := tui.SpecConfig{
-		PlanHeading:    first.Config.Specs.PlanHeading,
-		JournalHeading: first.Config.Specs.JournalHeading,
-		ResultKeyword:  first.Config.Specs.ResultKeyword,
-		ResultVocab: spec.ResultVocab{
-			OK:      first.Config.Loop.Results.OK,
-			Partial: first.Config.Loop.Results.Partial,
-			Done:    first.Config.Loop.Results.Done,
-			Blocked: first.Config.Loop.Results.Blocked,
-			Review:  first.Config.Loop.Results.Review,
-		},
-	}
-
 	gitProbeAdapter, _ := first.Git.(tui.GitProbe)
-	specReaderAdapter, _ := first.SpecContent.(tui.SpecReader)
 
 	type runResult struct {
 		code int
@@ -311,17 +295,15 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, buildLoop func()
 	raw := make(chan loop.Event, 256)
 
 	model := tui.New(tui.Options{
-		Events:     raw,
-		Cancel:     cancel,
-		Gate:       gate,
-		SpecPath:   specPath,
-		Branch:     branch,
-		MaxIter:    first.Config.Loop.MaxIterations,
-		SpecReader: specReaderAdapter,
-		GitProbe:   gitProbeAdapter,
-		GitCtx:     ctx,
-		SpecConfig: specCfg,
-		NewEvents:  newEvents,
+		Events:    raw,
+		Cancel:    cancel,
+		Gate:      gate,
+		SpecPath:  specPath,
+		Branch:    branch,
+		MaxIter:   first.Config.Loop.MaxIterations,
+		GitProbe:  gitProbeAdapter,
+		GitCtx:    ctx,
+		NewEvents: newEvents,
 	})
 	// WithoutSignalHandler: signal.NotifyContext in RunE owns SIGINT /
 	// SIGTERM; bubbletea must not install a competing handler. Alt-screen
@@ -377,29 +359,6 @@ func validOutputMode(s string) bool {
 		return true
 	}
 	return false
-}
-
-// readPreviousResult returns the raw Result string of the latest journal
-// entry in the spec, or empty string when the journal has no entry yet
-// (first run) or the parse fails (malformed journal). Best-effort; not
-// fatal.
-func readPreviousResult(specPath string, cfg *config.Config, reader loop.SpecContent) string {
-	content, err := reader.Read(specPath)
-	if err != nil {
-		return ""
-	}
-	vocab := spec.ResultVocab{
-		OK:      cfg.Loop.Results.OK,
-		Partial: cfg.Loop.Results.Partial,
-		Done:    cfg.Loop.Results.Done,
-		Blocked: cfg.Loop.Results.Blocked,
-		Review:  cfg.Loop.Results.Review,
-	}
-	latest, err := spec.ParseLatestResult(content, cfg.Specs.JournalHeading, cfg.Specs.ResultKeyword, vocab)
-	if err != nil {
-		return ""
-	}
-	return latest.Raw
 }
 
 // loadConfigForRun returns the loaded Config and the path it was found at

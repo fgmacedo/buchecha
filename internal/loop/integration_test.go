@@ -7,16 +7,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fgmacedo/buchecha/internal/config"
 	"github.com/fgmacedo/buchecha/internal/executor/fake"
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/specreader/markdown"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
-// initIntegrationRepo creates a fresh git repo + initial spec, returns
-// (repoDir, specPath). Skips if git is missing.
+// initIntegrationRepo creates a fresh git repo + initial spec file.
+// Returns (repoDir, specPath). Skips when git is missing.
 func initIntegrationRepo(t *testing.T) (string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -29,7 +30,7 @@ func initIntegrationRepo(t *testing.T) (string, string) {
 	runShell(t, dir, "git", "config", "commit.gpgsign", "false")
 
 	specPath := filepath.Join(dir, "spec.md")
-	if err := os.WriteFile(specPath, []byte(specWith([]string{"[ ]", "[ ]"}, "")), 0o644); err != nil {
+	if err := os.WriteFile(specPath, []byte("# spec\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runShell(t, dir, "git", "add", ".")
@@ -47,61 +48,59 @@ func runShell(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// editingExec wraps a fake.Executor with a hook that mutates the spec
-// file and commits between iterations, simulating an agent's edits and
-// HEAD advance.
-type editingExec struct {
+// committingExec wraps a fake.Executor with a hook that performs a real
+// git commit on the repo before each iteration's events are emitted,
+// simulating an agent that does work and commits.
+type committingExec struct {
 	fake     *fake.Executor
 	specPath string
 	repoDir  string
 	t        *testing.T
-	updates  []func() // updates[i] runs before iteration i+1
+	commits  []bool // commits[i]=true means iteration i+1 makes a commit
 	idx      int
 }
 
-func (e *editingExec) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
-	if e.idx < len(e.updates) {
-		e.updates[e.idx]()
-		e.idx++
+func (e *committingExec) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
+	if e.idx < len(e.commits) && e.commits[e.idx] {
+		// Touch the spec, stage, commit.
+		_ = os.WriteFile(e.specPath, []byte(fmt.Sprintf("# spec iter %d\n", e.idx+1)), 0o644)
+		runShell(e.t, e.repoDir, "git", "add", ".")
+		runShell(e.t, e.repoDir, "git", "commit", "-m", fmt.Sprintf("iter%d", e.idx+1))
 	}
+	e.idx++
 	return e.fake.Run(ctx, prompt, events)
 }
 
 func TestIntegration_TwoIterToDone(t *testing.T) {
 	dir, specPath := initIntegrationRepo(t)
 
-	// Apply iteration-1 update: agent marks first item, sets Result: ok.
-	iter1 := func() {
-		_ = os.WriteFile(specPath, []byte(specWith([]string{"[x]", "[ ]"}, "ok")), 0o644)
-		runShell(t, dir, "git", "add", ".")
-		runShell(t, dir, "git", "commit", "-m", "iter1")
-	}
-	// Apply iteration-2 update: agent finishes, sets Result: done.
-	iter2 := func() {
-		_ = os.WriteFile(specPath, []byte(specWith([]string{"[x]", "[x]"}, "done")), 0o644)
-		runShell(t, dir, "git", "add", ".")
-		runShell(t, dir, "git", "commit", "-m", "iter2")
-	}
-
-	executor := &editingExec{
+	// Two iterations: first emits "continue" + commits, second emits "done"
+	// + commits.
+	executor := &committingExec{
 		fake: fake.New(
-			fake.Step{ExitCode: 0},
-			fake.Step{ExitCode: 0},
+			fake.Step{Events: []loop.AgentEvent{
+				{Kind: loop.KindBccEvent, At: time.Now(), Bcc: &agentcontract.BccEvent{
+					Kind: agentcontract.BccEventIterationResult, Signal: agentcontract.SignalContinue,
+				}},
+			}},
+			fake.Step{Events: []loop.AgentEvent{
+				{Kind: loop.KindBccEvent, At: time.Now(), Bcc: &agentcontract.BccEvent{
+					Kind: agentcontract.BccEventIterationResult, Signal: agentcontract.SignalDone,
+				}},
+			}},
 		),
-		specPath: specPath,
-		repoDir:  dir,
-		t:        t,
-		updates:  []func(){iter1, iter2},
+		specPath: specPath, repoDir: dir, t: t,
+		commits: []bool{true, true},
 	}
 
 	cfg := newTestConfig()
 
 	l := &loop.Loop{
-		SpecPath:    specPath,
-		Config:      cfg,
-		Executor:    executor,
-		Git:         gitcli.New(dir),
-		SpecContent: markdown.New(),
+		SpecPath: specPath,
+		Config:   cfg,
+		Executor: executor,
+		Git:      gitcli.New(dir),
+		Briefing: fakeBriefing{},
 	}
 
 	events := make(chan loop.Event, 1024)
@@ -122,23 +121,25 @@ func TestIntegration_TwoIterToDone(t *testing.T) {
 func TestIntegration_HEADStuckOnNoCommit(t *testing.T) {
 	dir, specPath := initIntegrationRepo(t)
 
-	// Agent runs but does NOT commit anything; spec file is unchanged.
-	executor := &editingExec{
-		fake:     fake.New(fake.Step{ExitCode: 0}),
-		updates:  nil,
-		specPath: specPath,
-		repoDir:  dir,
-		t:        t,
+	// Agent emits "continue" but does NOT commit anything.
+	executor := &committingExec{
+		fake: fake.New(fake.Step{Events: []loop.AgentEvent{
+			{Kind: loop.KindBccEvent, At: time.Now(), Bcc: &agentcontract.BccEvent{
+				Kind: agentcontract.BccEventIterationResult, Signal: agentcontract.SignalContinue,
+			}},
+		}}),
+		specPath: specPath, repoDir: dir, t: t,
+		commits: []bool{false},
 	}
 
 	cfg := newTestConfig()
 
 	l := &loop.Loop{
-		SpecPath:    specPath,
-		Config:      cfg,
-		Executor:    executor,
-		Git:         gitcli.New(dir),
-		SpecContent: markdown.New(),
+		SpecPath: specPath,
+		Config:   cfg,
+		Executor: executor,
+		Git:      gitcli.New(dir),
+		Briefing: fakeBriefing{},
 	}
 
 	events := make(chan loop.Event, 1024)
@@ -175,5 +176,4 @@ func dumpSpec(t *testing.T, path string) {
 var (
 	_ = dumpSpec
 	_ = configWithDefaults
-	_ = fmt.Sprintf
 )

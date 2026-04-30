@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // TestUpdate_LoopFinishedLatchesSessionMode covers P2.11.2 / P2.11.3:
@@ -31,7 +31,7 @@ func TestUpdate_LoopFinishedLatchesSessionMode(t *testing.T) {
 		t.Run(tc.reason, func(t *testing.T) {
 			m, _, _, _ := newTestModel(t)
 			// Latch the most recent iter result so the badge shows ok.
-			m.lastIterResult = spec.ResultOK
+			m.lastIterSignal = agentcontract.SignalContinue
 			got, _ := m.Update(eventMsg{ev: loop.LoopFinished{Reason: tc.reason}})
 			mm := got.(Model)
 			if mm.sessionMode != tc.wantMenu {
@@ -69,7 +69,7 @@ func TestView_SessionMenuRenders(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	mm0, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m = mm0.(Model)
-	m.lastIterResult = spec.ResultReview
+	m.lastIterSignal = agentcontract.SignalReview
 	got, _ := m.Update(eventMsg{ev: loop.LoopFinished{Reason: "review"}})
 	out := got.(Model).View().Content
 
@@ -141,7 +141,7 @@ func TestUpdate_RebindEventsMsgClearsSession(t *testing.T) {
 	m.sessionMode = true
 	m.runBaselineSHA = "abc123"
 	m.header.iter = 7
-	m.lastIterResult = spec.ResultReview
+	m.lastIterSignal = agentcontract.SignalReview
 
 	freshCh := make(chan loop.Event, 1)
 	got, cmd := m.Update(rebindEventsMsg{events: freshCh})
@@ -158,8 +158,8 @@ func TestUpdate_RebindEventsMsgClearsSession(t *testing.T) {
 	if mm.header.iter != 0 {
 		t.Errorf("header.iter = %d, want 0 (reset per session)", mm.header.iter)
 	}
-	if mm.lastIterResult != spec.ResultUnknown {
-		t.Errorf("lastIterResult kept across resume; want reset")
+	if mm.lastIterSignal != agentcontract.SignalUnknown {
+		t.Errorf("lastIterSignal kept across resume; want reset")
 	}
 	if cmd == nil {
 		t.Fatalf("rebind must return a readEventCmd to restart the pump")
@@ -274,28 +274,28 @@ func TestUpdate_SessionResumeEndToEnd(t *testing.T) {
 	}
 }
 
-// TestSessionStatus_LabelsResultsAndReasons covers the helper that maps
-// the loop's terminal Reason / spec.Result onto the badge label.
-func TestSessionStatus_LabelsResultsAndReasons(t *testing.T) {
+// TestSessionStatus_LabelsSignalsAndReasons covers the helper that
+// maps the loop's terminal Reason / agentcontract.Signal onto the
+// badge label.
+func TestSessionStatus_LabelsSignalsAndReasons(t *testing.T) {
 	cases := []struct {
 		reason string
-		res    spec.Result
+		sig    agentcontract.Signal
 		want   string
 	}{
-		{"review", spec.ResultReview, "review"},
-		{"done", spec.ResultDone, "done"},
-		{"blocked", spec.ResultBlocked, "blocked"},
-		{"max_iterations", spec.ResultUnknown, "max iterations"},
-		{"head_stuck", spec.ResultUnknown, "head stuck"},
-		{"done_with_leftovers", spec.ResultUnknown, "done with leftovers"},
-		{"review", spec.ResultUnknown, "review"},
-		{"", spec.ResultUnknown, "idle"},
+		{"review", agentcontract.SignalReview, "review"},
+		{"done", agentcontract.SignalDone, "done"},
+		{"blocked", agentcontract.SignalBlocked, "blocked"},
+		{"max_iterations", agentcontract.SignalUnknown, "max iterations"},
+		{"head_stuck", agentcontract.SignalUnknown, "head stuck"},
+		{"review", agentcontract.SignalUnknown, "review"},
+		{"", agentcontract.SignalUnknown, "idle"},
 	}
 	for _, tc := range cases {
-		got := sessionStatus(tc.reason, tc.res)
+		got := sessionStatus(tc.reason, tc.sig)
 		if got != tc.want {
 			t.Errorf("sessionStatus(%q,%v) = %q, want %q",
-				tc.reason, tc.res, got, tc.want)
+				tc.reason, tc.sig, got, tc.want)
 		}
 	}
 }

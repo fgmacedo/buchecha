@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func TestMarshalJSONEvent_IterStarted(t *testing.T) {
@@ -43,9 +43,8 @@ func TestMarshalJSONEvent_IterFinished(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
 	ev := loop.IterationFinished{
 		Index:        3,
-		Result:       spec.ResultPartial,
+		Signal:       agentcontract.SignalContinue,
 		HEADAdvanced: true,
-		NewlyChecked: 2,
 		DurationMS:   420000,
 		At:           at,
 	}
@@ -53,7 +52,7 @@ func TestMarshalJSONEvent_IterFinished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-04-29T14:35:00Z","duration_ms":420000,"head_advanced":true,"index":3,"level":"info","newly_checked":2,"result":"partial","type":"iter_finished"}`
+	want := `{"at":"2026-04-29T14:35:00Z","duration_ms":420000,"head_advanced":true,"index":3,"level":"info","signal":"continue","type":"iter_finished"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}

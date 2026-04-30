@@ -40,9 +40,8 @@ func jsonPayload(ev Event) map[string]any {
 			"at":            formatAt(e.At),
 			"level":         level,
 			"index":         e.Index,
-			"result":        e.Result.String(),
+			"signal":        e.Signal.String(),
 			"head_advanced": e.HEADAdvanced,
-			"newly_checked": e.NewlyChecked,
 			"duration_ms":   e.DurationMS,
 		}
 	case LoopFinished:

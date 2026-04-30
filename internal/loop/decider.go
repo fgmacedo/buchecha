@@ -1,6 +1,6 @@
 package loop
 
-import "github.com/fgmacedo/buchecha/internal/spec"
+import "github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 
 // Action is the next loop action chosen by the Decider.
 type Action int
@@ -31,42 +31,42 @@ type Decision struct {
 	ExitCode int // meaningful only when Action == ActionStop
 }
 
-// DeciderInput is what the Decider needs from one iteration.
+// DeciderInput is what the Decider needs from one iteration. The
+// signal comes from the agent's last bcc_event of kind iteration_result
+// over the wire protocol; HEADAdvanced is the orthogonal safety net.
+// bcc trusts the wire signal for done-verification and does not parse
+// the spec to second-guess the agent.
 type DeciderInput struct {
-	LatestResult   spec.Result
-	HEADAdvanced   bool
-	UncheckedAfter int
+	Signal       agentcontract.Signal
+	HEADAdvanced bool
 }
 
 // Decide implements the loop decision table:
 //
-//	HEADAdvanced=false                            → ExitHEADStuck (3), Stop
-//	LatestResult=Unknown                          → ExitInvalid (2), Stop
-//	LatestResult=Blocked                          → ExitBlocked (1), Stop
-//	LatestResult=Review                           → ExitReview (6), Stop
-//	LatestResult=Done && UncheckedAfter > 0       → ExitDoneWithLeftovers (5), Stop
-//	LatestResult=Done && UncheckedAfter == 0      → ExitDone (0), Stop
-//	LatestResult=OK or Partial                    → Continue
+//	HEADAdvanced=false        → ExitHEADStuck (3), Stop
+//	Signal=Unknown            → ExitInvalid (2), Stop
+//	Signal=Blocked            → ExitBlocked (1), Stop
+//	Signal=Review             → ExitReview (6), Stop
+//	Signal=Done               → ExitDone (0), Stop
+//	Signal=Continue           → Continue
 //
-// HEADAdvanced is checked first because if the agent did not commit, the
-// journal entry's value is meaningless: anything could be there.
+// HEADAdvanced is checked first because if the agent did not commit,
+// nothing meaningful happened in this iteration regardless of the
+// wire-protocol claim.
 func Decide(in DeciderInput) Decision {
 	if !in.HEADAdvanced {
 		return Decision{Action: ActionStop, ExitCode: ExitHEADStuck}
 	}
-	switch in.LatestResult {
-	case spec.ResultUnknown:
+	switch in.Signal {
+	case agentcontract.SignalUnknown:
 		return Decision{Action: ActionStop, ExitCode: ExitInvalid}
-	case spec.ResultBlocked:
+	case agentcontract.SignalBlocked:
 		return Decision{Action: ActionStop, ExitCode: ExitBlocked}
-	case spec.ResultReview:
+	case agentcontract.SignalReview:
 		return Decision{Action: ActionStop, ExitCode: ExitReview}
-	case spec.ResultDone:
-		if in.UncheckedAfter > 0 {
-			return Decision{Action: ActionStop, ExitCode: ExitDoneWithLeftovers}
-		}
+	case agentcontract.SignalDone:
 		return Decision{Action: ActionStop, ExitCode: ExitDone}
-	case spec.ResultOK, spec.ResultPartial:
+	case agentcontract.SignalContinue:
 		return Decision{Action: ActionContinue}
 	default:
 		return Decision{Action: ActionStop, ExitCode: ExitInvalid}

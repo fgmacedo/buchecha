@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func TestParseLevel(t *testing.T) {
@@ -66,7 +66,7 @@ func TestLevelOf(t *testing.T) {
 		want loop.Level
 	}{
 		{"iter_started", loop.IterationStarted{}, loop.LevelInfo},
-		{"iter_finished", loop.IterationFinished{Result: spec.ResultOK}, loop.LevelInfo},
+		{"iter_finished", loop.IterationFinished{Signal: agentcontract.SignalContinue}, loop.LevelInfo},
 		{"loop_finished_ok", loop.LoopFinished{ExitCode: 0}, loop.LevelInfo},
 		{"loop_finished_blocked", loop.LoopFinished{ExitCode: 1}, loop.LevelError},
 		{"loop_finished_invalid", loop.LoopFinished{ExitCode: 2}, loop.LevelError},
@@ -172,10 +172,10 @@ func TestFilterEvents_ErrorOnlyKeepsErrors(t *testing.T) {
 	out := make(chan loop.Event, 8)
 	loop.FilterEvents(in, out, loop.LevelError)
 
-	in <- loop.IterationStarted{}                       // info -> drop
-	in <- loop.IterationFinished{Result: spec.ResultOK} // info -> drop
-	in <- loop.LoopFinished{ExitCode: 0}                // info -> drop
-	in <- loop.LoopFinished{ExitCode: 1}                // error -> keep
+	in <- loop.IterationStarted{}                                      // info -> drop
+	in <- loop.IterationFinished{Signal: agentcontract.SignalContinue} // info -> drop
+	in <- loop.LoopFinished{ExitCode: 0}                               // info -> drop
+	in <- loop.LoopFinished{ExitCode: 1}                               // error -> keep
 	in <- loop.AgentEventReceived{Event: loop.AgentEvent{
 		Kind: loop.KindToolResult,
 		Tool: &loop.ToolCallInfo{IsError: true},

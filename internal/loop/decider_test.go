@@ -3,7 +3,7 @@ package loop
 import (
 	"testing"
 
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func TestDecide(t *testing.T) {
@@ -13,48 +13,38 @@ func TestDecide(t *testing.T) {
 		want Decision
 	}{
 		{
-			name: "head not advanced returns HEADStuck regardless of result",
-			in:   DeciderInput{HEADAdvanced: false, LatestResult: spec.ResultOK, UncheckedAfter: 5},
+			name: "head not advanced returns HEADStuck regardless of signal",
+			in:   DeciderInput{HEADAdvanced: false, Signal: agentcontract.SignalContinue},
 			want: Decision{Action: ActionStop, ExitCode: ExitHEADStuck},
 		},
 		{
 			name: "head not advanced even with done",
-			in:   DeciderInput{HEADAdvanced: false, LatestResult: spec.ResultDone, UncheckedAfter: 0},
+			in:   DeciderInput{HEADAdvanced: false, Signal: agentcontract.SignalDone},
 			want: Decision{Action: ActionStop, ExitCode: ExitHEADStuck},
 		},
 		{
-			name: "ok continues",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultOK, UncheckedAfter: 3},
-			want: Decision{Action: ActionContinue},
-		},
-		{
-			name: "partial continues",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultPartial, UncheckedAfter: 3},
+			name: "continue continues",
+			in:   DeciderInput{HEADAdvanced: true, Signal: agentcontract.SignalContinue},
 			want: Decision{Action: ActionContinue},
 		},
 		{
 			name: "blocked stops with ExitBlocked",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultBlocked, UncheckedAfter: 5},
+			in:   DeciderInput{HEADAdvanced: true, Signal: agentcontract.SignalBlocked},
 			want: Decision{Action: ActionStop, ExitCode: ExitBlocked},
 		},
 		{
-			name: "done with zero unchecked is success",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultDone, UncheckedAfter: 0},
+			name: "done stops with ExitDone",
+			in:   DeciderInput{HEADAdvanced: true, Signal: agentcontract.SignalDone},
 			want: Decision{Action: ActionStop, ExitCode: ExitDone},
 		},
 		{
-			name: "done with leftovers is exit 5",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultDone, UncheckedAfter: 2},
-			want: Decision{Action: ActionStop, ExitCode: ExitDoneWithLeftovers},
-		},
-		{
-			name: "unknown result is invalid (exit 2)",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultUnknown, UncheckedAfter: 0},
+			name: "unknown signal is invalid (exit 2)",
+			in:   DeciderInput{HEADAdvanced: true, Signal: agentcontract.SignalUnknown},
 			want: Decision{Action: ActionStop, ExitCode: ExitInvalid},
 		},
 		{
 			name: "review stops with ExitReview (exit 6)",
-			in:   DeciderInput{HEADAdvanced: true, LatestResult: spec.ResultReview, UncheckedAfter: 5},
+			in:   DeciderInput{HEADAdvanced: true, Signal: agentcontract.SignalReview},
 			want: Decision{Action: ActionStop, ExitCode: ExitReview},
 		},
 	}

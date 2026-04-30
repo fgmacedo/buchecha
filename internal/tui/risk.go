@@ -6,16 +6,15 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // riskPanel answers the user's "if I close this laptop right now, what
 // do I lose?" question. Three lines summarise committed progress, the
-// uncommitted working tree, and the journal status of the current
-// iteration.
+// uncommitted working tree, and the agent's last reported signal.
 type riskPanel struct {
-	checked        int
-	totalItems     int
+	tasksCompleted int
+	tasksStarted   int
 	dirtyFileCount int
 	dirtyKnown     bool
 	lastEditAt     time.Time
@@ -23,20 +22,26 @@ type riskPanel struct {
 	runCommitCount int
 	commitsKnown   bool
 
-	currentIter   int
-	journalRaw    string
-	journalResult spec.Result
-	journalKnown  bool
+	currentIter  int
+	lastSignal   agentcontract.Signal
+	signalKnown  bool
+	signalRawVal string // raw "value" from iteration_result for diagnostics
 }
 
-// onSpecParsed updates the spec-derived parts (committed item count
-// and journal status) from a fresh parse.
-func (r *riskPanel) onSpecParsed(plan spec.Plan, latest spec.LatestResult, latestKnown bool) {
-	r.checked = plan.CountChecked()
-	r.totalItems = r.checked + plan.CountUnchecked()
-	r.journalRaw = latest.Raw
-	r.journalResult = latest.Result
-	r.journalKnown = latestKnown
+// onBccEvent updates wire-driven counters and the latest signal.
+func (r *riskPanel) onBccEvent(ev agentcontract.BccEvent) {
+	switch ev.Kind {
+	case agentcontract.BccEventTaskStarted:
+		r.tasksStarted++
+	case agentcontract.BccEventTaskCompleted:
+		r.tasksCompleted++
+	case agentcontract.BccEventIterationResult:
+		r.lastSignal = ev.Signal
+		r.signalKnown = true
+		if v, ok := ev.Raw["value"].(string); ok {
+			r.signalRawVal = v
+		}
+	}
 }
 
 // onDirtyFileCount records the latest probe result.
@@ -46,9 +51,7 @@ func (r *riskPanel) onDirtyFileCount(n int) {
 }
 
 // onCommitCount records the run-local commit count probed via
-// GitProbe.CommitsSince(BaselineSHA). It is the number of commits HEAD
-// is ahead of the run's baseline; zero is a meaningful value (the agent
-// has not committed yet this run).
+// GitProbe.CommitsSince(BaselineSHA).
 func (r *riskPanel) onCommitCount(n int) {
 	r.runCommitCount = n
 	r.commitsKnown = true
@@ -71,14 +74,14 @@ func (r *riskPanel) onAgentEvent(ev loop.AgentEvent) {
 	}
 }
 
-// onIterStarted updates the current-iter pointer used by the journal
-// line ("Result for iter N: ...").
+// onIterStarted updates the current-iter pointer used by the signal
+// line ("Signal for iter N: ...").
 func (r *riskPanel) onIterStarted(idx int) {
 	r.currentIter = idx
-	// Clear the journal "known" flag for the new iteration: the
-	// previous iteration's result is no longer current. The next
-	// IterationFinished re-parses the spec and re-fills it.
-	r.journalKnown = false
+	// Clear the signal "known" flag for the new iteration: the previous
+	// iteration's signal is no longer current.
+	r.signalKnown = false
+	r.signalRawVal = ""
 }
 
 // view renders the panel body. width is reserved for future width-aware
@@ -90,8 +93,8 @@ func (r riskPanel) view(now time.Time, _ int) string {
 	if r.commitsKnown {
 		commits = theme.subtle.Render(fmt.Sprintf(" (%s)", pluralize(r.runCommitCount, "commit", "commits")))
 	}
-	b.WriteString(fmt.Sprintf("  %s committed: %d/%d items%s\n",
-		theme.ok.Render("✓"), r.checked, r.totalItems, commits))
+	b.WriteString(fmt.Sprintf("  %s tasks completed: %d/%d%s\n",
+		theme.ok.Render("✓"), r.tasksCompleted, r.tasksStarted, commits))
 
 	uncommitted := "..."
 	if r.dirtyKnown {
@@ -108,21 +111,20 @@ func (r riskPanel) view(now time.Time, _ int) string {
 	b.WriteString(fmt.Sprintf("  %s uncommitted: %s%s\n",
 		uncommittedGlyph, uncommitted, theme.subtle.Render(editHint)))
 
-	journal := journalLine(r.currentIter, r.journalRaw, r.journalResult, r.journalKnown)
 	b.WriteString("  ")
-	b.WriteString(journal)
+	b.WriteString(signalLine(r.currentIter, r.lastSignal, r.signalRawVal, r.signalKnown))
 	b.WriteByte('\n')
 	return b.String()
 }
 
-// journalLine formats the journal status with a glyph: ✓ when the
-// latest entry's Result is recognised, ⚠ when missing or unknown.
-func journalLine(iter int, raw string, res spec.Result, known bool) string {
-	if !known || raw == "" {
-		return theme.warn.Render("⚠") + fmt.Sprintf(" journal: Result for iter %d not yet written", iter)
+// signalLine formats the latest iteration_result with a glyph: ✓ when
+// the agent emitted a recognised value, ⚠ when missing or unknown.
+func signalLine(iter int, sig agentcontract.Signal, raw string, known bool) string {
+	if !known {
+		return theme.warn.Render("⚠") + fmt.Sprintf(" signal: not yet emitted for iter %d", iter)
 	}
-	if res == spec.ResultUnknown {
-		return theme.warn.Render("⚠") + fmt.Sprintf(" journal: latest Result %q (unknown)", raw)
+	if sig == agentcontract.SignalUnknown {
+		return theme.warn.Render("⚠") + fmt.Sprintf(" signal: %q (unknown)", raw)
 	}
-	return theme.ok.Render("✓") + fmt.Sprintf(" journal: latest Result %s", raw)
+	return theme.ok.Render("✓") + fmt.Sprintf(" signal: %s", sig.String())
 }

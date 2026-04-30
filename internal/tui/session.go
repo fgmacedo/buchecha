@@ -11,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // sessionKeyMap is the binding set the dashboard honors after the inner
@@ -71,20 +71,18 @@ type editorFinishedMsg struct {
 	err error
 }
 
-// sessionStatus is the human-friendly form of a session signal. Today the
-// Model carries spec.Result; once spec-vendor-neutrality lands the badge
-// reads from a format-neutral Signal type.
-func sessionStatus(reason string, res spec.Result) string {
-	if res != spec.ResultUnknown {
-		return res.String()
+// sessionStatus is the human-friendly form of a session signal,
+// derived from the agent's last iteration_result (when known) or from
+// the loop's terminal reason otherwise.
+func sessionStatus(reason string, sig agentcontract.Signal) string {
+	if sig != agentcontract.SignalUnknown {
+		return sig.String()
 	}
 	switch reason {
 	case "max_iterations":
 		return "max iterations"
 	case "head_stuck":
 		return "head stuck"
-	case "done_with_leftovers":
-		return "done with leftovers"
 	case "":
 		return "idle"
 	default:

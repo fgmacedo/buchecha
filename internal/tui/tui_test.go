@@ -11,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/spec"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // keyPress builds a tea.KeyPressMsg for the given key string. v2 replaces
@@ -456,21 +456,23 @@ func TestUpdate_FirstIterationStartedCapturesBaselineSHA(t *testing.T) {
 	}
 }
 
-func TestUpdate_SpecParsedMsgFeedsProgressAndRisk(t *testing.T) {
+func TestUpdate_BccEventFeedsProgressAndRisk(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
-	plan := samplePlan()
-	got, _ := m.Update(specParsedMsg{
-		ok:          true,
-		plan:        plan,
-		latest:      spec.LatestResult{Raw: "ok", Result: spec.ResultOK},
-		latestKnown: true,
-	})
-	mm := got.(Model)
-	if mm.progress.currentPhaseIdx == -1 {
-		t.Errorf("progress panel did not record current phase")
+	bccEvent := loop.AgentEvent{
+		Kind: loop.KindBccEvent,
+		Bcc: &agentcontract.BccEvent{
+			Kind:   agentcontract.BccEventIterationResult,
+			Signal: agentcontract.SignalContinue,
+			Raw:    map[string]any{"value": "continue"},
+		},
 	}
-	if mm.risk.totalItems != 6 {
-		t.Errorf("risk panel did not record items: got %d", mm.risk.totalItems)
+	got, _ := m.Update(eventMsg{ev: loop.AgentEventReceived{Event: bccEvent}})
+	mm := got.(Model)
+	if !mm.risk.signalKnown {
+		t.Errorf("risk panel did not record signal")
+	}
+	if mm.risk.lastSignal != agentcontract.SignalContinue {
+		t.Errorf("risk panel signal = %v, want SignalContinue", mm.risk.lastSignal)
 	}
 }
 
