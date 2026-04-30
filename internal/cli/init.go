@@ -19,7 +19,7 @@ var (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize .bcc.toml in the current project (interactive wizard)",
-	Long:  "Walk through an interactive wizard to generate .bcc.toml with project language, agent executor, spec location, loop settings, and env handling.",
+	Long:  "Walk through an interactive wizard to generate .bcc.toml with project language, spec format, agent, journal store, loop settings, and env handling.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInitWizard(os.Stdin, os.Stdout, ".bcc.toml")
 	},
@@ -35,15 +35,18 @@ func init() {
 // WriteConfigTOML so tests can drive it directly without stdin scripting.
 type initInput struct {
 	Language        string
-	Agent           string
-	Binary          string
-	Model           string
+	SpecFormat      string // active [spec].format
+	JournalStore    string // active [journal].store
+	AgentName       string // active [agent].name
+	Binary          string // active agent's binary
+	Model           string // active agent's model (claude only)
 	SpecsDir        string
 	Mode            string
 	MaxIter         int
 	BranchPrefix    string
 	EnvFiles        []string
-	SkipPermissions bool // explicit; default true by wizard
+	JournalFilePath string // when JournalStore == "file"
+	SkipPermissions bool   // explicit; default true by wizard
 }
 
 func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
@@ -56,7 +59,9 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 
 	in := initInput{
 		Language:        initLanguage,
-		Agent:           "claude",
+		SpecFormat:      "markdown_bcc",
+		JournalStore:    "markdown_inspec",
+		AgentName:       "claude",
 		Mode:            "phase",
 		MaxIter:         20,
 		BranchPrefix:    "feat",
@@ -72,16 +77,34 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 		return fmt.Errorf("invalid language %q (use en or pt-BR)", in.Language)
 	}
 
-	in.Agent = ask(r, stdout, "Agent [claude/codex/gemini/custom]", "claude")
+	in.SpecFormat = ask(r, stdout, "Spec format [markdown_bcc/openspec/kiro/speckit/bmad]", in.SpecFormat)
+	if in.SpecFormat != "markdown_bcc" {
+		fmt.Fprintf(stdout, "  note: only markdown_bcc has a working adapter today; %q is reserved for future support.\n", in.SpecFormat)
+	}
 
-	binSuggest := in.Agent
-	if abs, err := exec.LookPath(in.Agent); err == nil {
+	in.AgentName = ask(r, stdout, "Agent [claude/codex/gemini]", in.AgentName)
+	if in.AgentName != "claude" {
+		fmt.Fprintf(stdout, "  note: only claude has a working adapter today; %q is reserved for future support.\n", in.AgentName)
+	}
+
+	binSuggest := in.AgentName
+	if abs, err := exec.LookPath(in.AgentName); err == nil {
 		binSuggest = abs
 	}
 	in.Binary = ask(r, stdout, "Agent binary path", binSuggest)
 
-	if in.Agent == "claude" {
+	if in.AgentName == "claude" {
 		in.Model = ask(r, stdout, "Model", "claude-opus-4-7")
+	}
+
+	in.JournalStore = ask(r, stdout, "Journal store [markdown_inspec/file/none]", in.JournalStore)
+	switch in.JournalStore {
+	case "markdown_inspec", "none":
+		// no extra prompts
+	case "file":
+		in.JournalFilePath = ask(r, stdout, "Journal sidecar path", ".bcc/journal.ndjson")
+	default:
+		return fmt.Errorf("invalid journal store %q", in.JournalStore)
 	}
 
 	in.SpecsDir = ask(r, stdout, "Spec directory", in.SpecsDir)
@@ -131,27 +154,93 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 }
 
 // WriteConfigTOML writes a .bcc.toml file at path with the provided
-// settings. Exposed for tests; the wizard wraps it.
+// settings. Exposed for tests; the wizard wraps it. The output emits
+// stub subtables for known-but-inactive adapters so the user can switch
+// `[spec].format` or `[agent].name` later without re-editing the file.
 func WriteConfigTOML(path string, in initInput) error {
 	var sb strings.Builder
 	sb.WriteString("[project]\n")
 	sb.WriteString(fmt.Sprintf("language = %q\n\n", in.Language))
 
-	sb.WriteString("[executor]\n")
-	sb.WriteString(fmt.Sprintf("agent = %q\n", in.Agent))
-	sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
-	if in.Model != "" {
-		sb.WriteString(fmt.Sprintf("model = %q\n", in.Model))
-	}
-	sb.WriteString("extra_args = []\n")
-	sb.WriteString("# skip_permissions=true tells the adapter to suppress the agent's permission\n")
-	sb.WriteString("# prompts (claude maps this to --dangerously-skip-permissions). Required for\n")
-	sb.WriteString("# the autonomous loop. Set to false for a dry-run; the loop is unlikely to\n")
-	sb.WriteString("# converge in that mode. The user accepts the trade-off either way.\n")
-	sb.WriteString(fmt.Sprintf("skip_permissions = %t\n\n", in.SkipPermissions))
+	sb.WriteString("# Active spec-format adapter. Other [spec.<name>] subtables hold\n")
+	sb.WriteString("# defaults so switching is one key change.\n")
+	sb.WriteString("[spec]\n")
+	sb.WriteString(fmt.Sprintf("format = %q\n\n", in.SpecFormat))
 
-	sb.WriteString("[specs]\n")
+	sb.WriteString("[spec.markdown_bcc]\n")
 	sb.WriteString(fmt.Sprintf("dir = %q\n\n", in.SpecsDir))
+
+	sb.WriteString("[spec.openspec]\n")
+	sb.WriteString("# tasks_path = \"tasks.md\"\n")
+	sb.WriteString("# proposal_path = \"proposal.md\"\n")
+	sb.WriteString("# design_path = \"design.md\"\n\n")
+
+	sb.WriteString("[spec.kiro]\n")
+	sb.WriteString("# tasks_path = \"tasks.md\"\n")
+	sb.WriteString("# requirements_path = \"requirements.md\"\n")
+	sb.WriteString("# design_path = \"design.md\"\n\n")
+
+	sb.WriteString("# Active journal-storage hint passed to the agent's contract template.\n")
+	sb.WriteString("# bcc never reads the journal; the agent owns the write side.\n")
+	sb.WriteString("[journal]\n")
+	sb.WriteString(fmt.Sprintf("store = %q\n\n", in.JournalStore))
+
+	if in.JournalFilePath != "" {
+		sb.WriteString("[journal.file]\n")
+		sb.WriteString(fmt.Sprintf("path = %q\n\n", in.JournalFilePath))
+	} else {
+		sb.WriteString("[journal.file]\n")
+		sb.WriteString("# path = \".bcc/journal.ndjson\"\n\n")
+	}
+
+	sb.WriteString("# Active agent. Other [agent.<name>] subtables hold defaults so\n")
+	sb.WriteString("# switching is one key change (also overridable with --agent).\n")
+	sb.WriteString("[agent]\n")
+	sb.WriteString(fmt.Sprintf("name = %q\n\n", in.AgentName))
+
+	sb.WriteString("[agent.claude]\n")
+	if in.AgentName == "claude" {
+		sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
+		if in.Model != "" {
+			sb.WriteString(fmt.Sprintf("model = %q\n", in.Model))
+		}
+		sb.WriteString("extra_args = []\n")
+		sb.WriteString("# skip_permissions=true tells the adapter to suppress the agent's permission\n")
+		sb.WriteString("# prompts (claude maps this to --dangerously-skip-permissions). Required for\n")
+		sb.WriteString("# the autonomous loop. Set to false for a dry-run; the loop is unlikely to\n")
+		sb.WriteString("# converge in that mode.\n")
+		sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
+	} else {
+		sb.WriteString("binary = \"claude\"\n")
+		sb.WriteString("# model = \"claude-opus-4-7\"\n")
+		sb.WriteString("extra_args = []\n")
+		sb.WriteString("skip_permissions = true\n")
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("[agent.codex]\n")
+	if in.AgentName == "codex" {
+		sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
+		sb.WriteString("extra_args = []\n")
+		sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
+	} else {
+		sb.WriteString("# binary = \"codex\"\n")
+		sb.WriteString("# extra_args = []\n")
+		sb.WriteString("# skip_permissions = true\n")
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("[agent.gemini]\n")
+	if in.AgentName == "gemini" {
+		sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
+		sb.WriteString("extra_args = []\n")
+		sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
+	} else {
+		sb.WriteString("# binary = \"gemini\"\n")
+		sb.WriteString("# extra_args = []\n")
+		sb.WriteString("# skip_permissions = true\n")
+	}
+	sb.WriteString("\n")
 
 	sb.WriteString("[loop]\n")
 	sb.WriteString(fmt.Sprintf("mode = %q\n", in.Mode))

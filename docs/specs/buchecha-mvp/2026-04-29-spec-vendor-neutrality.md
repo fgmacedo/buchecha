@@ -1,12 +1,12 @@
 ---
 title: "Spec-format vendor neutrality"
 type: spec
-status: draft
+status: implemented
 authors:
   - Fernando Macedo
 reviewers: []
 created: 2026-04-29
-decision-date:
+decision-date: 2026-04-30
 superseded-by:
 supersedes:
 review-by:
@@ -300,8 +300,8 @@ store = "none"
 
 These were originally scoped inside [Phase 2](./2026-04-29-phase-2-tui-dashboard.md). The phase-2 design assumed bcc would parse the spec for display; this spec retires that assumption. The carried-over items become event-driven; everything that depended on `SpecReader.Render`, `Progress`, or `LatestSignal` (the parser-based TUI features) is dropped.
 
-1. [ ] **Risk and progress panels migrate to event-driven state.** `progressPanel` consumes `BccEventTaskStarted` / `BccEventTaskCompleted` to track checked-vs-total per run; the totals come from cumulative observations rather than a parse. `riskPanel` consumes the most recent `BccEventIterationResult.Signal`. Initial render (before any event arrives) shows empty placeholders; no parse, no first-render hack.
-1. [ ] **Edit-spec post-edit re-trigger** (was P2.11 sub-item 6). After the user returns from `$EDITOR`, the session menu offers `[r]` to start the next iteration. The agent re-reads the spec on its own; bcc does nothing format-aware. Editor-suspension mechanics (`ReleaseTerminal` / `RestoreTerminal`) stay in `internal/tui/` and are format-neutral.
+1. [x] **Risk and progress panels migrate to event-driven state.** `progressPanel` consumes `BccEventTaskStarted` / `BccEventTaskCompleted` to track checked-vs-total per run; the totals come from cumulative observations rather than a parse. `riskPanel` consumes the most recent `BccEventIterationResult.Signal`. Initial render (before any event arrives) shows empty placeholders; no parse, no first-render hack.
+1. [x] **Edit-spec post-edit re-trigger** (was P2.11 sub-item 6). After the user returns from `$EDITOR`, the session menu offers `[r]` to start the next iteration. The agent re-reads the spec on its own; bcc does nothing format-aware. Editor-suspension mechanics (`ReleaseTerminal` / `RestoreTerminal`) stay in `internal/tui/` and are format-neutral.
 
 The phase-2 "spec parsed at startup", "optional spec preview panel", "journal viewer", and "edit-spec end-to-end smoke (journal-driven)" sub-items are dropped. The user opens the spec in their editor for any in-depth view; bcc's TUI surfaces only what the wire protocol delivers.
 
@@ -316,7 +316,7 @@ Items are intentionally not numbered as P-X.Y; this spec stands on its own.
 1. [x] **Refactor `LoopDecider` to consume `Signal`.** `Decide(latest Signal, headAdvanced bool) Action`. Dropped `LatestResult`, `UncheckedAfter`, `ExitDoneWithLeftovers`. HEAD-stuck remains the orthogonal safety net.
 1. [x] **Rewrite `Loop.Run` to consume the wire protocol.** Drops spec-content read and parser calls; tracks the latest `BccEventIterationResult` from the event channel; feeds `Signal` to the decider; emits `IterationFinished` carrying `Signal`. Loop gained `Briefing AgentBriefing`; lost `SpecContent` and `GuidePath`.
 1. [x] **Migrate TUI panels to event-driven state.** `progressPanel` consumes `task_started`/`task_completed`; `riskPanel` consumes `IterationResult`. `tui.SpecReader`, `tui.SpecConfig`, and `parseSpecCmd` removed.
-1. [ ] **Wire the hierarchical config.** Global selectors (`[spec].format`, `[journal].store`, `[agent].name`) plus per-adapter subtables. Drop `[loop.results]` (vocab mapping no longer exists; wire is canonical English). Drop `[specs]` (its fields move into `[spec.markdown_bcc]` as adapter-private inputs). `bcc init` writes sane defaults for every known adapter; CLI flags `--spec-format <name>` and `--agent <name>` override the active selectors for one run.
+1. [x] **Wire the hierarchical config.** `[spec].format`, `[journal].store`, `[agent].name` selectors with per-adapter subtables (`[spec.markdown_bcc]`, `[agent.claude]`, etc.). Dropped `[loop.results]` (wire protocol is canonical English; no vocab mapping in bcc). Dropped `[specs]` and `[executor]` (their fields moved into `[spec.markdown_bcc]` and `[agent.claude]`). `bcc init` writes stub subtables for known-but-inactive adapters (`openspec`, `kiro`, `codex`, `gemini`) so switching is one key change. CLI flags `--spec-format` and `--agent` override the active selectors for one run.
 1. [x] **Delete `internal/spec/`, `internal/specreader/`, `internal/loop/prompt.go`, `docs/guides/autonomous-execution.md`.** All four superseded by the per-adapter contract in `internal/format/markdown_bcc/` plus shared partials in `internal/loop/agentcontract/`. `loop.SpecContent` removed from ports.
 1. [x] **Tests.** Decider tests in `Signal`. `agentcontract.ParseLine` fixtures cover every `event` value. `markdown_bcc.AgentBriefing` golden-output tests cover `Mode` × `JournalStore` combinations and assert the shared partials render. End-to-end fake-executor test where the fake emits a scripted `bcc_event` stream and the loop converges to the right exit code.
 1. [x] **Migration note in `CLAUDE.md`.** Architecture section updated: three ports (`Executor`/`GitProbe`/`AgentBriefing`), wire protocol owned by `internal/loop/agentcontract/`, format adapters under `internal/format/<name>/`. Stale references to `internal/spec/`, `internal/specreader/`, and `docs/guides/autonomous-execution.md` purged.
@@ -358,6 +358,12 @@ Reverse the work and reopen the design if:
 ## Execution Journal
 
 Most recent entries on top. Contract in [bcc-markdown contract](#bcc-markdown-contract).
+
+### 2026-04-30 05:00, hierarchical config + wizard rewrite
+
+`.bcc.toml` schema migrated to the hierarchical layout: `[spec]` / `[spec.markdown_bcc]`, `[journal]` / `[journal.file]`, `[agent]` / `[agent.claude]`. Dropped `[specs]`, `[executor]`, and `[loop.results]` from the Go config struct. `[spec.openspec]`, `[spec.kiro]`, `[agent.codex]`, `[agent.gemini]` exist as TOML stubs (commented placeholders) but have no Go fields yet, so they decode into nothing today and the user can fill them as the corresponding adapters land. `cli/run.go` validates that the active `[spec].format` and `[agent].name` map to a wired adapter and errors otherwise. Added `--spec-format` and `--agent` flags. Wizard rewritten to ask spec format, journal store, and agent in addition to the existing prompts; emits stub subtables for inactive adapters. Repo's own `.bcc.toml` migrated in the same commit.
+
+- **Decisions**: Per-adapter Go structs only exist for the adapters with a working executor or briefing today (`SpecMarkdownBCC`, `AgentClaude`, `JournalFile`). Stub subtables in TOML decode as ignored fields under BurntSushi/toml's lenient mode; this keeps the config file honest about future shape without bloating the Go config struct. Closes the vendor-neutrality spec.
 
 ### 2026-04-30 04:30, big migration: Loop, decider, TUI, CLI, plus delete legacy
 

@@ -25,20 +25,25 @@ func TestLoad_FullExample(t *testing.T) {
 [project]
 language = "pt-BR"
 
-[executor]
-agent = "claude"
+[spec]
+format = "markdown_bcc"
+
+[spec.markdown_bcc]
+dir = "specs"
+
+[journal]
+store = "markdown_inspec"
+
+[agent]
+name = "claude"
+
+[agent.claude]
 binary = "/usr/bin/claude"
 extra_args = ["--verbose"]
-
-[specs]
-dir = "specs"
 
 [loop]
 mode = "phase"
 max_iterations = 10
-
-[loop.results]
-done = "feito"
 
 [git]
 branch_prefix = "feat"
@@ -58,24 +63,30 @@ FOO = "bar"
 	if c.Project.Language != "pt-BR" {
 		t.Errorf("Language = %q", c.Project.Language)
 	}
-	if c.Executor.Binary != "/usr/bin/claude" {
-		t.Errorf("Binary = %q", c.Executor.Binary)
+	if c.Spec.Format != "markdown_bcc" {
+		t.Errorf("Spec.Format = %q", c.Spec.Format)
 	}
-	if len(c.Executor.ExtraArgs) != 1 || c.Executor.ExtraArgs[0] != "--verbose" {
-		t.Errorf("ExtraArgs = %v", c.Executor.ExtraArgs)
+	if c.Agent.Name != "claude" {
+		t.Errorf("Agent.Name = %q", c.Agent.Name)
+	}
+	if c.Agent.Claude.Binary != "/usr/bin/claude" {
+		t.Errorf("Agent.Claude.Binary = %q", c.Agent.Claude.Binary)
+	}
+	if len(c.Agent.Claude.ExtraArgs) != 1 || c.Agent.Claude.ExtraArgs[0] != "--verbose" {
+		t.Errorf("ExtraArgs = %v", c.Agent.Claude.ExtraArgs)
 	}
 	if c.Loop.MaxIterations != 10 {
 		t.Errorf("MaxIterations = %d", c.Loop.MaxIterations)
 	}
-	if c.Loop.Results.Done != "feito" {
-		t.Errorf("Done = %q (expected explicit override)", c.Loop.Results.Done)
+	if c.Spec.MarkdownBCC.Dir != "specs" {
+		t.Errorf("Spec.MarkdownBCC.Dir = %q", c.Spec.MarkdownBCC.Dir)
 	}
-	// Defaults are applied: pt-BR specs heading, partial="parcial".
-	if c.Specs.PlanHeading != "## Plano de implementação" {
-		t.Errorf("PlanHeading = %q (default not applied)", c.Specs.PlanHeading)
+	// pt-BR defaults applied for headings.
+	if c.Spec.MarkdownBCC.PlanHeading != "## Plano de implementação" {
+		t.Errorf("PlanHeading = %q (default not applied)", c.Spec.MarkdownBCC.PlanHeading)
 	}
-	if c.Loop.Results.Partial != "parcial" {
-		t.Errorf("Partial = %q (default not applied)", c.Loop.Results.Partial)
+	if c.Journal.Store != "markdown_inspec" {
+		t.Errorf("Journal.Store = %q", c.Journal.Store)
 	}
 	if c.Env.Vars["FOO"] != "bar" {
 		t.Errorf("Env.Vars[FOO] = %q", c.Env.Vars["FOO"])

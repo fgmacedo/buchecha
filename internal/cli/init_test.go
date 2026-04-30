@@ -14,7 +14,9 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:        "en",
-		Agent:           "claude",
+		SpecFormat:      "markdown_bcc",
+		JournalStore:    "markdown_inspec",
+		AgentName:       "claude",
 		Binary:          "/usr/bin/claude",
 		Model:           "claude-opus-4-7",
 		SpecsDir:        "docs/specs",
@@ -34,11 +36,17 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 	if cfg.Project.Language != "en" {
 		t.Errorf("Language = %q", cfg.Project.Language)
 	}
-	if cfg.Executor.Binary != "/usr/bin/claude" {
-		t.Errorf("Binary = %q", cfg.Executor.Binary)
+	if cfg.Spec.Format != "markdown_bcc" {
+		t.Errorf("Spec.Format = %q", cfg.Spec.Format)
 	}
-	if cfg.Executor.Model != "claude-opus-4-7" {
-		t.Errorf("Model = %q", cfg.Executor.Model)
+	if cfg.Agent.Name != "claude" {
+		t.Errorf("Agent.Name = %q", cfg.Agent.Name)
+	}
+	if cfg.Agent.Claude.Binary != "/usr/bin/claude" {
+		t.Errorf("Binary = %q", cfg.Agent.Claude.Binary)
+	}
+	if cfg.Agent.Claude.Model != "claude-opus-4-7" {
+		t.Errorf("Model = %q", cfg.Agent.Claude.Model)
 	}
 	if cfg.Loop.MaxIterations != 15 {
 		t.Errorf("MaxIterations = %d", cfg.Loop.MaxIterations)
@@ -50,10 +58,10 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 		t.Errorf("Env.Files = %v", cfg.Env.Files)
 	}
 	// Defaults are applied during Load: en plan heading should be filled.
-	if cfg.Specs.PlanHeading != "## Implementation Plan" {
-		t.Errorf("PlanHeading default not applied: %q", cfg.Specs.PlanHeading)
+	if cfg.Spec.MarkdownBCC.PlanHeading != "## Implementation Plan" {
+		t.Errorf("PlanHeading default not applied: %q", cfg.Spec.MarkdownBCC.PlanHeading)
 	}
-	if !cfg.Executor.ShouldSkipPermissions() {
+	if !cfg.Agent.Claude.ShouldSkipPermissions() {
 		t.Errorf("SkipPermissions should be true after round-trip")
 	}
 }
@@ -63,7 +71,9 @@ func TestWriteConfigTOML_SkipPermissionsFalseRoundTrips(t *testing.T) {
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:        "en",
-		Agent:           "claude",
+		SpecFormat:      "markdown_bcc",
+		JournalStore:    "markdown_inspec",
+		AgentName:       "claude",
 		Binary:          "/usr/bin/claude",
 		SpecsDir:        "docs/specs",
 		Mode:            "phase",
@@ -79,7 +89,7 @@ func TestWriteConfigTOML_SkipPermissionsFalseRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Executor.ShouldSkipPermissions() {
+	if cfg.Agent.Claude.ShouldSkipPermissions() {
 		t.Errorf("SkipPermissions should be false after explicit opt-out")
 	}
 }
@@ -89,8 +99,10 @@ func TestWriteConfigTOML_OmitsModelWhenEmpty(t *testing.T) {
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:     "pt-BR",
-		Agent:        "custom",
-		Binary:       "/path/to/custom",
+		SpecFormat:   "markdown_bcc",
+		JournalStore: "markdown_inspec",
+		AgentName:    "claude",
+		Binary:       "/path/to/claude",
 		Model:        "",
 		SpecsDir:     "docs/specs",
 		Mode:         "phase",
@@ -105,16 +117,49 @@ func TestWriteConfigTOML_OmitsModelWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "model =") {
-		t.Errorf("model line should be omitted when Model is empty:\n%s", string(b))
+	// The active agent block writes binary + extra_args + skip_permissions
+	// but should omit `model =` when empty.
+	if strings.Contains(string(b), "model = \"\"") {
+		t.Errorf("empty model should be omitted, not written as empty string:\n%s", string(b))
 	}
 
 	cfg, err := configloader.Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Specs.PlanHeading != "## Plano de implementação" {
-		t.Errorf("pt-BR PlanHeading default not applied: %q", cfg.Specs.PlanHeading)
+	if cfg.Spec.MarkdownBCC.PlanHeading != "## Plano de implementação" {
+		t.Errorf("pt-BR PlanHeading default not applied: %q", cfg.Spec.MarkdownBCC.PlanHeading)
+	}
+}
+
+func TestWriteConfigTOML_JournalFileWritesPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	in := initInput{
+		Language:        "en",
+		SpecFormat:      "markdown_bcc",
+		JournalStore:    "file",
+		JournalFilePath: ".bcc/journal.ndjson",
+		AgentName:       "claude",
+		Binary:          "/usr/bin/claude",
+		SpecsDir:        "docs/specs",
+		Mode:            "phase",
+		MaxIter:         10,
+		BranchPrefix:    "feat",
+		EnvFiles:        []string{".env"},
+	}
+	if err := WriteConfigTOML(path, in); err != nil {
+		t.Fatalf("WriteConfigTOML: %v", err)
+	}
+	cfg, err := configloader.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Journal.Store != "file" {
+		t.Errorf("Journal.Store = %q, want file", cfg.Journal.Store)
+	}
+	if cfg.Journal.File.Path != ".bcc/journal.ndjson" {
+		t.Errorf("Journal.File.Path = %q", cfg.Journal.File.Path)
 	}
 }
 

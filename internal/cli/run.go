@@ -35,6 +35,8 @@ var (
 	runOutput     string
 	runVerbosity  string
 	runNoColor    bool
+	runSpecFormat string
+	runAgentName  string
 )
 
 var runCmd = &cobra.Command{
@@ -59,6 +61,8 @@ func init() {
 	runCmd.Flags().StringVar(&runOutput, "output", OutputTUI, "render backend: tui|text|json")
 	runCmd.Flags().StringVar(&runVerbosity, "verbosity", loop.LevelInfo.String(), "event level low-water mark: error|warn|info|debug|trace")
 	runCmd.Flags().BoolVar(&runNoColor, "no-color", false, "disable color output (lipgloss styles render as plain text)")
+	runCmd.Flags().StringVar(&runSpecFormat, "spec-format", "", "active spec-format adapter (overrides [spec].format for this run)")
+	runCmd.Flags().StringVar(&runAgentName, "agent", "", "active agent adapter (overrides [agent].name for this run)")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -96,6 +100,12 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	if runMaxIter > 0 {
 		cfg.Loop.MaxIterations = runMaxIter
 	}
+	if runSpecFormat != "" {
+		cfg.Spec.Format = runSpecFormat
+	}
+	if runAgentName != "" {
+		cfg.Agent.Name = runAgentName
+	}
 
 	if err := cfg.ApplyEnv(runEnvFlags); err != nil {
 		ExitCode = loop.ExitInvalid
@@ -108,7 +118,16 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=<defaults; no .bcc.toml found>\n", specPath)
 	}
 
-	skip := cfg.Executor.ShouldSkipPermissions()
+	if cfg.Spec.Format != "markdown_bcc" {
+		ExitCode = loop.ExitInvalid
+		return fmt.Errorf("unsupported spec format %q (only markdown_bcc is wired today)", cfg.Spec.Format)
+	}
+	if cfg.Agent.Name != "claude" {
+		ExitCode = loop.ExitInvalid
+		return fmt.Errorf("unsupported agent %q (only claude is wired today)", cfg.Agent.Name)
+	}
+
+	skip := cfg.Agent.Claude.ShouldSkipPermissions()
 	if skip {
 		fmt.Fprintf(os.Stderr,
 			"bcc: WARNING: agent permission prompts are SUPPRESSED (executor.skip_permissions=true).\n"+
@@ -161,16 +180,18 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	)
 
 	executor := claude.New(claude.Config{
-		Binary:          cfg.Executor.Binary,
-		Model:           cfg.Executor.Model,
-		ExtraArgs:       cfg.Executor.ExtraArgs,
+		Binary:          cfg.Agent.Claude.Binary,
+		Model:           cfg.Agent.Claude.Model,
+		ExtraArgs:       cfg.Agent.Claude.ExtraArgs,
 		SkipPermissions: skip,
 		Stderr:          os.Stderr,
 	})
 
 	briefing := markdown_bcc.New(markdown_bcc.Config{
-		PlanHeading:    cfg.Specs.PlanHeading,
-		JournalHeading: cfg.Specs.JournalHeading,
+		PlanHeading:    cfg.Spec.MarkdownBCC.PlanHeading,
+		JournalHeading: cfg.Spec.MarkdownBCC.JournalHeading,
+		JournalStore:   cfg.Journal.Store,
+		JournalPath:    cfg.Journal.File.Path,
 		MaxIterations:  cfg.Loop.MaxIterations,
 	})
 
