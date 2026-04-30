@@ -113,6 +113,7 @@ func TestLevelOf_AllAgentKindsCovered(t *testing.T) {
 		loop.KindAssistantText,
 		loop.KindRateLimit,
 		loop.KindResultSummary,
+		loop.KindBccEvent,
 	}
 	seen := map[loop.AgentEventKind]bool{}
 	for _, k := range all {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func TestParseLine_Cases(t *testing.T) {
@@ -115,6 +116,47 @@ func TestParseLine_Cases(t *testing.T) {
 		{
 			name: "malformed json dropped",
 			line: `{"type":"system",`,
+			want: nil,
+		},
+		{
+			name: "bcc_event task_started",
+			line: `{"type":"bcc_event","event":"task_started","id":"P1.2","summary":"start it"}`,
+			want: []loop.AgentEvent{{
+				Kind: loop.KindBccEvent, At: at,
+				Bcc: &agentcontract.BccEvent{
+					Kind:    agentcontract.BccEventTaskStarted,
+					ID:      "P1.2",
+					Summary: "start it",
+					Raw: map[string]any{
+						"type":    "bcc_event",
+						"event":   "task_started",
+						"id":      "P1.2",
+						"summary": "start it",
+					},
+				},
+			}},
+		},
+		{
+			name: "bcc_event iteration_result done",
+			line: `{"type":"bcc_event","event":"iteration_result","value":"done","summary":"all green"}`,
+			want: []loop.AgentEvent{{
+				Kind: loop.KindBccEvent, At: at,
+				Bcc: &agentcontract.BccEvent{
+					Kind:    agentcontract.BccEventIterationResult,
+					Signal:  agentcontract.SignalDone,
+					Summary: "all green",
+					Raw: map[string]any{
+						"type":    "bcc_event",
+						"event":   "iteration_result",
+						"value":   "done",
+						"summary": "all green",
+					},
+				},
+			}},
+		},
+		{
+			name: "bcc_event with unknown event_kind dropped",
+			line: `{"type":"bcc_event","event":"future_kind"}`,
 			want: nil,
 		},
 	}

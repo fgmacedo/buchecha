@@ -101,6 +101,8 @@ func levelOfAgentEvent(ae AgentEvent) Level {
 		return LevelDebug
 	case KindResultSummary:
 		return LevelInfo
+	case KindBccEvent:
+		return LevelInfo
 	default:
 		return LevelInfo
 	}

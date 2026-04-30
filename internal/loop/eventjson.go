@@ -3,6 +3,8 @@ package loop
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // MarshalJSONEvent serialises ev into one NDJSON line per the schema
@@ -128,8 +130,39 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 				"duration_ms":                 ae.Done.DurationMS,
 			}
 		}
+	case KindBccEvent:
+		if ae.Bcc != nil {
+			bcc := map[string]any{
+				"event_kind": bccEventKindString(ae.Bcc.Kind),
+			}
+			if ae.Bcc.ID != "" {
+				bcc["id"] = ae.Bcc.ID
+			}
+			if ae.Bcc.Summary != "" {
+				bcc["summary"] = ae.Bcc.Summary
+			}
+			if ae.Bcc.Signal != 0 {
+				bcc["signal"] = ae.Bcc.Signal.String()
+			}
+			out["bcc"] = bcc
+		}
 	}
 	return out
+}
+
+func bccEventKindString(k agentcontract.BccEventKind) string {
+	switch k {
+	case agentcontract.BccEventTaskStarted:
+		return "task_started"
+	case agentcontract.BccEventTaskCompleted:
+		return "task_completed"
+	case agentcontract.BccEventIterationResult:
+		return "iteration_result"
+	case agentcontract.BccEventProgressTick:
+		return "progress_tick"
+	default:
+		return "unknown"
+	}
 }
 
 func formatAt(t time.Time) string {

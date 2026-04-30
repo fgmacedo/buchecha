@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // Compile-time check that *Executor satisfies loop.Executor.
@@ -207,9 +208,27 @@ func parseLine(raw []byte, at time.Time) []loop.AgentEvent {
 		return parseRateLimit(raw, at)
 	case "result":
 		return parseResult(raw, at)
+	case "bcc_event":
+		return parseBccEvent(raw, at)
 	default:
 		return nil
 	}
+}
+
+// parseBccEvent recognizes the canonical bcc wire-protocol sentinel and
+// forwards a normalized BccEvent on the loop's event channel. The wire
+// protocol is format-agnostic, so the parsing lives in agentcontract;
+// this function is just the executor-side hook.
+func parseBccEvent(raw []byte, at time.Time) []loop.AgentEvent {
+	bcc, ok := agentcontract.ParseLine(raw)
+	if !ok {
+		return nil
+	}
+	return []loop.AgentEvent{{
+		Kind: loop.KindBccEvent,
+		At:   at,
+		Bcc:  &bcc,
+	}}
 }
 
 func parseSystem(raw []byte, at time.Time) []loop.AgentEvent {

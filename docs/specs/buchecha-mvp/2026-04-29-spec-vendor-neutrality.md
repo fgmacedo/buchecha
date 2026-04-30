@@ -359,6 +359,12 @@ Reverse the work and reopen the design if:
 
 Most recent entries on top. Contract in [bcc-markdown contract](#bcc-markdown-contract).
 
+### 2026-04-30 03:35, plumb agentcontract.ParseLine in executor
+
+Added a `case "bcc_event":` arm in the claude executor's type switch (`internal/executor/claude/claude.go`). Unknown lines that match the `bcc_event` sentinel route through `agentcontract.ParseLine`, producing a normalized `loop.AgentEvent` with the new `KindBccEvent` and a populated `Bcc *agentcontract.BccEvent`. Aditive change; no consumer of `KindBccEvent` yet (LoopDecider still consumes `spec.Result`).
+
+- **Decisions**: `AgentEvent` gained a `Bcc` field rather than a separate event union arm to keep the wire-event flow inside the existing `AgentEventReceived` -> level filter -> JSON / TUI pipeline. Verbosity defaults to `LevelInfo`. NDJSON shape: `{"type":"agent_event","kind":"bcc_event","bcc":{"event_kind":"...","id":"...","signal":"...","summary":"..."}}`. Fields are omitted when empty so existing tests' byte-for-byte outputs are unaffected.
+
 ### 2026-04-30 03:10, extract agentcontract package; drop AgentEvents port
 
 Reviewer pointed out that the wire protocol (markdown describing `bcc_event`, plus `BccEvent`/`Signal`/`BccEventKind` types and `ParseLine`) is bcc-level, not per-format. Every format adapter would emit and parse the same shape; making it format-specific was over-design. Extracted to `internal/loop/agentcontract/`: types + `ParseLine` + `Partials() *template.Template` exposing the three shared markdown blocks (`wire_protocol.md`, `absolute_restrictions.md`, `working_tree.md`). The `AgentEvents` port disappeared along with its per-format implementations.

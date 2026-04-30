@@ -3,6 +3,7 @@ package loop
 import (
 	"time"
 
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/spec"
 )
 
@@ -19,6 +20,9 @@ const (
 	KindAssistantText AgentEventKind = "assistant_text"
 	KindRateLimit     AgentEventKind = "rate_limit"
 	KindResultSummary AgentEventKind = "result_summary"
+	// KindBccEvent carries a parsed bcc_event sentinel from the agent's
+	// stdout (canonical wire protocol; see internal/loop/agentcontract).
+	KindBccEvent AgentEventKind = "bcc_event"
 )
 
 // AgentEvent is a normalized event emitted by an Executor adapter. Only
@@ -27,12 +31,13 @@ type AgentEvent struct {
 	Kind AgentEventKind
 	At   time.Time
 
-	Init  *InitInfo          // KindInit
-	Tool  *ToolCallInfo      // KindToolUse, KindToolResult
-	Text  string             // KindThinking, KindAssistantText
-	Usage *UsageInfo         // KindAssistantText only: per-message token usage
-	Rate  *RateLimitInfo     // KindRateLimit
-	Done  *ResultSummaryInfo // KindResultSummary
+	Init  *InitInfo               // KindInit
+	Tool  *ToolCallInfo           // KindToolUse, KindToolResult
+	Text  string                  // KindThinking, KindAssistantText
+	Usage *UsageInfo              // KindAssistantText only: per-message token usage
+	Rate  *RateLimitInfo          // KindRateLimit
+	Done  *ResultSummaryInfo      // KindResultSummary
+	Bcc   *agentcontract.BccEvent // KindBccEvent
 }
 
 // UsageInfo carries per-message token usage attached to assistant text
