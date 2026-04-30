@@ -3,14 +3,13 @@
 // Ports (interfaces) are declared here, in the consumer package, per Go
 // convention and the hexagonal-light layout in CLAUDE.md. Adapters that
 // implement them live in sibling packages: executor/<flavor>, git/<flavor>,
-// specreader/<flavor>, journal/<flavor>.
+// specreader/<flavor>.
 //
 // Loop itself is implemented in loop.go.
 package loop
 
 import (
 	"context"
-	"time"
 )
 
 // Executor runs the configured agent against a prompt and emits a stream
@@ -233,31 +232,4 @@ type BccEvent struct {
 // falls through to its existing handling.
 type AgentEvents interface {
 	ParseLine(line []byte) (BccEvent, bool)
-}
-
-// JournalEntry is a normalized journal record. The format adapter owns
-// the on-disk shape (markdown block in the spec, NDJSON sidecar,
-// SQLite row); JournalEntry is the in-memory carrier between adapter
-// and consumer.
-type JournalEntry struct {
-	At      time.Time
-	Phase   string
-	Signal  Signal
-	Summary string
-	// Raw preserves adapter-specific payload for round-tripping.
-	Raw map[string]any
-}
-
-// JournalReader exposes the most recent journal entry to the TUI's
-// optional viewer. bcc does not write journal entries: under the
-// bcc-markdown contract the agent owns the write side, instructed by
-// the AgentBriefing prompt. bcc does not read the journal for control
-// flow either; signal comes from the bcc_event wire protocol. This
-// port is therefore read-only and exists solely for display.
-//
-// Implementations are owned by the journal-store adapter selected by
-// [journal].store. The no-op "none" store returns ok=false from Latest
-// so the TUI viewer hides the binding.
-type JournalReader interface {
-	Latest(ctx context.Context) (entry JournalEntry, ok bool, err error)
 }
