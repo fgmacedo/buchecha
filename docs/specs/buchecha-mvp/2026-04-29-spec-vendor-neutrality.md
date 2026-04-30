@@ -374,6 +374,12 @@ Reverse the work and reopen the design if:
 
 Most recent entries on top. Contract in [bcc-markdown contract](#bcc-markdown-contract).
 
+### 2026-04-30 02:30, author contract.md and the markdown_bcc adapter
+
+Created `internal/format/markdown_bcc/` with the embedded `contract.md` (Go `text/template`), the `Reader` struct implementing `loop.AgentBriefing.BuildPrompt` and `loop.AgentEvents.ParseLine`, and golden-output tests. The contract is wire-protocol-first: the agent reads the spec from `SpecPath` itself; bcc never injects content. Mode switch (`loop` vs `single-shot`) and journal-store branch (`markdown_inspec`/`file`/`none`) are template conditionals on the `Mode` and `JournalStore` template vars.
+
+- **Decisions**: The contract opens by claiming primacy over project-local instructions (`CLAUDE.md`, `AGENTS.md`, custom skills) on points where they conflict, except absolute restrictions which nothing may relax. This is the assertive tone required by the [framework boundary](#framework-and-user-space-boundary). Wire protocol's emission point for `iteration_result` is "exactly once, immediately before exit"; missing or malformed = bcc exits invalid (per [Discovery strategy](#discovery-strategy)). The contract is not yet wired into Loop; Loop still uses `internal/loop/prompt.go`. Wiring + retiring the legacy template comes next, alongside the executor's `bcc_event` plumbing.
+
 ### 2026-04-30 01:55, rename internal/specreader → internal/format
 
 `specreader` was the name of what the package used to do. The package now contains the format adapter (`AgentBriefing` template + contract, `AgentEvents` parser, per-format Config) and reads nothing. Renamed to `internal/format/<name>/`, paralleling `internal/executor/<name>/`. The embedded contract file is `contract.md`, not `prompt.md`, because it is the agent contract, not just a prompt template.
