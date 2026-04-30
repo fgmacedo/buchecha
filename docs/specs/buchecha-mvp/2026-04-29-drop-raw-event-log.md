@@ -1,7 +1,7 @@
 ---
 title: "Drop the per-iteration raw event log"
 type: spec
-status: draft
+status: implemented
 authors:
   - Fernando Macedo
 reviewers: []

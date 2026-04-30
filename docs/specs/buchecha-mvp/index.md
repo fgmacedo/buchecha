@@ -88,7 +88,7 @@ graph LR
 | Phase 6+ | (placeholder) | future | Self-hosting, multi-agent support, PRD→Spec→bcc flow, releases |
 | [2026-04-29-spec-vendor-neutrality.md](./2026-04-29-spec-vendor-neutrality.md) | spec | draft | Carve `internal/spec/` out of the domain; signal-shaped `SpecReader` and `JournalStore` ports so other formats (open-spec, spec-kit, bmad) plug in as adapters. Floating priority. |
 | [2026-04-29-skill-spec-authoring.md](./2026-04-29-skill-spec-authoring.md) | spec | draft | Author-side skill: active-phase scoping, `Relevant files` blocks, journal Context-summary block. Floating priority. |
-| [2026-04-29-drop-raw-event-log.md](./2026-04-29-drop-raw-event-log.md) | spec | draft | Drop the per-iteration raw event log file (`.bcc/logs/...`), `BCC_JSONL_PATH`, `ExecResult.LogPath`, and the unused `bcc watch` stub. Floating priority. |
+| [2026-04-29-drop-raw-event-log.md](./2026-04-29-drop-raw-event-log.md) | spec | implemented | Drop the per-iteration raw event log file (`.bcc/logs/...`), `BCC_JSONL_PATH`, `ExecResult.LogPath`, and the unused `bcc watch` stub. |
 
 ## Cross-cutting decisions
 
