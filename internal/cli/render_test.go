@@ -177,6 +177,36 @@ func TestDispatchEvents_RejectsUnknownMode(t *testing.T) {
 	}
 }
 
+// TestDispatchEvents_TextJSONExitWithoutInput is the parity regression
+// for P2.11.9: TUI mode parks the user at a session menu when the loop
+// finishes, but text and json modes must keep their existing
+// exit-on-LoopFinished behaviour because their consumers (CI, parent
+// bcc, log aggregators) expect the process to terminate. The drainer
+// goroutines must drain and return without reading stdin or otherwise
+// blocking on user input.
+func TestDispatchEvents_TextJSONExitWithoutInput(t *testing.T) {
+	for _, mode := range []string{OutputText, OutputJSON} {
+		t.Run(mode, func(t *testing.T) {
+			events, drained, err := dispatchEvents(mode, loop.LevelInfo)
+			if err != nil {
+				t.Fatalf("dispatchEvents(%s): %v", mode, err)
+			}
+			// Push a terminal LoopFinished so the drainer sees one
+			// every event kind a real run would emit, then close the
+			// channel to signal end of stream. No stdin is provided.
+			events <- loop.IterationStarted{Index: 1, MaxIter: 1}
+			events <- loop.LoopFinished{Reason: "spec done", ExitCode: 0}
+			close(events)
+			select {
+			case <-drained:
+			case <-time.After(2 * time.Second):
+				t.Fatalf("backend %s did not drain within 2s; "+
+					"likely waiting on user input", mode)
+			}
+		})
+	}
+}
+
 func TestValidOutputMode(t *testing.T) {
 	cases := []struct {
 		s    string

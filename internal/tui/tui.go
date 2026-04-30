@@ -83,6 +83,18 @@ type Model struct {
 	gitCtx     context.Context
 	specCfg    SpecConfig
 
+	// newEvents builds a fresh loop, spawns its goroutine, and returns
+	// the new events channel. Invoked when the user presses [r] in the
+	// session menu. Nil disables the resume action (e.g., in tests that
+	// only exercise rendering).
+	newEvents func() <-chan loop.Event
+
+	// program references the bubbletea program that hosts this Model.
+	// Required for the [e] edit action: ReleaseTerminal / RestoreTerminal
+	// are program-scoped in bubbletea v2. Wired via SetProgram after
+	// tea.NewProgram returns; nil disables the edit action.
+	program *tea.Program
+
 	// Panels.
 	header   header
 	now      nowPanel
@@ -98,13 +110,34 @@ type Model struct {
 	helpVisible    bool   // true while the ? overlay is up
 	runBaselineSHA string // captured from the first IterationStarted
 
+	// Last per-iteration result, latched onto the session badge when the
+	// loop finishes. Today this is spec.Result; once
+	// spec-vendor-neutrality lands the field becomes a format-neutral
+	// Signal sourced from the SpecReader port.
+	lastIterResult spec.Result
+
+	// Session-mode state (P2.11). sessionMode latches when LoopFinished
+	// arrives with a reason other than "user cancelled" or "fatal";
+	// sessionReason carries the LoopFinished.Reason for the badge label.
+	sessionMode    bool
+	sessionReason  string
+	sessionExitMsg string // best-effort hint surfaced after a failed [e] edit
+
 	// Keybindings + help renderer (single source of truth).
-	keys     keyMap
-	helpView help.Model
+	keys        keyMap
+	sessionKeys sessionKeyMap
+	helpView    help.Model
 
 	// Terminal state.
 	finished  bool // true once the loop emitted LoopFinished or events closed
 	cancelled bool // true once user pressed q or Ctrl+C
+}
+
+// SetProgram wires the bubbletea program reference into the Model so the
+// [e] edit action can call ReleaseTerminal / RestoreTerminal. Called by
+// the host (cmd/run.go) after tea.NewProgram returns.
+func (m *Model) SetProgram(p *tea.Program) {
+	m.program = p
 }
 
 // Options bundles construction parameters for New. Optional fields may
@@ -120,6 +153,11 @@ type Options struct {
 	GitProbe   GitProbe
 	GitCtx     context.Context
 	SpecConfig SpecConfig
+
+	// NewEvents is the host's factory for a fresh loop run. Invoked when
+	// the user presses [r] in the session menu (P2.11.5). Nil disables
+	// the resume action.
+	NewEvents func() <-chan loop.Event
 }
 
 // New returns a Model wired to the given event channel and cancel
@@ -148,10 +186,12 @@ func New(opts Options) Model {
 			currentPhaseIdx: -1,
 			bar:             newProgressBar(),
 		},
-		actions:  newActionsPanel(),
-		now:      newNowPanel(),
-		keys:     defaultKeyMap(),
-		helpView: help.New(),
+		actions:     newActionsPanel(),
+		now:         newNowPanel(),
+		keys:        defaultKeyMap(),
+		sessionKeys: defaultSessionKeyMap(),
+		helpView:    help.New(),
+		newEvents:   opts.NewEvents,
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
@@ -189,14 +229,56 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.sessionMode {
+			return m.handleSessionKey(msg)
+		}
 		return m.handleKey(msg)
 
 	case eventMsg:
 		if msg.closed {
 			m.finished = true
+			// In session mode the loop has terminated but bcc remains
+			// alive so the user can resume / edit / quit. Stay parked
+			// instead of quitting bubbletea.
+			if m.sessionMode {
+				return m, nil
+			}
 			return m, tea.Quit
 		}
 		return m.handleLoopEvent(msg.ev)
+
+	case restartLoopMsg:
+		// User pressed [r] in the session menu: ask the host's factory
+		// for a freshly built loop and rebind the bridge channel.
+		if m.newEvents == nil {
+			return m, nil
+		}
+		ch := m.newEvents()
+		return m, func() tea.Msg { return rebindEventsMsg{events: ch} }
+
+	case rebindEventsMsg:
+		m.events = msg.events
+		m.sessionMode = false
+		m.sessionReason = ""
+		m.sessionExitMsg = ""
+		m.lastIterResult = spec.ResultUnknown
+		m.finished = false
+		// Iteration counter resets per session; run-local baseline SHA
+		// is preserved (the run, not the iteration, is the baseline).
+		m.header.iter = 0
+		m.now.onIterStarted()
+		return m, readEventCmd(m.events)
+
+	case editorFinishedMsg:
+		if msg.err != nil {
+			m.sessionExitMsg = "editor: " + msg.err.Error()
+		} else {
+			m.sessionExitMsg = ""
+		}
+		// Re-arm the spinner: ReleaseTerminal stalled the bubbletea
+		// renderer, so the previously scheduled spinner.Tick may have
+		// been swallowed.
+		return m, m.now.spinner.Tick
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -260,6 +342,36 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleSessionKey implements the session-mode keyboard contract: [r]
+// dispatches restartLoopMsg (the host's factory builds a fresh loop and
+// returns a new events channel via rebindEventsMsg); [e] suspends the
+// terminal and runs $EDITOR on the spec; [q] / Ctrl+C exit immediately
+// (the loop is already done, nothing to cancel). The `?` overlay still
+// works: pressing `?` flips helpVisible, the View routes through the
+// existing helpKeyMap renderer, and pressing `?` again returns to the
+// frozen dashboard plus session menu.
+func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.sessionKeys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.sessionKeys.Resume):
+		if m.newEvents == nil {
+			return m, nil
+		}
+		return m, func() tea.Msg { return restartLoopMsg{} }
+	case key.Matches(msg, m.sessionKeys.Edit):
+		if m.program == nil {
+			m.sessionExitMsg = "editor: tea.Program reference missing"
+			return m, nil
+		}
+		return m, editSpecCmd(m.program, m.header.specPath)
+	case key.Matches(msg, m.keys.Help):
+		m.helpVisible = !m.helpVisible
+		return m, nil
+	}
+	return m, nil
+}
+
 // handleLoopEvent routes one event to the relevant panels and
 // schedules the next read.
 func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
@@ -290,6 +402,7 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.progress.onIterationFinished(time.Duration(e.DurationMS) * time.Millisecond)
 		m.header.onAny(e.At)
 		m.health.onAny(e.At)
+		m.lastIterResult = e.Result
 		// Release the gate (no-op if paused).
 		if m.gate != nil {
 			m.gate.IterDone()
@@ -302,8 +415,24 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.finished = true
 		m.header.onAny(e.At)
 		m.health.onAny(e.At)
+		// In TUI mode, the loop's terminal Result is a signal that the
+		// human is needed, not a process exit. Latch session mode so
+		// the dashboard freezes with a menu (P2.11). Two reasons bypass
+		// the menu and let the program quit on the next channel close:
+		//   - "user cancelled": Ctrl+C during run; the user already chose
+		//     to leave, no menu;
+		//   - "fatal": invalid config / executor missing; surface the
+		//     error and exit.
+		switch e.Reason {
+		case "user cancelled", "fatal":
+			// fall through to channel-close → tea.Quit
+		default:
+			m.sessionMode = true
+			m.sessionReason = e.Reason
+		}
 		// Drain remaining messages until the channel closes; tea.Quit
-		// via the next eventMsg{closed: true} from readEventCmd.
+		// via the next eventMsg{closed: true} from readEventCmd unless
+		// sessionMode latched.
 	case loop.AgentEventReceived:
 		m.now.onAgentEvent(e.Event)
 		m.health.onAgentEvent(e.Event)
@@ -338,6 +467,13 @@ func (m Model) View() tea.View {
 // call m.View().Content directly without losing the AltScreen / mouse
 // metadata.
 func (m Model) viewContent() string {
+	// Session mode freezes the dashboard with a menu of next steps; it
+	// must take precedence over the bare-string finished branches below
+	// (which only fire for "user cancelled" / "fatal" reasons that bypass
+	// session mode by design).
+	if m.sessionMode {
+		return m.viewSession()
+	}
 	if m.finished && m.cancelled {
 		return "bcc: cancelled\n"
 	}
@@ -349,12 +485,40 @@ func (m Model) viewContent() string {
 		return renderHelpOverlay(m.helpView, m.keys)
 	}
 
+	return m.viewDashboard(false)
+}
+
+// viewSession renders the dashboard frozen behind a session menu. The
+// header switches from the alive-dot badge to the idle-state badge per
+// P2.11.7. The `?` overlay still toggles the help screen on top of the
+// session frame; pressing `?` again returns to the menu.
+func (m Model) viewSession() string {
+	if m.helpVisible {
+		return renderHelpOverlay(m.helpView, m.sessionKeys)
+	}
+	dashboard := m.viewDashboard(true)
+	status := sessionStatus(m.sessionReason, m.lastIterResult)
+	menu := renderSessionMenu(m.helpView, m.sessionKeys, status)
+	hint := ""
+	if m.sessionExitMsg != "" {
+		hint = "  " + theme.warn.Render(m.sessionExitMsg) + "\n"
+	}
+	return dashboard + menu + hint
+}
+
+// viewDashboard composes the five-panel dashboard body. session toggles
+// the header's alive dot for the session-state badge.
+func (m Model) viewDashboard(session bool) string {
 	lay := m.activeLayout()
 	now := time.Now()
 
+	headerView := m.header.view(now, lay.headerW)
+	if session {
+		headerView = m.header.viewSession(sessionStatus(m.sessionReason, m.lastIterResult))
+	}
 	headerBox := box(
 		m.header.titleText(now),
-		m.header.view(now, lay.headerW),
+		headerView,
 		lay.headerW,
 	)
 	nowBox := box("now", m.now.view(now, lay.nowW), lay.nowW)
@@ -364,6 +528,9 @@ func (m Model) viewContent() string {
 	riskBox := box("if you close now", m.risk.view(now, lay.riskW), lay.riskW)
 	actionsBox := box("recent actions", m.actions.view(lay.actionsW), lay.actionsW)
 	footer := m.helpView.View(m.keys)
+	if session {
+		footer = m.helpView.View(m.sessionKeys)
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		headerBox,

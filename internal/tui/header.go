@@ -63,6 +63,24 @@ func (h header) view(now time.Time, _ int) string {
 		theme.subtle.Render(h.specPath), dot, pauseTag)
 }
 
+// viewSession renders the session-mode body line: spec path plus the
+// idle-state badge that replaces the alive dot in TUI session mode
+// (P2.11.7). The Journal binding is omitted because the journal viewer
+// is carved out to spec-vendor-neutrality; the badge advertises only
+// the wired-up actions.
+func (h header) viewSession(status string) string {
+	badge := fmt.Sprintf("idle (%s) %s r resume %s e edit %s q exit",
+		status,
+		theme.subtle.Render("•"),
+		theme.subtle.Render("•"),
+		theme.subtle.Render("•"),
+	)
+	return fmt.Sprintf("%s  %s",
+		theme.subtle.Render(h.specPath),
+		theme.warn.Render(badge),
+	)
+}
+
 // aliveDot maps the time since the last event to a coloured glyph.
 // Green ●  < 30s, yellow ●  < 2m, red ●  ≥ 2m, hollow ○ when no event
 // has arrived yet (the loop just started).

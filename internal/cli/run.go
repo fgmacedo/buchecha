@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sync"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -186,7 +187,18 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	}
 
 	if runOutput == OutputTUI {
-		return runWithTUI(ctx, cancel, l, specPath, branchHint, verbosity, runNoColor)
+		buildLoop := func() *loop.Loop {
+			return &loop.Loop{
+				SpecPath:   specPath,
+				Config:     cfg,
+				Executor:   executor,
+				Git:        gitProbe,
+				SpecReader: specReader,
+				Extra:      runExtra,
+				SingleShot: runSingleShot,
+			}
+		}
+		return runWithTUI(ctx, cancel, buildLoop, specPath, branchHint, verbosity, runNoColor)
 	}
 
 	events, drained, err := dispatchEvents(runOutput, verbosity)
@@ -210,12 +222,20 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 // the TUI Model: the user toggles paused via the keyboard, the gate
 // posts release tokens, and the Loop blocks on PauseGate before each
 // iteration after the first.
-func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, specPath, branch string, verbosity loop.Level, noColor bool) error {
+//
+// buildLoop is a factory that returns a fresh loop.Loop on every call.
+// The first call drives the inner loop; subsequent calls fire when the
+// user resumes the run from the post-loop session menu (P2.11). The
+// factory captures all loop construction parameters in its closure so
+// the host needs no other knowledge to spawn replacement runs.
+func runWithTUI(ctx context.Context, cancel context.CancelFunc, buildLoop func() *loop.Loop, specPath, branch string, verbosity loop.Level, noColor bool) error {
 	// The TUI ignores --verbosity per the Phase 2 spec ("TUI panels are
 	// already curated"); raw is consumed directly. The verbosity arg is
 	// kept on the function signature so callers do not branch.
 	_ = verbosity
-	raw := make(chan loop.Event, 256)
+
+	first := buildLoop()
+	gate := tui.NewGate()
 
 	// In TUI mode, the loop's milestone slog calls (`loop start`,
 	// `iter start`, ...) are duplicated as IterationStarted /
@@ -224,26 +244,71 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 	// duplicate messages never reach stderr; otherwise they smear into
 	// the alt-screen scrollback and become visible when the program
 	// exits.
-	l.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	gate := tui.NewGate()
-	l.PauseGate = gate.Chan()
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	first.Logger = discard
+	first.PauseGate = gate.Chan()
 
 	specCfg := tui.SpecConfig{
-		PlanHeading:    l.Config.Specs.PlanHeading,
-		JournalHeading: l.Config.Specs.JournalHeading,
-		ResultKeyword:  l.Config.Specs.ResultKeyword,
+		PlanHeading:    first.Config.Specs.PlanHeading,
+		JournalHeading: first.Config.Specs.JournalHeading,
+		ResultKeyword:  first.Config.Specs.ResultKeyword,
 		ResultVocab: spec.ResultVocab{
-			OK:      l.Config.Loop.Results.OK,
-			Partial: l.Config.Loop.Results.Partial,
-			Done:    l.Config.Loop.Results.Done,
-			Blocked: l.Config.Loop.Results.Blocked,
-			Review:  l.Config.Loop.Results.Review,
+			OK:      first.Config.Loop.Results.OK,
+			Partial: first.Config.Loop.Results.Partial,
+			Done:    first.Config.Loop.Results.Done,
+			Blocked: first.Config.Loop.Results.Blocked,
+			Review:  first.Config.Loop.Results.Review,
 		},
 	}
 
-	gitProbeAdapter, _ := l.Git.(tui.GitProbe)
-	specReaderAdapter, _ := l.SpecReader.(tui.SpecReader)
+	gitProbeAdapter, _ := first.Git.(tui.GitProbe)
+	specReaderAdapter, _ := first.SpecReader.(tui.SpecReader)
+
+	type runResult struct {
+		code int
+		err  error
+	}
+	var (
+		resultMu     sync.Mutex
+		latestResult runResult
+	)
+
+	// runOne spawns one loop in a goroutine. The result is stashed in
+	// latestResult under resultMu; the host returns it once the
+	// bubbletea program exits (after [q] / Ctrl+C in session mode, or
+	// after a "user cancelled" / "fatal" LoopFinished closes the
+	// channel and Quit fires).
+	runOne := func(l *loop.Loop, events chan<- loop.Event) {
+		defer func() {
+			if r := recover(); r != nil {
+				resultMu.Lock()
+				latestResult = runResult{
+					code: loop.ExitInvalid,
+					err:  fmt.Errorf("loop panicked: %v\n%s", r, debug.Stack()),
+				}
+				resultMu.Unlock()
+			}
+		}()
+		code, err := l.Run(ctx, events)
+		resultMu.Lock()
+		latestResult = runResult{code: code, err: err}
+		resultMu.Unlock()
+	}
+
+	// newEvents builds the next loop run on demand: invoked by the
+	// Model when the user presses [r] in the session menu. Each call
+	// produces a fresh events channel that the Model rebinds to its
+	// bridge cmd.
+	newEvents := func() <-chan loop.Event {
+		ch := make(chan loop.Event, 256)
+		l := buildLoop()
+		l.Logger = discard
+		l.PauseGate = gate.Chan()
+		go runOne(l, ch)
+		return ch
+	}
+
+	raw := make(chan loop.Event, 256)
 
 	model := tui.New(tui.Options{
 		Events:     raw,
@@ -251,11 +316,12 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 		Gate:       gate,
 		SpecPath:   specPath,
 		Branch:     branch,
-		MaxIter:    l.Config.Loop.MaxIterations,
+		MaxIter:    first.Config.Loop.MaxIterations,
 		SpecReader: specReaderAdapter,
 		GitProbe:   gitProbeAdapter,
 		GitCtx:     ctx,
 		SpecConfig: specCfg,
+		NewEvents:  newEvents,
 	})
 	// WithoutSignalHandler: signal.NotifyContext in RunE owns SIGINT /
 	// SIGTERM; bubbletea must not install a competing handler. Alt-screen
@@ -273,6 +339,10 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 		progOpts = append(progOpts, tea.WithColorProfile(colorprofile.NoTTY))
 	}
 	program := tea.NewProgram(model, progOpts...)
+	// SetProgram wires the program reference into the model so the
+	// session menu's [e] action can call ReleaseTerminal /
+	// RestoreTerminal around the $EDITOR invocation.
+	model.SetProgram(program)
 
 	// Belt-and-braces terminal restoration: program.Run() restores the
 	// terminal during normal exit and bubbletea installs its own panic
@@ -288,38 +358,17 @@ func runWithTUI(ctx context.Context, cancel context.CancelFunc, l *loop.Loop, sp
 		}
 	}()
 
-	type runResult struct {
-		code int
-		err  error
-	}
-	runCh := make(chan runResult, 1)
-	go func() {
-		// Convert a loop-goroutine panic into an error on runCh and
-		// signal the program to quit. Without this, l.Run panicking
-		// would crash the process before bubbletea restores the
-		// terminal, leaving the user in alt-screen with no shell prompt.
-		defer func() {
-			if r := recover(); r != nil {
-				program.Quit()
-				runCh <- runResult{
-					code: loop.ExitInvalid,
-					err:  fmt.Errorf("loop panicked: %v\n%s", r, debug.Stack()),
-				}
-			}
-		}()
-		code, err := l.Run(ctx, raw)
-		runCh <- runResult{code: code, err: err}
-	}()
+	go runOne(first, raw)
 
 	if _, err := program.Run(); err != nil {
 		cancel()
-		<-runCh
 		return err
 	}
 
-	res := <-runCh
-	ExitCode = res.code
-	return res.err
+	resultMu.Lock()
+	defer resultMu.Unlock()
+	ExitCode = latestResult.code
+	return latestResult.err
 }
 
 func validOutputMode(s string) bool {
