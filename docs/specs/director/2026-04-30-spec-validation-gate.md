@@ -21,13 +21,15 @@ comments: true
 
 ## Summary
 
-Before bcc runs a single iteration, a Director pass reads the spec end-to-end and produces a structured **validation report**: is this spec executable, what would a careful engineer flag as missing or ambiguous, and where do cross-cutting concerns (observability, security, testability, performance) need spelling out. The user sees the report, can apply suggested patches, and proceeds with confidence (or fixes the spec first). This is the cheapest Director layer to ship and the one that prevents the largest class of failures: starting the loop on a spec that was never going to converge.
+Before the Director plans, it asks: is this spec plannable? A validation pass reads the spec end-to-end and produces a structured **validation report**: are acceptance criteria concrete, where is intent ambiguous, which cross-cutting concerns (observability, security, testability, performance) need spelling out. Inside `bcc run`, validation is the first step of the Director-led flow and runs autonomously: blockers abort the run with the report visible; warnings and suggestions are persisted to the journal and execution proceeds. As a standalone command, `bcc validate <spec>` lets authors check a spec at edit time and gates CI on PRs that touch specs. This is the cheapest Director layer and the one that prevents the largest class of failures: starting the loop on a spec that was never going to converge.
 
 ## Problem
 
 ### Context
 
 Today bcc trusts the spec. The Executor reads it and starts. If the spec has open questions, missing acceptance criteria, or under-specified cross-cutting concerns, the Executor improvises (poorly), or stalls, or completes phases that the user later realizes did not solve the problem. The cost of a bad spec is paid in iterations, not at edit time.
+
+The Director, when enabled, is the role that turns the spec into a typed plan: a DAG of phases with explicit dependencies and acceptance criteria, against which progress can be measured. That work is only as good as the spec it consumes. Validation is the gate that decides whether the spec is ready to be planned, or whether it needs the author's attention first.
 
 Spec quality is also unevenly enforced. Authors who run bcc daily develop intuition for what "executable spec" means. New authors do not. The threshold of "good enough to run" is implicit and project-specific.
 
@@ -40,30 +42,31 @@ Spec quality is also unevenly enforced. Authors who run bcc daily develop intuit
 
 ### Impact of not solving
 
-bcc remains a tool that runs whatever you give it. The bar for "good spec" stays fuzzy and learned by burning iterations. New users churn at first contact with their first long run.
+The Director plans on a foundation it cannot trust. The MVP loop runs whatever you give it. The bar for "good spec" stays fuzzy and learned by burning iterations. New users churn at first contact with their first long run.
 
 ## Goals
 
 ### What we want to achieve
 
-- [ ] G1: A pre-flight `bcc validate <spec>` (and `bcc run --validate-only`) that surfaces concrete, actionable issues against the spec before the loop runs.
-- [ ] G2: Issues categorized so the user can triage: blockers (must fix), warnings (should fix), suggestions (consider).
-- [ ] G3: For each issue, an optional **suggested patch** the user can preview and apply with one keystroke.
-- [ ] G4: Exit codes suitable for CI: zero on clean, non-zero on blockers, configurable threshold for warnings.
-- [ ] G5: When the user runs `bcc run` with the Director enabled, validation is the first step, with a single confirmation before execution proceeds.
+- [ ] G1: Inside `bcc run` with the Director enabled, validation runs as the first step of the autonomous flow. Blockers abort the run before any Executor session starts and surface the report; warnings and suggestions are persisted to the journal and execution proceeds without prompting the user.
+- [ ] G2: A standalone `bcc validate <spec>` surfaces concrete, actionable issues against the spec at edit time. Same engine, same report, no execution side-effect.
+- [ ] G3: Issues categorized so the author can triage: blockers (must fix), warnings (should fix), suggestions (consider). Each issue is concrete enough to act on without re-reading the whole spec.
+- [ ] G4: Exit codes suitable for CI: zero on clean, non-zero on threshold-or-worse issues, threshold configurable.
+- [ ] G5: Validation results are cached per spec hash; `--resume` and re-runs against an unmodified spec skip the gate.
 
 ### Success metrics
 
 | Metric | Current | Target |
 |---|---|---|
-| Specs that fail mid-execution due to ambiguity | qualitative; high | reduced by half on opt-in users |
+| Specs that fail mid-execution due to ambiguity | qualitative; high | reduced by half on Director-enabled runs |
 | Time from "draft spec" to "spec the author would run on bcc with confidence" | hours, multiple revisions | one validation pass, often no revisions |
-| First-run convergence rate (no human intervention until phase done) | baseline TBD | +20% on validated specs |
+| First-run convergence rate (no human intervention until phase done) | baseline TBD | +20% on Director-validated specs |
 | Author-perceived "did the validator save me time?" | n/a | majority yes after three uses |
 
 ### Non-goals
 
-- We do **not** auto-fix the spec without user approval. Suggested patches are previewed; the user accepts or rejects.
+- We do **not** edit the user's spec. Spec management is the user's responsibility; bcc is an orchestrator for execution. The validation report describes issues; the author writes the fix.
+- We do **not** prompt the user to "press P to proceed" on clean specs. Autonomous execution is the default behavior of `bcc run`; validation is invisible when there are no blockers.
 - We do **not** validate against project-specific style (lint rules, naming conventions). That is author skill territory.
 - We do **not** read the codebase during validation. The Director judges the spec on its own terms; codebase-aware validation is a separate concern (PRD 2).
 - We do **not** ship a static linter. Validation is LLM-based; deterministic linters are complementary, not substitutes.
@@ -73,24 +76,22 @@ bcc remains a tool that runs whatever you give it. The bar for "good spec" stays
 
 | Segment | Description | Estimated volume |
 |---|---|---|
-| Spec authors (existing bcc users) | Author runs bcc on their own spec; wants pre-flight assurance | Primary |
+| Spec authors (existing bcc users) | Author runs `bcc validate` on their own spec at edit time; Director-led `bcc run` uses the same gate | Primary |
 | New bcc users | First exposure; the report teaches them what a good spec looks like | High value, low volume initially |
-| CI users | Run validation on PRs that touch specs; gate merge on clean validation | Speculative; ship if signal warrants |
+| CI users | Run `bcc validate` on PRs that touch specs; gate merge on clean validation | Secondary; ships with the standalone command |
 
 ## Requirements
 
 ### Functional
 
-- [ ] FR1: `bcc validate <spec>` runs the Director against the spec and prints a validation report.
-- [ ] FR2: The report contains, per issue: `severity` (`blocker | warning | suggestion`), `category` (`acceptance | clarity | completeness | observability | security | testability | architecture | scope | other`), `location` (heading or line range), `description`, and optional `suggested_patch`.
-- [ ] FR3: `--apply <issue-id>` applies a suggested patch after preview confirmation. Patch generation may be a second Director call if not bundled in FR1's output.
-- [ ] FR4: `--apply-all` applies all suggestions whose severity matches a configured threshold; defaults to interactive confirmation per patch.
-- [ ] FR5: `bcc run --director` runs validation as the first step. With `--auto-proceed`, it skips the confirmation if no blockers are present; otherwise it pauses for the user.
-- [ ] FR6: Output formats: text (default, TUI-friendly), json (`--output json`) for tooling and CI.
-- [ ] FR7: The report is persisted to `.bcc/validation/<spec-slug>-<timestamp>.json`. `--resume` skips re-validation when the spec hash is unchanged.
-- [ ] FR8: Configurable severity threshold for non-zero exit: default `blocker` only.
-- [ ] FR9: The Director's validation prompt is owned by `internal/director/`, embedded via `//go:embed` (same pattern as `internal/format/markdown_bcc/contract.md`). Not user-editable.
-- [ ] FR10: Per-spec opt-out via a directive in the spec (e.g., `bcc-directive: validate=skip`) for cases where the author has already validated and wants `bcc run` to skip the gate.
+- [ ] FR1: `bcc validate <spec>` runs the Director against the spec and prints a validation report. Read-only; no execution side-effect.
+- [ ] FR2: The report contains, per issue: `severity` (`blocker | warning | suggestion`), `category` (`acceptance | clarity | completeness | observability | security | testability | architecture | scope | other`), `location` (heading or line range), `description`, and `recommendation` (concrete guidance on how to address the gap, free-text). The recommendation describes the fix the author should make; bcc never produces or applies a patch.
+- [ ] FR3: Inside `bcc run` with the Director enabled, validation is the first step of the autonomous flow. Blockers abort the run before any Executor session starts and surface the report on stderr (and in the TUI). Warnings and suggestions are persisted to the journal as Director output; execution proceeds without further prompts.
+- [ ] FR4: Output formats for `bcc validate`: text (default, TUI-friendly), json (`--output json`) for tooling and CI.
+- [ ] FR5: The report is persisted to `.bcc/validation/<spec-slug>-<timestamp>.json`. `--resume` and re-runs against an unmodified spec (matched by content hash) skip re-validation.
+- [ ] FR6: Configurable severity threshold for non-zero exit on `bcc validate` via `--severity <level>`: default `blocker` only.
+- [ ] FR7: The Director's validation prompt is owned by `internal/director/`, embedded via `//go:embed` (same pattern as `internal/format/markdown_bcc/contract.md`). Not user-editable.
+- [ ] FR8: Per-spec opt-out via a directive in the spec (e.g., `bcc-directive: validate=skip`) for cases where the author has already validated externally and wants `bcc run` to skip the gate.
 
 ### Non-functional
 
@@ -102,32 +103,41 @@ bcc remains a tool that runs whatever you give it. The bar for "good spec" stays
 
 ## Expected experience
 
-### Story 1: author validates before running
+### Story 1: author validates at edit time
 
-> As a spec author, I want to run `bcc validate docs/specs/my-feature/index.md` before I commit hours to a run, so that I find missing acceptance criteria and unclear scope at edit time.
+> As a spec author, I want to run `bcc validate docs/specs/my-feature/index.md` before I commit hours to a run, so that I find missing acceptance criteria and unclear scope while I am still editing.
 
 Flow:
 
 1. Author writes a spec.
 1. Runs `bcc validate <path>`.
-1. TUI shows a categorized list of issues, color-coded by severity.
-1. For each issue, the author can press a key to see the suggested patch (a unified diff against the spec).
-1. The author accepts patches one by one or in bulk.
-1. The spec is updated in place; the author commits.
+1. CLI prints a categorized list of issues, color-coded by severity. Each issue includes the location, the description, and a recommendation.
+1. The author edits the spec by hand to address the issues.
 1. Re-validates; the report is now clean.
 
-### Story 2: pre-run confirmation
+### Story 2: Director-led run on a clean spec
 
-> As a user about to start a long run, I want bcc to validate the spec first and show me a single screen "ready to run, X warnings, Y suggestions" so I can decide whether to fix or proceed.
+> As a user starting a Director-led run, I want validation to be invisible when the spec is clean, so that autonomous execution stays autonomous.
 
 Flow:
 
 1. User runs `bcc run --director docs/specs/my-feature/index.md`.
-1. Validation runs (a few seconds to a minute).
-1. TUI shows: "Spec ready to run. 0 blockers, 2 warnings, 5 suggestions. [P]roceed, [R]eview issues, [A]bort."
-1. User picks; the loop starts or the validation report opens for triage.
+1. Director validates (a few seconds to a minute).
+1. No blockers. Warnings and suggestions, if any, are persisted to the journal and visible in the TUI's Director panel.
+1. Director plans and the Executor starts. The user sees the live TUI; no extra prompts.
 
-### Story 3: CI gate (speculative)
+### Story 3: Director-led run on a spec with blockers
+
+> As a user, I want bcc to refuse to plan a spec it cannot plan, so that I do not waste a long run on a foundation the Director already flagged as ambiguous.
+
+Flow:
+
+1. User runs `bcc run --director docs/specs/my-feature/index.md`.
+1. Director validates and finds blockers.
+1. The run aborts before any Executor session starts. The report is surfaced on stderr and in the TUI; the persisted report is at `.bcc/validation/...`. Exit code is non-zero.
+1. The user reads the report, edits the spec, runs again. The next run picks up the cached clean validation (FR5) when the spec is unchanged after the fix.
+
+### Story 4: CI gate
 
 > As a team using bcc, we want PRs that change specs to pass `bcc validate --severity warning` before merge, so we never ship a spec that has known ambiguity.
 
@@ -137,7 +147,7 @@ Flow: `bcc validate` in CI; non-zero exit on threshold-or-worse issues.
 
 - Requires the bcc-markdown adapter (or any future format adapter) to expose spec content via the existing `loop.AgentBriefing`/`SpecReader` ports. The Director consumes content, not file paths.
 - Requires a Director adapter wired in `cmd/`. The same agent binary used as Executor is acceptable for the first cut.
-- Independent of PRD 2 (reviewed execution) and PRD 3 (parallel). Ships alone.
+- Independent of PRD 2 (reviewed execution) and PRD 3 (parallel). Ships alone, but is the natural first step of any Director-led flow.
 - Subject to the autonomy and permission contract: validation does not require `[executor].skip_permissions = true`. It is a read-only Director call.
 - Spec privacy: shipping the spec to the Director model is implicit in opting into the Director. Documented prominently.
 
@@ -147,17 +157,19 @@ Flow: `bcc validate` in CI; non-zero exit on threshold-or-worse issues.
 |---|---|---|
 | Static linter for bcc-markdown | Cheap, deterministic, vendor-free | Catches structural issues only; misses semantic gaps that are the whole point |
 | Skill-side guidance to spec author (no framework support) | Zero new code | Already covered by the floating skill spec; complementary, not a substitute for an automated check |
-| Mandatory validation, not opt-in | Eliminates the case where the user forgets | Wrong default; some users want to run a known-clean spec without the cost |
+| Confirmation prompt on every `bcc run` | Eliminates the case where a warning slips by | Breaks the autonomous-execution contract; bcc is a long-session orchestrator, not an interactive wizard. Long sessions exist precisely so the human is not in the per-phase loop. |
+| Apply-fixes flow (bcc edits the spec) | Faster turnaround for the author | Crosses the orchestration boundary: spec management is the user's. Also makes the framework liable for spec quality decisions it should not own. |
 | Continuous validation (every iteration) | Catches mid-run drift in spec quality | Out of scope here; PRD 2's review covers in-loop drift |
 | Validation as a separate binary | Clean separation | Splits the user surface and the prompt ownership; not worth the complexity |
 
 ## Open questions
 
-- [ ] Should patch generation be in the initial report (cheaper, lower quality) or a follow-up call per-issue (higher quality, higher cost)? Lean toward follow-up for accepted patches only.
 - [ ] How aggressive should completeness checking be? A small spec does not need an observability section; the Director should not invent demands. Calibration by example specs.
 - [ ] Severity drift across model versions: how do we keep the bar stable? (Maybe a golden-set of canonical specs evaluated each upgrade.)
 - [ ] When the spec is multi-file (initiative + child specs), what is the unit of validation? Proposed: the file the user passes; cross-doc concerns are a manual extension out of scope here.
 - [ ] What happens when the Director itself returns a malformed report (the typed payload fails validation)? Proposed: hard fail with a diagnostic; never proceed silently.
+- [ ] When the user edits the spec mid-run (after `--resume`), do we re-validate before the next phase, or trust the cached pass until the next full run? Proposed: re-validate on any spec hash change, consistent with the index.md cross-cutting decision on plan persistence.
+- [ ] Should warnings escalate to blockers above a threshold count? Proposed: no; severity is per-issue and the Director should not aggregate. If the bar feels wrong, the prompt is wrong.
 
 ## References
 

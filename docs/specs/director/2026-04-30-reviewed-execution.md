@@ -89,7 +89,7 @@ bcc stays usable for short, contained specs. Long specs continue to require huma
 - [ ] FR1: At run start (and on spec change), the Director produces a `Plan`: a typed object with phases, dependencies, acceptance criteria, and scope guards.
 - [ ] FR2: The `Plan` is persisted to `.bcc/plan.json` and surfaced in the TUI.
 - [ ] FR3: When running with `--director`, the user reviews and confirms the plan before execution begins (similar to PRD 1's confirmation step).
-- [ ] FR4: When the spec changes mid-run, the Director re-plans on the next loop tick and surfaces the diff against the previous plan.
+- [ ] FR4: When the spec changes mid-run, the Director re-plans on the next loop tick and surfaces the diff against the previous plan. If the change invalidates an in-flight phase, bcc cancels the running Executor session, asks the user to confirm the new plan, and restarts the affected phase under the new plan.
 
 #### Briefing
 
@@ -99,14 +99,14 @@ bcc stays usable for short, contained specs. Long specs continue to require huma
 
 #### Reviewing
 
-- [ ] FR8: After the Executor completes a phase (signal `review` per the wire protocol), the Director reads the diff, the journal entry, and the original briefing, then produces a `Verdict`: `approve | revise | escalate`, with structured feedback.
-- [ ] FR9: On `revise`, bcc starts a new Executor session for the same phase with the prior briefing plus the Director's feedback bundled. Retry budget defaults to 2; configurable per spec or per phase.
-- [ ] FR10: On `escalate`, bcc pauses, surfaces the Director's reasoning to the user, and waits for input. Options: resume with hint, skip phase, abort run.
+- [ ] FR8: After the Executor completes a phase (signal `review` per the wire protocol), the Director runs a review session that inspects the diff, the journal entry, and the original briefing. The review session is itself an agent invocation, like the Executor; bcc does not run tests or builds directly. The Director's plan declares the evidence each acceptance item requires (`diff`, `test`, `build`, `manual`); the review session gathers that evidence, including running tests or builds when required, before producing a `Verdict`: `approve | revise | escalate`, with structured feedback.
+- [ ] FR9: On `revise`, bcc starts a new Executor session for the same phase with the prior briefing plus the Director's structured feedback rendered into the next briefing's `prior_feedback` field as prose. Retry budget defaults to 2; configurable per spec or overridden per phase via the plan's `retry_budget` field.
+- [ ] FR10: On `escalate`, bcc pauses, surfaces the Director's reasoning to the user, and waits for input. Options: resume with hint, force-approve and advance, skip phase, abort run. This is the user's only override surface on Director verdicts; autonomous runs do not pause for user review on `approve` or `revise`.
 - [ ] FR11: Verdicts are persisted to `.bcc/verdicts/<phase-id>-<attempt>.json` and rendered in the TUI.
 
 #### Decision integration
 
-- [ ] FR12: bcc's existing decider treats Director verdicts as authoritative for phase advancement. The Executor's own `**Result**` line is informational, not authoritative, when the Director is enabled.
+- [ ] FR12: bcc's existing decider treats Director verdicts as authoritative for phase advancement and run completion. The Executor's own `**Result**` line is informational; an Executor `done` (whole-spec done) is interpreted as local to that session's scope and does not stop the loop while the Director has unreviewed, revising, or escalated phases. The loop terminates when the Director approves the final phase.
 - [ ] FR13: The journal contains both the Executor's claim and the Director's verdict. They can disagree; the disagreement is the audit trail.
 
 #### Schema (illustrative)
@@ -152,8 +152,13 @@ type Verdict = {
   attempt: number;
   outcome: "approve" | "revise" | "escalate";
   acceptance_results: { id: string; passed: boolean; note: string }[];
-  feedback?: string;            // for the next Executor attempt
+  feedback?: VerdictFeedback;   // structured; rendered into the next Briefing's prior_feedback as prose
   reasoning: string;            // for the user, in the TUI
+};
+
+type VerdictFeedback = {
+  required_changes: { acceptance_id?: string; what: string; why: string }[];
+  out_of_scope: { path: string; note: string }[];
 };
 ```
 
@@ -198,7 +203,7 @@ Flow: phase 7 fails review three times (retry budget exhausted). bcc pauses, TUI
 
 > As an author who realized halfway through that phase 6 was wrong, I want to edit the spec and have the Director adapt, not silently keep executing the old plan.
 
-Flow: user edits spec while bcc is between phases. Next tick, the Director re-validates and re-plans. TUI shows "spec changed: phase 6 redefined, phase 7 added. Confirm new plan?" User confirms; the loop continues from the new plan.
+Flow: user edits the spec mid-run. If a phase is in flight when the change lands, bcc cancels the running Executor session before re-planning. The Director re-validates and re-plans. TUI shows "spec changed: phase 6 redefined, phase 7 added. Confirm new plan?" User confirms; the loop restarts the affected phase under the new plan.
 
 ## Constraints and dependencies
 
@@ -216,16 +221,6 @@ Flow: user edits spec while bcc is between phases. Next tick, the Director re-va
 | Always-on continuous review (mid-stream) | Catches drift earlier | High token cost; rarely actionable; deferred to a follow-up if signal warrants |
 | Director and Executor as one process | Simpler wiring | Couples lifecycles; complicates parallelism (PRD 3) |
 | Director writes the journal directly | Cleaner audit trail | Conflates roles; the journal is an Executor-emitted artifact today, by design |
-
-## Open questions
-
-- [ ] When the Executor signals `done` (whole spec done) but the Director has unreviewed phases, who wins? Proposed: Director takes precedence; `done` is provisional until all reviews pass.
-- [ ] Should the Director's review include running tests / build, or only diff inspection? Proposed: bcc runs tests as a separate step; the Director sees the result. Out of scope for this PRD's first cut.
-- [ ] Retry budget default: 2, 3, or configurable per phase? Proposed: 2 default; per-phase override via plan field.
-- [ ] What does the Director do when the spec changes mid-run in a way that invalidates an in-flight phase? Proposed: cancel the in-flight Executor session, re-plan, restart.
-- [ ] Verdict feedback format: prose, structured, or both? Proposed: structured fields the Executor renders into prose for the next briefing.
-- [ ] How do we test review quality offline? Probably a corpus of (briefing, diff, expected verdict) golden cases evolved over time.
-- [ ] What is the user override surface? A user who looks at a `revise` verdict and disagrees should be able to force-approve. CLI flag and TUI key.
 
 ## References
 
