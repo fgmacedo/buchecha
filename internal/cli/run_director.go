@@ -497,8 +497,16 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 					code: loop.ExitInvalid,
 					err:  fmt.Errorf("director TUI orchestrator panicked: %v\n%s", r, debug.Stack()),
 				})
-				emitLoopFinished(raw, "fatal", loop.ExitInvalid)
-				close(raw)
+				// Best-effort terminal signal. raw may already be
+				// closed (loop.Loop.Run owns the close on the post-
+				// planning path), so swallow any send/close-on-closed
+				// secondary panic and rely on the prior LoopFinished
+				// to drive the bridge.
+				func() {
+					defer func() { _ = recover() }()
+					emitLoopFinished(raw, "fatal", loop.ExitInvalid)
+					close(raw)
+				}()
 			}
 		}()
 
@@ -586,9 +594,9 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 			code, err := l.Run(ctx, raw)
 			setLatest(runResult{code: code, err: err})
 		}()
-		// l.Run already emits LoopFinished as its last event before
-		// returning; just close the channel so the bridge exits.
-		close(raw)
+		// loop.Loop.Run owns raw for the duration of Run: it emits a
+		// final LoopFinished and closes the channel via its own defer,
+		// even on panic. Closing here would double-close.
 	}
 
 	go orchestrate()
