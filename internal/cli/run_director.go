@@ -518,8 +518,18 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 				setLatest(runResult{code: loop.ExitInvalid, err: perr})
 				emitLoopFinished(raw, "user cancelled", loop.ExitInvalid)
 			} else {
-				setLatest(runResult{code: loop.ExitInvalid, err: perr})
-				emitLoopFinished(raw, "fatal", loop.ExitInvalid)
+				// Planner crashed without producing a terminal MCP call
+				// (e.g. claude exited 1 because the account ran out of
+				// credits). Keep the TUI alive in session mode so the
+				// user reads the underlying error in the footer and
+				// decides whether to retry, edit the spec, or quit.
+				// The orchestrator returns nil here: the run "finished"
+				// in the user-visible sense; the run-level ExitCode is
+				// still ExitInvalid so headless callers see the same
+				// failure.
+				model.SignalPlanFailed(perr.Error())
+				setLatest(runResult{code: loop.ExitInvalid, err: nil})
+				emitLoopFinished(raw, LoopFinishedReasonPlannerFailed, loop.ExitInvalid)
 			}
 			close(raw)
 			return
@@ -599,6 +609,13 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 // so consumers can branch deterministically; the TUI maps the same
 // reason to a friendly terminal screen.
 const LoopFinishedReasonNothingToDo = "nothing_to_do"
+
+// LoopFinishedReasonPlannerFailed is the canonical Reason emitted when
+// the planner subprocess exited with no terminal MCP call (no
+// bcc_plan_emit, no bcc_plan_skip). The TUI keeps the dashboard alive
+// in session mode so the user can read the underlying error in the
+// session footer and decide whether to resume / edit / quit.
+const LoopFinishedReasonPlannerFailed = "planner_failed"
 
 // finishHeadlessNothingToDo runs the post-skip terminal sequence for
 // the text/json output paths: stamps the session as done, emits a

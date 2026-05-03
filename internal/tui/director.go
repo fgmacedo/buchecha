@@ -42,6 +42,26 @@ func (m *Model) SignalPlanSkipped(reason string) {
 	m.program.Send(planSkippedMsg{reason: reason})
 }
 
+// planFailedMsg latches the planner-failed details on the Model so the
+// session view surfaces the underlying error (e.g. "claude exited 1:
+// out of credits") instead of tearing the dashboard down. Carried via
+// program.Send from the host orchestrator.
+type planFailedMsg struct {
+	message string
+}
+
+// SignalPlanFailed tells the Model the Planner subprocess failed
+// without producing a terminal MCP call. The Model surfaces the
+// supplied message in the session footer so the user can read what
+// went wrong before pressing [r]/[e]/[q]. Safe to call before or after
+// the bubbletea program has started.
+func (m *Model) SignalPlanFailed(message string) {
+	if m.program == nil {
+		return
+	}
+	m.program.Send(planFailedMsg{message: message})
+}
+
 // directorPanel renders the Director-mode state on the dashboard: the
 // confirmed Plan as a checklist, the active phase in highlight, the
 // latest verdict's outcome, and the cumulative executor cost. The

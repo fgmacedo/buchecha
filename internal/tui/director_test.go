@@ -485,6 +485,57 @@ func TestUpdate_NothingToDoQuitOnly(t *testing.T) {
 	}
 }
 
+// TestUpdate_PlanFailedSurfacesErrorIntoSession verifies the planner
+// crash path: planFailedMsg latches the underlying error in the
+// session footer and clears any planning placeholders. Combined with a
+// LoopFinished{Reason:"planner_failed"} from the host, the dashboard
+// stays alive in session mode so the user reads the error before
+// pressing [r]/[e]/[q].
+func TestUpdate_PlanFailedSurfacesErrorIntoSession(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	m.planningPending = true
+
+	got, _ := m.Update(planFailedMsg{message: "claude exited 1: out of credits"})
+	mm := got.(Model)
+	if mm.planningPending {
+		t.Error("planningPending should clear after planFailedMsg")
+	}
+	if !strings.Contains(mm.sessionExitMsg, "out of credits") {
+		t.Errorf("sessionExitMsg = %q, want it to surface the planner error", mm.sessionExitMsg)
+	}
+
+	got2, _ := mm.Update(eventMsg{ev: loop.LoopFinished{Reason: "planner_failed"}})
+	mm2 := got2.(Model)
+	if !mm2.sessionMode {
+		t.Fatal("sessionMode not latched after LoopFinished{planner_failed}")
+	}
+	if mm2.sessionReason != "planner_failed" {
+		t.Errorf("sessionReason = %q, want %q", mm2.sessionReason, "planner_failed")
+	}
+}
+
+func TestView_PlanFailedSessionShowsErrorAndStaysAlive(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	mm0, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	mm1, _ := mm0.(Model).Update(planFailedMsg{message: "claude exited 1: out of credits"})
+	mm2, cmd := mm1.(Model).Update(eventMsg{ev: loop.LoopFinished{Reason: "planner_failed"}})
+	if cmd != nil {
+		// readEventCmd will return one cmd; we only care about latching, not the cmd shape.
+		_ = cmd
+	}
+	out := mm2.(Model).View().Content
+	for _, want := range []string{
+		"planner failed",
+		"out of credits",
+		"r resume",
+		"q exit",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("planner-failed session view missing %q\n%s", want, out)
+		}
+	}
+}
+
 // asModel narrows tea.Model to the concrete tui.Model. Test setups that
 // chain multiple Update calls use this to avoid sprinkling type
 // assertions through every step.

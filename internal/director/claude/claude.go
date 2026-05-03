@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -39,6 +40,39 @@ import (
 	"github.com/fgmacedo/buchecha/internal/executor/claude/streamjson"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
+
+// stderrCaptureBytes caps how much of claude's stderr the adapter
+// holds in memory per call. Small enough to be safe under runaway
+// output, large enough to carry a useful tail to the error message
+// (typically a few exit reasons such as quota / auth / model errors).
+const stderrCaptureBytes = 8 * 1024
+
+// ringBuffer keeps the last N bytes written to it. Older bytes are
+// dropped silently. Used to capture a small tail of the agent's
+// stderr so a non-zero exit can surface a human-readable reason.
+type ringBuffer struct {
+	cap int
+	buf []byte
+}
+
+func newRingBuffer(cap int) *ringBuffer { return &ringBuffer{cap: cap} }
+
+func (r *ringBuffer) Write(p []byte) (int, error) {
+	if len(p) >= r.cap {
+		r.buf = append(r.buf[:0], p[len(p)-r.cap:]...)
+		return len(p), nil
+	}
+	if len(r.buf)+len(p) <= r.cap {
+		r.buf = append(r.buf, p...)
+		return len(p), nil
+	}
+	keep := r.cap - len(p)
+	r.buf = append(r.buf[:0], r.buf[len(r.buf)-keep:]...)
+	r.buf = append(r.buf, p...)
+	return len(p), nil
+}
+
+func (r *ringBuffer) String() string { return string(r.buf) }
 
 // Compile-time checks that *Adapter satisfies the three Director ports.
 var (
@@ -258,8 +292,11 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, eve
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: stdout pipe: %w", err)
 	}
+	stderrTail := newRingBuffer(stderrCaptureBytes)
 	if a.cfg.Stderr != nil {
-		cmd.Stderr = a.cfg.Stderr
+		cmd.Stderr = io.MultiWriter(a.cfg.Stderr, stderrTail)
+	} else {
+		cmd.Stderr = stderrTail
 	}
 	cmd.Cancel = func() error {
 		return cmd.Process.Signal(syscall.SIGINT)
@@ -316,9 +353,16 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, eve
 		return &stats, ctxErr
 	}
 	if runErr != nil {
+		tail := strings.TrimSpace(stderrTail.String())
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
+			if tail != "" {
+				return &stats, fmt.Errorf("director/claude: %s exited %d: %s", a.cfg.Binary, ee.ExitCode(), tail)
+			}
 			return &stats, fmt.Errorf("director/claude: %s exited %d", a.cfg.Binary, ee.ExitCode())
+		}
+		if tail != "" {
+			return &stats, fmt.Errorf("director/claude: run %s: %w: %s", a.cfg.Binary, runErr, tail)
 		}
 		return &stats, fmt.Errorf("director/claude: run %s: %w", a.cfg.Binary, runErr)
 	}

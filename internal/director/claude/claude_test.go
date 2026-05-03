@@ -216,3 +216,34 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 		})
 	}
 }
+
+func TestRingBuffer_KeepsLastBytes(t *testing.T) {
+	r := newRingBuffer(8)
+	r.Write([]byte("hello "))
+	r.Write([]byte("world!"))
+	got := r.String()
+	if got != "o world!" {
+		t.Errorf("ring tail = %q, want %q", got, "o world!")
+	}
+}
+
+func TestRingBuffer_HandlesOversizeWrite(t *testing.T) {
+	r := newRingBuffer(4)
+	r.Write([]byte("abcdefghijk"))
+	if got := r.String(); got != "hijk" {
+		t.Errorf("ring tail after oversize write = %q, want %q", got, "hijk")
+	}
+}
+
+func TestRingBuffer_FillsThenWrapsAcrossWrites(t *testing.T) {
+	r := newRingBuffer(6)
+	r.Write([]byte("abc"))
+	r.Write([]byte("de"))
+	if got := r.String(); got != "abcde" {
+		t.Errorf("partial fill = %q, want %q", got, "abcde")
+	}
+	r.Write([]byte("fgh"))
+	if got := r.String(); got != "cdefgh" {
+		t.Errorf("after wrap = %q, want %q", got, "cdefgh")
+	}
+}

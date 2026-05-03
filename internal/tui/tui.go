@@ -334,6 +334,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planReady = false
 		return m, nil
 
+	case planFailedMsg:
+		// Surface the planner error inside the session footer so the
+		// user sees why the run failed before deciding whether to
+		// retry / edit / quit. The session menu itself is latched by
+		// the LoopFinished{Reason: "planner_failed"} the host emits
+		// alongside this message.
+		m.sessionExitMsg = "planner: " + msg.message
+		m.planningPending = false
+		m.planReady = false
+		return m, nil
+
 	case planReadyMsg:
 		// Planner returned a plan and confirmation is pending. Latch
 		// the plan onto the director panel (mirrors what PhasePlanned
