@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -30,6 +31,40 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
+
+// stderrCaptureBytes caps how much of claude's stderr the adapter
+// holds in memory per call. Small enough to be safe under runaway
+// output, large enough to carry a useful tail to the error message
+// (typically a few exit reasons such as quota / auth / model errors).
+const stderrCaptureBytes = 8 * 1024
+
+// ringBuffer keeps the last N bytes written to it. Older bytes are
+// dropped silently. Used to capture a small tail of the agent's
+// stderr so a non-zero exit can surface a human-readable reason and
+// the loop can render it on the dashboard.
+type ringBuffer struct {
+	cap int
+	buf []byte
+}
+
+func newRingBuffer(cap int) *ringBuffer { return &ringBuffer{cap: cap} }
+
+func (r *ringBuffer) Write(p []byte) (int, error) {
+	if len(p) >= r.cap {
+		r.buf = append(r.buf[:0], p[len(p)-r.cap:]...)
+		return len(p), nil
+	}
+	if len(r.buf)+len(p) <= r.cap {
+		r.buf = append(r.buf, p...)
+		return len(p), nil
+	}
+	keep := r.cap - len(p)
+	r.buf = append(r.buf[:0], r.buf[len(r.buf)-keep:]...)
+	r.buf = append(r.buf, p...)
+	return len(p), nil
+}
+
+func (r *ringBuffer) String() string { return string(r.buf) }
 
 // Compile-time check that *Executor satisfies loop.Executor.
 var _ loop.Executor = (*Executor)(nil)
@@ -56,11 +91,15 @@ type Config struct {
 
 	// SystemPromptFile, when non-empty, points to a file whose contents
 	// claude loads as the system prompt via --system-prompt-file. Used by
-	// Director-driven runs where the per-phase Briefing is materialized
-	// to disk and replaces the inline prompt. When set, the positional
-	// prompt argument is omitted from the command line; the prompt
-	// parameter passed to Run is ignored. Default empty preserves the
-	// MVP behavior of passing the prompt inline.
+	// Director-driven runs to ship the bcc contract (wire protocol,
+	// absolute restrictions, working tree) as the durable system message
+	// while the per-iteration briefing arrives as the user prompt via
+	// stdin. When set, the prompt parameter passed to Run is fed to
+	// claude on stdin instead of as a positional argument; an empty
+	// prompt under SystemPromptFile is rejected because claude --print
+	// requires user input. Default empty preserves the MVP behavior of
+	// passing the prompt inline as a positional argument with no system
+	// override.
 	SystemPromptFile string
 
 	// Stderr, when non-nil, receives the subprocess stderr verbatim.
@@ -153,10 +192,10 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 		args = append(args, "--mcp-config", path, "--strict-mcp-config")
 	}
 
-	// --system-prompt-file replaces the inline prompt under the
-	// Director: the briefing renderer materializes the per-phase prompt
-	// to disk and points the executor at it. When set the positional
-	// prompt is omitted; the loop's prompt argument is ignored.
+	// --system-prompt-file ships the bcc contract as the system message
+	// under the Director. The per-iteration briefing arrives as the
+	// user prompt via stdin (see below); the positional prompt argument
+	// is omitted in that mode.
 	if e.cfg.SystemPromptFile != "" {
 		args = append(args, "--system-prompt-file", e.cfg.SystemPromptFile)
 	}
@@ -174,6 +213,8 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	args = append(args, e.cfg.ExtraArgs...)
 	if e.cfg.SystemPromptFile == "" {
 		args = append(args, prompt)
+	} else if prompt == "" {
+		return loop.ExecResult{ExitCode: -1}, errors.New("executor/claude: SystemPromptFile is set but prompt is empty; claude --print requires a user prompt")
 	}
 
 	cmd := exec.CommandContext(ctx, e.cfg.Binary, args...)
@@ -181,8 +222,17 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	if err != nil {
 		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("stdout pipe: %w", err)
 	}
+	if e.cfg.SystemPromptFile != "" {
+		// The contract lives in --system-prompt-file; the briefing is
+		// the user prompt and goes on stdin so we are not bound by argv
+		// length limits or escaping concerns.
+		cmd.Stdin = strings.NewReader(prompt)
+	}
+	stderrTail := newRingBuffer(stderrCaptureBytes)
 	if e.cfg.Stderr != nil {
-		cmd.Stderr = e.cfg.Stderr
+		cmd.Stderr = io.MultiWriter(e.cfg.Stderr, stderrTail)
+	} else {
+		cmd.Stderr = stderrTail
 	}
 	cmd.Cancel = func() error {
 		// Graceful interrupt; exec.Cmd escalates to SIGKILL after WaitDelay.
@@ -208,25 +258,28 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	wg.Wait()
 	runErr := cmd.Wait()
 
+	tail := strings.TrimSpace(stderrTail.String())
+
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		exitCode := -1
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		}
-		return loop.ExecResult{ExitCode: exitCode}, ctxErr
+		return loop.ExecResult{ExitCode: exitCode, StderrTail: tail}, ctxErr
 	}
 
 	if runErr == nil {
-		return loop.ExecResult{ExitCode: 0}, nil
+		return loop.ExecResult{ExitCode: 0, StderrTail: tail}, nil
 	}
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
 		// Agent exited non-zero; that is a normal control-flow signal,
-		// not a Run failure. Caller decides what to do.
-		return loop.ExecResult{ExitCode: ee.ExitCode()}, nil
+		// not a Run failure. Caller decides what to do; the captured
+		// stderr tail rides along for diagnostics.
+		return loop.ExecResult{ExitCode: ee.ExitCode(), StderrTail: tail}, nil
 	}
-	return loop.ExecResult{ExitCode: -1}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
+	return loop.ExecResult{ExitCode: -1, StderrTail: tail}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
 }
 
 // writeMCPConfig persists a one-off mcp-config JSON pointing at the

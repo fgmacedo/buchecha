@@ -119,12 +119,22 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 }
 
 func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
+	// In TUI mode the alt-screen renderer owns the terminal: any byte the
+	// agent subprocess writes to os.Stderr would be drawn on top of the
+	// dashboard, scrambling panels. Discard the live tee in that mode and
+	// rely on the adapter's internal ringBuffer for diagnostics; in
+	// text/json mode forward stderr verbatim so users see auth/quota
+	// errors as they happen.
+	var subprocessStderr io.Writer = os.Stderr
+	if runOutput == OutputTUI {
+		subprocessStderr = io.Discard
+	}
 	adapter := directorclaude.New(directorclaude.Config{
 		Binary:       cfg.Director.Claude.Binary,
 		Model:        cfg.Director.Claude.Model,
 		ExtraArgs:    cfg.Director.Claude.ExtraArgs,
 		MaxBudgetUSD: cfg.Director.Claude.MaxBudgetUSD,
-		Stderr:       os.Stderr,
+		Stderr:       subprocessStderr,
 		MCPURL:       boot.url(),
 		MCPToken:     boot.token(),
 	})
@@ -146,7 +156,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 				ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
 				SkipPermissions:   cfg.Agent.Claude.ShouldSkipPermissions(),
 				SystemPromptFile:  systemPromptFile,
-				Stderr:            os.Stderr,
+				Stderr:            subprocessStderr,
 				MCPURL:            mcpCfg.MCPURL,
 				MCPToken:          mcpCfg.MCPToken,
 				MCPConnectionName: mcpCfg.MCPConnectionName,
@@ -454,6 +464,75 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		latest = r
 	}
 
+	// resolvedPlan is the plan the orchestrator confirmed on the first
+	// run; the session-menu Resume factory reuses it so [r] does not
+	// re-run the planner. Captured by the orchestrator goroutine, read
+	// by the factory closure on subsequent UI events.
+	var (
+		planMu       sync.Mutex
+		resolvedPlan *director.Plan
+	)
+	setResolvedPlan := func(p *director.Plan) {
+		planMu.Lock()
+		defer planMu.Unlock()
+		resolvedPlan = p
+	}
+	currentPlan := func() *director.Plan {
+		planMu.Lock()
+		defer planMu.Unlock()
+		return resolvedPlan
+	}
+
+	// runLoopOn spins up loop.Loop.Run against a freshly built events
+	// channel. Used by both the first-run orchestrator and the session
+	// Resume factory; loop.Loop.Run owns the channel lifecycle and emits
+	// a terminal LoopFinished plus close on every exit path.
+	runLoopOn := func(plan *director.Plan, ch chan loop.Event) {
+		defer func() {
+			if r := recover(); r != nil {
+				setLatest(runResult{
+					code: loop.ExitInvalid,
+					err:  fmt.Errorf("loop panicked: %v\n%s", r, debug.Stack()),
+				})
+			}
+		}()
+		l := &loop.Loop{
+			SpecPath: specPath,
+			Config:   cfg,
+			Git:      deps.git,
+			Logger:   discard,
+			Director: &loop.DirectorPorts{
+				Plan:        plan,
+				Briefer:     deps.briefer,
+				Reviewer:    deps.reviewer,
+				Store:       deps.store,
+				NewExecutor: deps.newExecutor,
+				Handler:     directorEffectiveHandler(deps),
+				Escalation:  escalation,
+			},
+		}
+		code, err := l.Run(ctx, ch)
+		setLatest(runResult{code: code, err: err})
+	}
+
+	// newEvents is the host's Resume factory: the user pressed [r] in
+	// the session menu after the loop terminated. Build a fresh channel,
+	// spawn the loop on it (reusing the confirmed plan), and hand the
+	// channel back to the Model so panels live-update against the new
+	// run.
+	newEvents := func() <-chan loop.Event {
+		plan := currentPlan()
+		if plan == nil {
+			ch := make(chan loop.Event, 1)
+			emitLoopFinished(ch, "no plan to resume", loop.ExitInvalid)
+			close(ch)
+			return ch
+		}
+		ch := make(chan loop.Event, 256)
+		go runLoopOn(plan, ch)
+		return ch
+	}
+
 	model := tui.New(tui.Options{
 		Events:          raw,
 		Cancel:          cancel,
@@ -467,6 +546,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		PlanConfirmGate: planConfirm,
 		PlanningPending: true,
 		AutoProceed:     dio.autoProceed,
+		NewEvents:       newEvents,
 	})
 	progOpts := []tea.ProgramOption{
 		tea.WithContext(ctx),
@@ -565,35 +645,8 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 			}
 		}
 		model.ClearPlanningPending()
-
-		l := &loop.Loop{
-			SpecPath: specPath,
-			Config:   cfg,
-			Git:      deps.git,
-			Logger:   discard,
-			Director: &loop.DirectorPorts{
-				Plan:        plan,
-				Briefer:     deps.briefer,
-				Reviewer:    deps.reviewer,
-				Store:       deps.store,
-				NewExecutor: deps.newExecutor,
-				Handler:     directorEffectiveHandler(deps),
-				Escalation:  escalation,
-			},
-		}
-
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					setLatest(runResult{
-						code: loop.ExitInvalid,
-						err:  fmt.Errorf("loop panicked: %v\n%s", r, debug.Stack()),
-					})
-				}
-			}()
-			code, err := l.Run(ctx, raw)
-			setLatest(runResult{code: code, err: err})
-		}()
+		setResolvedPlan(plan)
+		runLoopOn(plan, raw)
 		// loop.Loop.Run owns raw for the duration of Run: it emits a
 		// final LoopFinished and closes the channel via its own defer,
 		// even on panic. Closing here would double-close.

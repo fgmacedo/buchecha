@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/director"
@@ -131,20 +132,32 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 
 		hintForIteration := pendingHint
 		pendingHint = ""
-		prompt, err := director.RenderBriefingPrompt(briefing, phase, hintForIteration)
+		userPrompt, err := director.RenderBriefingUser(briefing, phase, hintForIteration)
 		if err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: render briefing prompt: %w", err)
+				fmt.Errorf("director: render briefing user prompt: %w", err)
 		}
-		promptPath := filepath.Join(d.Store.SessionDir(), "briefings",
-			fmt.Sprintf("%s.prompt.md", briefing.IterationID))
-		if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		systemPrompt, err := director.RenderBriefingSystem()
+		if err != nil {
+			return l.terminate(events, "fatal", ExitInvalid),
+				fmt.Errorf("director: render briefing system prompt: %w", err)
+		}
+		briefingsDir := filepath.Join(d.Store.SessionDir(), "briefings")
+		if err := os.MkdirAll(briefingsDir, 0o755); err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: mkdir briefings: %w", err)
 		}
-		if err := os.WriteFile(promptPath, []byte(prompt), 0o644); err != nil {
+		userPromptPath := filepath.Join(briefingsDir,
+			fmt.Sprintf("%s.prompt.md", briefing.IterationID))
+		if err := os.WriteFile(userPromptPath, []byte(userPrompt), 0o644); err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: write briefing prompt: %w", err)
+				fmt.Errorf("director: write briefing user prompt: %w", err)
+		}
+		systemPromptPath := filepath.Join(briefingsDir,
+			fmt.Sprintf("%s.system.md", briefing.IterationID))
+		if err := os.WriteFile(systemPromptPath, []byte(systemPrompt), 0o644); err != nil {
+			return l.terminate(events, "fatal", ExitInvalid),
+				fmt.Errorf("director: write briefing system prompt: %w", err)
 		}
 
 		emit(events, PhaseBriefed{
@@ -185,7 +198,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				PhaseID:    phaseID,
 				SubDAG:     actualSub,
 			}
-			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(promptPath, execArgs), events, d.Handler, briefing.IterationID)
+			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(systemPromptPath, execArgs), userPrompt, events, d.Handler, briefing.IterationID)
 			if execErr != nil {
 				return l.terminate(events, "fatal", ExitInvalid), execErr
 			}
@@ -354,7 +367,7 @@ func runWithAgentEvents(ctx context.Context, events chan<- Event, fn func(chan<-
 // bcc_iteration_finished call. An executor that exits without calling
 // the terminal method falls back to SignalReview, the safe default
 // (the Reviewer audits regardless and decides advance/retry).
-func runDirectorExecutor(ctx context.Context, exec Executor, events chan<- Event, handler *dag.Handler, briefingID string) (agentcontract.Signal, error) {
+func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, events chan<- Event, handler *dag.Handler, briefingID string) (agentcontract.Signal, error) {
 	if exec == nil {
 		return agentcontract.SignalUnknown, errors.New("director: NewExecutor returned nil executor")
 	}
@@ -366,11 +379,21 @@ func runDirectorExecutor(ctx context.Context, exec Executor, events chan<- Event
 			emit(events, AgentEventReceived{Event: ae})
 		}
 	}()
-	_, err := exec.Run(ctx, "", agentEvents)
+	result, err := exec.Run(ctx, userPrompt, agentEvents)
 	close(agentEvents)
 	<-pumpDone
 	if err != nil {
 		return agentcontract.SignalUnknown, fmt.Errorf("director: executor run: %w", err)
+	}
+	if result.ExitCode != 0 && handler != nil && handler.IterationSignal(briefingID) == "" {
+		// Executor crashed without emitting bcc_iteration_finished. Surface
+		// the captured stderr tail so the dashboard does not show a bare
+		// "head_stuck" with no diagnostic context.
+		tail := strings.TrimSpace(result.StderrTail)
+		if tail == "" {
+			return agentcontract.SignalBlocked, fmt.Errorf("director: executor exited %d with no terminal signal", result.ExitCode)
+		}
+		return agentcontract.SignalBlocked, fmt.Errorf("director: executor exited %d: %s", result.ExitCode, tail)
 	}
 	signal := agentcontract.SignalUnknown
 	if handler != nil {

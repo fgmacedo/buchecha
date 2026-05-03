@@ -11,6 +11,11 @@ import (
 type ExecResult struct {
 	// ExitCode is the agent's process exit code. 0 on success.
 	ExitCode int
+	// StderrTail is the last few KiB of the subprocess stderr, captured
+	// internally by the adapter so callers can surface a diagnostic when
+	// the agent exits non-zero. Empty on clean exits or when the adapter
+	// chose not to capture.
+	StderrTail string
 }
 
 // Event is the union of loop-level events emitted on the loop's events

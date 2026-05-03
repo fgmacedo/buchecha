@@ -25,27 +25,44 @@ type briefingView struct {
 	Hint          string
 }
 
-// RenderBriefingPrompt composes the Executor's system prompt for one
+// RenderBriefingSystem returns the Executor's system prompt: the bcc
+// contract (wire_protocol, absolute_restrictions, working_tree) framed
+// as the durable rules every iteration must obey. The output carries no
+// per-iteration data; callers can render it once per session and reuse
+// it across iterations. The contract sections are concatenated, never
+// substituted; a render that omits one would relax the contract.
+func RenderBriefingSystem() (string, error) {
+	t := agentcontract.Partials()
+	if _, err := t.New("briefing_system").Parse(briefingSystemMD); err != nil {
+		return "", fmt.Errorf("director: parse briefing_system template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "briefing_system", nil); err != nil {
+		return "", fmt.Errorf("director: render briefing_system: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// RenderBriefingUser composes the per-iteration user prompt for one
 // iteration's sub-DAG slice: header, scope, per-task acceptance, spec
 // path, briefer instructions, optional user-hint block (escalation
-// resume), optional prior feedback, and the three agentcontract
-// partials (wire_protocol, absolute_restrictions, working_tree). The
-// partials are concatenated, never substituted; a briefing that omits
-// one would relax the contract.
+// resume), optional prior feedback. The contract sections live in the
+// system prompt (see RenderBriefingSystem) so the contract stays stable
+// across iterations while this body changes per iteration.
 //
 // hint is the free-form text the user attached to an EscalationResume
 // reply. When non-empty, render prepends a "User hint (escalation)"
 // block so the Executor sees the user's correction before the
 // reviewer-derived prior feedback.
-func RenderBriefingPrompt(b *Briefing, p *Phase, hint string) (string, error) {
+func RenderBriefingUser(b *Briefing, p *Phase, hint string) (string, error) {
 	if b == nil {
-		return "", fmt.Errorf("director: RenderBriefingPrompt: nil briefing")
+		return "", fmt.Errorf("director: RenderBriefingUser: nil briefing")
 	}
 	if p == nil {
-		return "", fmt.Errorf("director: RenderBriefingPrompt: nil phase")
+		return "", fmt.Errorf("director: RenderBriefingUser: nil phase")
 	}
 	if b.PhaseID != p.ID {
-		return "", fmt.Errorf("director: RenderBriefingPrompt: briefing phase %q != phase %q", b.PhaseID, p.ID)
+		return "", fmt.Errorf("director: RenderBriefingUser: briefing phase %q != phase %q", b.PhaseID, p.ID)
 	}
 
 	t := agentcontract.Partials()

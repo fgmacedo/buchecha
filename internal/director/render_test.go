@@ -10,11 +10,11 @@ import (
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.md golden files")
 
-// TestRenderBriefingPrompt_Golden pins the rendered system prompt for a
+// TestRenderBriefingUser_Golden pins the rendered user prompt for a
 // fixed (Briefing, Phase) pair to a checked-in fixture. Run with
 // `go test -update-golden ./internal/director/` after intentional
 // template changes to refresh the file.
-func TestRenderBriefingPrompt_Golden(t *testing.T) {
+func TestRenderBriefingUser_Golden(t *testing.T) {
 	phase := &Phase{
 		ID:       "p1",
 		Title:    "Phase one",
@@ -45,9 +45,9 @@ func TestRenderBriefingPrompt_Golden(t *testing.T) {
 		PriorFeedback: &priorFeedback,
 	}
 
-	got, err := RenderBriefingPrompt(briefing, phase, "")
+	got, err := RenderBriefingUser(briefing, phase, "")
 	if err != nil {
-		t.Fatalf("RenderBriefingPrompt: %v", err)
+		t.Fatalf("RenderBriefingUser: %v", err)
 	}
 
 	goldenPath := filepath.Join("testdata", "briefing_golden.md")
@@ -66,7 +66,7 @@ func TestRenderBriefingPrompt_Golden(t *testing.T) {
 	}
 }
 
-func TestRenderBriefingPrompt_AttemptOneOmitsPriorFeedback(t *testing.T) {
+func TestRenderBriefingUser_AttemptOneOmitsPriorFeedback(t *testing.T) {
 	phase := &Phase{
 		ID: "p1", Title: "t", Intent: "i",
 		Tasks: []Task{
@@ -83,36 +83,36 @@ func TestRenderBriefingPrompt_AttemptOneOmitsPriorFeedback(t *testing.T) {
 		Instructions: "ctx",
 		SpecPath:     "/tmp/spec.md",
 	}
-	got, err := RenderBriefingPrompt(briefing, phase, "")
+	got, err := RenderBriefingUser(briefing, phase, "")
 	if err != nil {
-		t.Fatalf("RenderBriefingPrompt: %v", err)
+		t.Fatalf("RenderBriefingUser: %v", err)
 	}
 	if strings.Contains(got, "Prior feedback") {
 		t.Errorf("empty prior_feedback should omit the section:\n%s", got)
 	}
 }
 
-func TestRenderBriefingPrompt_RejectsMismatchedPhaseID(t *testing.T) {
+func TestRenderBriefingUser_RejectsMismatchedPhaseID(t *testing.T) {
 	phase := &Phase{ID: "p1", Title: "t", Intent: "i"}
 	briefing := &Briefing{IterationID: "p2-1", PhaseID: "p2"}
-	if _, err := RenderBriefingPrompt(briefing, phase, ""); err == nil {
+	if _, err := RenderBriefingUser(briefing, phase, ""); err == nil {
 		t.Fatalf("expected error on phase id mismatch")
 	}
 }
 
-func TestRenderBriefingPrompt_RejectsNil(t *testing.T) {
-	if _, err := RenderBriefingPrompt(nil, &Phase{ID: "p1"}, ""); err == nil {
+func TestRenderBriefingUser_RejectsNil(t *testing.T) {
+	if _, err := RenderBriefingUser(nil, &Phase{ID: "p1"}, ""); err == nil {
 		t.Errorf("nil briefing accepted")
 	}
-	if _, err := RenderBriefingPrompt(&Briefing{PhaseID: "p1"}, nil, ""); err == nil {
+	if _, err := RenderBriefingUser(&Briefing{PhaseID: "p1"}, nil, ""); err == nil {
 		t.Errorf("nil phase accepted")
 	}
 }
 
-// TestRenderBriefingPrompt_IncludesPartials verifies the three
-// agentcontract partials end up in the rendered prompt; their absence
-// would relax the bcc contract.
-func TestRenderBriefingPrompt_IncludesPartials(t *testing.T) {
+// TestRenderBriefingUser_OmitsContractSections verifies that the user
+// prompt no longer carries the contract partials; those moved to the
+// system prompt rendered by RenderBriefingSystem.
+func TestRenderBriefingUser_OmitsContractSections(t *testing.T) {
 	phase := &Phase{
 		ID: "p1", Title: "t", Intent: "i",
 		Tasks: []Task{
@@ -127,9 +127,29 @@ func TestRenderBriefingPrompt_IncludesPartials(t *testing.T) {
 		IterationID: "p1-1", PhaseID: "p1",
 		Instructions: "ctx", SpecPath: "/tmp/spec.md",
 	}
-	got, err := RenderBriefingPrompt(briefing, phase, "")
+	got, err := RenderBriefingUser(briefing, phase, "")
 	if err != nil {
-		t.Fatalf("RenderBriefingPrompt: %v", err)
+		t.Fatalf("RenderBriefingUser: %v", err)
+	}
+	for _, banned := range []string{
+		"## Wire protocol",
+		"## Absolute restrictions",
+		"## Working tree",
+		"git push",
+	} {
+		if strings.Contains(got, banned) {
+			t.Errorf("user prompt should not carry contract marker %q; it belongs in the system prompt", banned)
+		}
+	}
+}
+
+// TestRenderBriefingSystem_IncludesPartials verifies the three
+// agentcontract partials end up in the system prompt; their absence
+// would relax the bcc contract.
+func TestRenderBriefingSystem_IncludesPartials(t *testing.T) {
+	got, err := RenderBriefingSystem()
+	if err != nil {
+		t.Fatalf("RenderBriefingSystem: %v", err)
 	}
 	for _, marker := range []string{
 		"bcc_task_started",
@@ -138,15 +158,15 @@ func TestRenderBriefingPrompt_IncludesPartials(t *testing.T) {
 		"Clean on entry",
 	} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(marker)) {
-			t.Errorf("partial marker %q missing from rendered prompt", marker)
+			t.Errorf("partial marker %q missing from system prompt", marker)
 		}
 	}
 }
 
-// TestRenderBriefingPrompt_HintBlock verifies that a non-empty hint
+// TestRenderBriefingUser_HintBlock verifies that a non-empty hint
 // renders an "User hint (escalation)" block above the prior feedback,
 // while an empty hint omits the block entirely.
-func TestRenderBriefingPrompt_HintBlock(t *testing.T) {
+func TestRenderBriefingUser_HintBlock(t *testing.T) {
 	phase := &Phase{
 		ID: "p1", Title: "t", Intent: "i",
 		Tasks: []Task{
@@ -164,9 +184,9 @@ func TestRenderBriefingPrompt_HintBlock(t *testing.T) {
 		SpecPath:      "/tmp/spec.md",
 		PriorFeedback: &prior,
 	}
-	got, err := RenderBriefingPrompt(briefing, phase, "tighten the diff")
+	got, err := RenderBriefingUser(briefing, phase, "tighten the diff")
 	if err != nil {
-		t.Fatalf("RenderBriefingPrompt: %v", err)
+		t.Fatalf("RenderBriefingUser: %v", err)
 	}
 	if !strings.Contains(got, "User hint (escalation)") {
 		t.Errorf("rendered prompt missing hint heading:\n%s", got)
@@ -180,19 +200,19 @@ func TestRenderBriefingPrompt_HintBlock(t *testing.T) {
 		t.Errorf("hint block must precede prior feedback; hintIdx=%d priorIdx=%d", hintIdx, priorIdx)
 	}
 
-	got2, err := RenderBriefingPrompt(briefing, phase, "")
+	got2, err := RenderBriefingUser(briefing, phase, "")
 	if err != nil {
-		t.Fatalf("RenderBriefingPrompt: %v", err)
+		t.Fatalf("RenderBriefingUser: %v", err)
 	}
 	if strings.Contains(got2, "User hint") {
 		t.Errorf("empty hint should omit the block:\n%s", got2)
 	}
 }
 
-// TestRenderBriefingPrompt_FiltersToSubDAG verifies that when
+// TestRenderBriefingUser_FiltersToSubDAG verifies that when
 // SubDAGTaskIDs is non-empty, the rendered prompt includes only those
 // tasks and omits the rest.
-func TestRenderBriefingPrompt_FiltersToSubDAG(t *testing.T) {
+func TestRenderBriefingUser_FiltersToSubDAG(t *testing.T) {
 	phase := &Phase{
 		ID: "p1", Title: "t", Intent: "i",
 		Tasks: []Task{
@@ -214,9 +234,9 @@ func TestRenderBriefingPrompt_FiltersToSubDAG(t *testing.T) {
 		SubDAGTaskIDs: []string{"t2"},
 		SpecPath:      "/tmp/spec.md",
 	}
-	got, err := RenderBriefingPrompt(briefing, phase, "")
+	got, err := RenderBriefingUser(briefing, phase, "")
 	if err != nil {
-		t.Fatalf("RenderBriefingPrompt: %v", err)
+		t.Fatalf("RenderBriefingUser: %v", err)
 	}
 	if strings.Contains(got, "First") {
 		t.Errorf("sub-DAG filter leaked excluded task into prompt:\n%s", got)

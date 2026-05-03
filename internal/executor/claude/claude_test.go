@@ -174,22 +174,26 @@ func TestRun_PromptIsLastArg(t *testing.T) {
 	}
 }
 
-// TestRun_SystemPromptFile_OmitsPositional pins the Director-mode
-// contract: when Config.SystemPromptFile is set, the adapter passes
-// --system-prompt-file <path> and drops the positional prompt
-// argument entirely (the briefing replaces the inline prompt). The
-// prompt parameter passed to Run is ignored.
-func TestRun_SystemPromptFile_OmitsPositional(t *testing.T) {
+// TestRun_SystemPromptFile_FeedsStdin pins the Director-mode contract:
+// when Config.SystemPromptFile is set, the adapter passes
+// --system-prompt-file <path>, omits the positional prompt, and pipes
+// the prompt parameter into the subprocess via stdin. The contract
+// (system) and the briefing (user) ride on different channels so claude
+// --print sees a non-empty user input.
+func TestRun_SystemPromptFile_FeedsStdin(t *testing.T) {
 	argsPath := echoArgsOut(t)
-	briefingPath := filepath.Join(t.TempDir(), "briefing.prompt.md")
-	if err := os.WriteFile(briefingPath, []byte("# briefing\n"), 0o600); err != nil {
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	t.Setenv("ECHO_STDIN_OUT", stdinPath)
+	systemPath := filepath.Join(t.TempDir(), "contract.system.md")
+	if err := os.WriteFile(systemPath, []byte("# contract\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	e := New(Config{
 		Binary:           fixture(t, "fake-claude-echo-args.sh"),
-		SystemPromptFile: briefingPath,
+		SystemPromptFile: systemPath,
 	})
-	if _, _, err := collectEvents(t, e, "ignored prompt"); err != nil {
+	const briefingBody = "iteration body delivered via stdin"
+	if _, _, err := collectEvents(t, e, briefingBody); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	out, err := os.ReadFile(argsPath)
@@ -207,13 +211,43 @@ func TestRun_SystemPromptFile_OmitsPositional(t *testing.T) {
 	if flagIdx < 0 {
 		t.Fatalf("--system-prompt-file missing from args: %q", args)
 	}
-	if flagIdx+1 >= len(args) || args[flagIdx+1] != briefingPath {
-		t.Errorf("arg after --system-prompt-file = %q, want %q", args[flagIdx+1], briefingPath)
+	if flagIdx+1 >= len(args) || args[flagIdx+1] != systemPath {
+		t.Errorf("arg after --system-prompt-file = %q, want %q", args[flagIdx+1], systemPath)
 	}
 	for _, a := range args {
-		if a == "ignored prompt" {
-			t.Errorf("positional prompt should be omitted when SystemPromptFile is set; got args %q", args)
+		if a == briefingBody {
+			t.Errorf("briefing body must arrive via stdin, not as a positional arg; got args %q", args)
 		}
+	}
+	stdinBytes, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read stdin capture: %v", err)
+	}
+	if string(stdinBytes) != briefingBody {
+		t.Errorf("stdin = %q, want %q", string(stdinBytes), briefingBody)
+	}
+}
+
+// TestRun_SystemPromptFile_RejectsEmptyPrompt ensures the adapter
+// rejects an empty prompt under --system-prompt-file before launching
+// claude: claude --print requires a user prompt and the historical
+// failure mode (silent stall with stderr leaking into the TUI) was the
+// reason this branch exists.
+func TestRun_SystemPromptFile_RejectsEmptyPrompt(t *testing.T) {
+	systemPath := filepath.Join(t.TempDir(), "contract.system.md")
+	if err := os.WriteFile(systemPath, []byte("# contract\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := New(Config{
+		Binary:           fixture(t, "fake-claude-echo-args.sh"),
+		SystemPromptFile: systemPath,
+	})
+	res, _, err := collectEvents(t, e, "")
+	if err == nil {
+		t.Fatalf("expected error when prompt is empty under SystemPromptFile; got nil")
+	}
+	if res.ExitCode != -1 {
+		t.Errorf("expected ExitCode -1 (invocation rejected); got %d", res.ExitCode)
 	}
 }
 
