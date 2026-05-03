@@ -62,7 +62,7 @@ func TestPlan_RoundTrip(t *testing.T) {
 
 func TestValidatePlan(t *testing.T) {
 	good := samplePlan(t)
-	if err := ValidatePlan(good); err != nil {
+	if err := ValidatePlan(good, nil); err != nil {
 		t.Fatalf("good plan rejected: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestValidatePlan(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := samplePlan(t)
 			tc.mutate(p)
-			err := ValidatePlan(p)
+			err := ValidatePlan(p, nil)
 			if err == nil {
 				t.Fatalf("expected error containing %q", tc.wantSub)
 			}
@@ -182,7 +182,7 @@ func TestValidatePlan(t *testing.T) {
 		})
 	}
 
-	if err := ValidatePlan(nil); err == nil {
+	if err := ValidatePlan(nil, nil); err == nil {
 		t.Fatalf("ValidatePlan(nil) returned nil error")
 	}
 
@@ -190,10 +190,134 @@ func TestValidatePlan(t *testing.T) {
 		p := samplePlan(t)
 		// samplePlan already uses task id "t1" in both p1 and p2; the
 		// validator must accept this since task ids are phase-scoped.
-		if err := ValidatePlan(p); err != nil {
+		if err := ValidatePlan(p, nil); err != nil {
 			t.Fatalf("phase-scoped duplicate task id rejected: %v", err)
 		}
 	})
+}
+
+func TestValidatePlan_CapabilityChecks(t *testing.T) {
+	registry := &CapabilityRegistry{
+		Models: []Capability{
+			{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "medium", "high"}},
+			{Family: "claude", Model: "claude-sonnet-4-6", Tier: "balanced", Efforts: []string{"low"}},
+		},
+	}
+
+	t.Run("known model and effort accepted", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].ExecutorAssignment = &RoleAssignment{Model: "claude-opus-4-7", Effort: "high"}
+		p.Phases[0].BrieferAssignment = &RoleAssignment{Model: "claude-sonnet-4-6"}
+		if err := ValidatePlan(p, registry); err != nil {
+			t.Fatalf("valid assignments rejected: %v", err)
+		}
+	})
+
+	t.Run("unknown model rejected", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].ExecutorAssignment = &RoleAssignment{Model: "claude-mystery-9-9"}
+		err := ValidatePlan(p, registry)
+		if err == nil || !strings.Contains(err.Error(), "not in capability registry") {
+			t.Fatalf("expected capability error, got %v", err)
+		}
+	})
+
+	t.Run("unsupported effort rejected", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].ReviewerAssignment = &RoleAssignment{Model: "claude-sonnet-4-6", Effort: "max"}
+		err := ValidatePlan(p, registry)
+		if err == nil || !strings.Contains(err.Error(), "not supported by model") {
+			t.Fatalf("expected effort error, got %v", err)
+		}
+	})
+
+	t.Run("effort without model rejected", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].BrieferAssignment = &RoleAssignment{Effort: "high"}
+		err := ValidatePlan(p, registry)
+		if err == nil || !strings.Contains(err.Error(), "without model") {
+			t.Fatalf("expected effort-without-model error, got %v", err)
+		}
+	})
+
+	t.Run("nil registry skips capability checks", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].ExecutorAssignment = &RoleAssignment{Model: "claude-mystery-9-9", Effort: "max"}
+		if err := ValidatePlan(p, nil); err != nil {
+			t.Fatalf("nil registry should skip capability checks: %v", err)
+		}
+	})
+}
+
+func TestValidatePlan_PreparedBriefing(t *testing.T) {
+	t.Run("valid prepared briefing accepted", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].PreparedBriefing = &PreparedBriefing{
+			SubDAGTaskIDs: []string{"t1"},
+			Instructions:  "rename the field",
+		}
+		if err := ValidatePlan(p, nil); err != nil {
+			t.Fatalf("valid prepared briefing rejected: %v", err)
+		}
+	})
+
+	t.Run("unknown task in sub_dag_task_ids rejected", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].PreparedBriefing = &PreparedBriefing{
+			SubDAGTaskIDs: []string{"ghost-task"},
+			Instructions:  "x",
+		}
+		err := ValidatePlan(p, nil)
+		if err == nil || !strings.Contains(err.Error(), "unknown task") {
+			t.Fatalf("expected unknown-task error, got %v", err)
+		}
+	})
+
+	t.Run("empty instructions rejected", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].PreparedBriefing = &PreparedBriefing{
+			SubDAGTaskIDs: []string{"t1"},
+			Instructions:  "",
+		}
+		err := ValidatePlan(p, nil)
+		if err == nil || !strings.Contains(err.Error(), "empty instructions") {
+			t.Fatalf("expected empty-instructions error, got %v", err)
+		}
+	})
+
+	t.Run("empty sub_dag_task_ids rejected", func(t *testing.T) {
+		p := samplePlan(t)
+		p.Phases[0].PreparedBriefing = &PreparedBriefing{
+			SubDAGTaskIDs: nil,
+			Instructions:  "x",
+		}
+		err := ValidatePlan(p, nil)
+		if err == nil || !strings.Contains(err.Error(), "empty sub_dag_task_ids") {
+			t.Fatalf("expected empty-sub_dag error, got %v", err)
+		}
+	})
+}
+
+func TestPhase_AssignmentFor(t *testing.T) {
+	briefer := &RoleAssignment{Model: "claude-haiku-4-5"}
+	executor := &RoleAssignment{Model: "claude-opus-4-7"}
+	p := &Phase{BrieferAssignment: briefer, ExecutorAssignment: executor}
+	if got := p.AssignmentFor("briefer"); got != briefer {
+		t.Fatalf("briefer: got %v, want %v", got, briefer)
+	}
+	if got := p.AssignmentFor("executor"); got != executor {
+		t.Fatalf("executor: got %v, want %v", got, executor)
+	}
+	if got := p.AssignmentFor("reviewer"); got != nil {
+		t.Fatalf("reviewer: expected nil, got %v", got)
+	}
+	if got := p.AssignmentFor("planner"); got != nil {
+		t.Fatalf("planner: expected nil (unknown role), got %v", got)
+	}
+	var nilPhase *Phase
+	if got := nilPhase.AssignmentFor("briefer"); got != nil {
+		t.Fatalf("nil receiver: expected nil, got %v", got)
+	}
 }
 
 func TestTaskStatus_RoundTrip(t *testing.T) {

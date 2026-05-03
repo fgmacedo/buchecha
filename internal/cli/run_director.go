@@ -68,7 +68,7 @@ type directorDeps struct {
 	baseDir     string
 	store       *director.Store
 	git         loop.GitProbe
-	newExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error)) loop.Executor
+	newExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor
 	now         func() time.Time
 	// handler, when non-nil, overrides the run-wide MCP handler the
 	// loop receives in DirectorPorts. Tests inject one to drive the
@@ -132,12 +132,20 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	adapter := directorclaude.New(directorclaude.Config{
 		Binary:       cfg.Director.Claude.Binary,
 		Model:        cfg.Director.Claude.Model,
+		Effort:       cfg.Director.Claude.Effort,
 		ExtraArgs:    cfg.Director.Claude.ExtraArgs,
 		MaxBudgetUSD: cfg.Director.Claude.MaxBudgetUSD,
 		Stderr:       subprocessStderr,
 		MCPURL:       boot.url(),
 		MCPToken:     boot.token(),
 	})
+	registry := director.MergeCapabilityRegistries(
+		directorclaude.Capabilities(),
+		claude.Capabilities(),
+	)
+	if boot != nil && boot.handler != nil {
+		boot.handler.SetCapabilityRegistry(&registry)
+	}
 	return directorDeps{
 		planner:    adapter,
 		briefer:    adapter,
@@ -145,7 +153,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		registerFn: boot.registerDirectorAgent,
 		baseDir:    ".bcc",
 		git:        gitcli.New(""),
-		newExecutor: func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error)) loop.Executor {
+		newExecutor: func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor {
 			mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
 			if err != nil {
 				return &failingExecutor{err: fmt.Errorf("register executor agent: %w", err)}
@@ -155,9 +163,20 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 				cleanup()
 				return &failingExecutor{err: fmt.Errorf("render executor system prompt: %w", err)}
 			}
+			model := cfg.Agent.Claude.Model
+			effort := cfg.Agent.Claude.Effort
+			if assignment != nil {
+				if assignment.Model != "" {
+					model = assignment.Model
+				}
+				if assignment.Effort != "" {
+					effort = assignment.Effort
+				}
+			}
 			inner := claude.New(claude.Config{
 				Binary:            cfg.Agent.Claude.Binary,
-				Model:             cfg.Agent.Claude.Model,
+				Model:             model,
+				Effort:            effort,
 				ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
 				SkipPermissions:   cfg.Agent.Claude.ShouldSkipPermissions(),
 				SystemPromptFile:  systemPromptFile,
@@ -867,10 +886,17 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		close(pumpDone)
 	}
 
+	var plannerRegistry director.CapabilityRegistry
+	if h := directorEffectiveHandler(deps); h != nil {
+		if reg := h.CapabilityRegistry(); reg != nil {
+			plannerRegistry = *reg
+		}
+	}
 	plan, _, runErr := deps.planner.Plan(ctx, director.PlannerInput{
 		AgentID:  agentID,
 		SpecPath: specPath,
 		SpecHash: hash,
+		Registry: plannerRegistry,
 	}, agentEvents)
 	if agentEvents != nil {
 		close(agentEvents)
@@ -901,7 +927,11 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	if plan.PlannedAt.IsZero() {
 		plan.PlannedAt = deps.now()
 	}
-	if err := director.ValidatePlan(plan); err != nil {
+	var registry *director.CapabilityRegistry
+	if h := directorEffectiveHandler(deps); h != nil {
+		registry = h.CapabilityRegistry()
+	}
+	if err := director.ValidatePlan(plan, registry); err != nil {
 		ExitCode = loop.ExitInvalid
 		return nil, err
 	}

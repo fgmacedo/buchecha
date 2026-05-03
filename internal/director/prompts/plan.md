@@ -19,6 +19,17 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 6. Emit it via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection it returns a structured error with the offending ids; read the error, correct the plan, and re-emit. The Plan is replaced atomically when the emit succeeds.
 7. Call `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, root P1 establishes session boundary").
 
+## Available models
+
+Each Phase may carry per-role assignments (`briefer_assignment`, `executor_assignment`, `reviewer_assignment`). Pick model and effort based on the cognitive demand of the phase: trivial mechanical phases warrant cheaper models, reasoning-dense phases warrant frontier ones. Omit a field to use the configured default for that role.
+
+| Model | Tier | Efforts | Notes |
+|---|---|---|---|
+{{range .Registry.Models}}| `{{.Model}}` | {{.Tier}} | {{.EffortsString}} | {{.Description}} |
+{{end}}
+
+When a phase is mechanical and you already know exactly which tasks the first iteration should ship and what the Executor needs to know, emit `prepared_briefing` directly on the Phase. The loop will use it instead of spawning the Briefer agent for that phase. Save this for phases where a separate briefing pass adds no value: a config field rename, a one-line wiring change, an obvious test that only needs the file path. On retry the loop reuses the prepared briefing and prepends the Reviewer's `prior_feedback` automatically; you do not need to handle retries.
+
 ## Plan shape
 
 ```
@@ -37,7 +48,19 @@ Phase
 ├── priority: int                         relative priority within the plan
 ├── scope_in: []string                    paths or directories the phase may touch
 ├── scope_out: []string                   paths the phase must not touch
-└── tasks: []Task                         atomic units of work
+├── tasks: []Task                         atomic units of work
+├── briefer_assignment?: RoleAssignment   per-phase model+effort for the Briefer; omit to use the default
+├── executor_assignment?: RoleAssignment  per-phase model+effort for the Executor; omit to use the default
+├── reviewer_assignment?: RoleAssignment  per-phase model+effort for the Reviewer; omit to use the default
+└── prepared_briefing?: PreparedBriefing  inline Briefing; when present the loop skips the Briefer agent
+
+RoleAssignment
+├── model: string                         must be a model listed in "Available models" above
+└── effort?: string                       must be an effort the chosen model supports; omit when not needed
+
+PreparedBriefing
+├── sub_dag_task_ids: []task_id           tasks within this phase the first iteration covers
+└── instructions: string                  free-form prose the Executor will receive verbatim
 
 Task
 ├── id: string                            stable identifier, unique within its phase

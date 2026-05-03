@@ -48,10 +48,28 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/task" }
         },
+        "briefer_assignment": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/roleAssignment" }
+          ]
+        },
         "executor_assignment": {
           "anyOf": [
             { "type": "null" },
-            { "$ref": "#/$defs/executorAssignment" }
+            { "$ref": "#/$defs/roleAssignment" }
+          ]
+        },
+        "reviewer_assignment": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/roleAssignment" }
+          ]
+        },
+        "prepared_briefing": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/preparedBriefing" }
           ]
         }
       }
@@ -94,13 +112,25 @@
         }
       }
     },
-    "executorAssignment": {
+    "roleAssignment": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "family": { "type": "string" },
-        "model": { "type": "string" },
-        "effort": { "type": "string" }
+        "model": { "type": "string", "minLength": 1 },
+        "effort": { "type": "string", "minLength": 1 }
+      }
+    },
+    "preparedBriefing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sub_dag_task_ids", "instructions"],
+      "properties": {
+        "sub_dag_task_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "instructions": { "type": "string", "minLength": 1 }
       }
     }
   }

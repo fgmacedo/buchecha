@@ -149,8 +149,8 @@ func (e *directorFakeExec) Run(ctx context.Context, _ string, events chan<- agen
 	return loop.ExecResult{ExitCode: 0}, nil
 }
 
-func directorNewExecutor(h *dag.Handler, signal agentcontract.Signal, runs *directorFakeRuns) func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
-	return func(args dag.RegisterArgs, renderSystem func(string) (string, error)) loop.Executor {
+func directorNewExecutor(h *dag.Handler, signal agentcontract.Signal, runs *directorFakeRuns) func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(string) (string, error), _ *director.RoleAssignment) loop.Executor {
 		if renderSystem != nil {
 			if _, err := renderSystem("integration-executor-agent"); err != nil {
 				return &failingDirectorExec{err: err}
@@ -741,4 +741,87 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// countingBriefer wraps a real Briefer and increments a counter on
+// every call, so tests can assert the loop did or did not invoke it.
+type countingBriefer struct {
+	calls int
+	mu    sync.Mutex
+	inner director.Briefer
+}
+
+func (b *countingBriefer) Brief(ctx context.Context, in director.BrieferInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
+	return b.inner.Brief(ctx, in, events)
+}
+
+func (b *countingBriefer) callCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls
+}
+
+// TestDirectorIntegration_PreparedBriefingSkipsBriefer pins the
+// Planner-prepared briefing path: when Phase.PreparedBriefing is set,
+// the loop must not spawn the Briefer agent for that phase. The
+// Briefer in this test wraps the real emitter only to count calls; if
+// it were called the count would be > 0.
+func TestDirectorIntegration_PreparedBriefingSkipsBriefer(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := directorTestSpec(t, tmp)
+	store := directorTestStore(t, tmp, specPath)
+	plan := directorTestPlan()
+	plan.SpecHash = "deadbeef"
+	plan.Phases[0].PreparedBriefing = &director.PreparedBriefing{
+		SubDAGTaskIDs: []string{"t1"},
+		Instructions:  "ship it",
+	}
+	plan.Phases[1].PreparedBriefing = &director.PreparedBriefing{
+		SubDAGTaskIDs: []string{"t1"},
+		Instructions:  "ship it again",
+	}
+	if err := store.WritePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	h := directorTestHandler(plan)
+	runsCounter := &directorFakeRuns{}
+	cb := &countingBriefer{inner: briefingEmitter(t, h)}
+	cfg := newTestConfig()
+
+	l := &loop.Loop{
+		SpecPath: specPath,
+		Config:   cfg,
+		Git:      &directorAdvancingGit{},
+		Director: &loop.DirectorPorts{
+			Plan:        plan,
+			Briefer:     cb,
+			Reviewer:    approvingReviewer(t, h),
+			Store:       store,
+			Handler:     h,
+			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, runsCounter),
+		},
+	}
+
+	code, err, _ := runDirectorLoop(t, l)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != loop.ExitDone {
+		t.Errorf("exit = %d, want ExitDone", code)
+	}
+	if cb.callCount() != 0 {
+		t.Errorf("Briefer was called %d times; expected 0 with PreparedBriefing on every phase", cb.callCount())
+	}
+	// And the synthetic briefings must be present on the handler so the
+	// Executor + Reviewer could read them.
+	if got := h.Briefing("phase-1-1"); got == nil || got.Instructions != "ship it" {
+		t.Errorf("phase-1 synthetic briefing not stored: %+v", got)
+	}
+	if got := h.Briefing("phase-2-1"); got == nil || got.Instructions != "ship it again" {
+		t.Errorf("phase-2 synthetic briefing not stored: %+v", got)
+	}
 }

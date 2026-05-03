@@ -186,6 +186,104 @@ func safeAt(s []string, i int) string {
 	return s[i]
 }
 
+// TestBrief_AssignmentOverridesModelAndEffort pins the per-call
+// override path: when BrieferInput.Assignment carries a Model or
+// Effort, the spawned claude args must reflect it instead of the
+// adapter's configured defaults.
+func TestBrief_AssignmentOverridesModelAndEffort(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	a := New(Config{
+		Binary: fixture(t, "fake-claude-echo-args.sh"),
+		Model:  "default-model",
+		Effort: "low",
+	})
+	_, err := a.Brief(context.Background(), director.BrieferInput{
+		AgentID:    "briefer-001",
+		Plan:       &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:   "/tmp/spec.md",
+		PhaseID:    "p1",
+		Attempt:    1,
+		Assignment: &director.RoleAssignment{Model: "override-model", Effort: "high"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Brief: %v", err)
+	}
+	out, _ := os.ReadFile(argsPath)
+	body := string(out)
+	if !strings.Contains(body, "--model\noverride-model") {
+		t.Errorf("expected --model override-model, got: %s", body)
+	}
+	if !strings.Contains(body, "--effort\nhigh") {
+		t.Errorf("expected --effort high, got: %s", body)
+	}
+	if strings.Contains(body, "default-model") {
+		t.Errorf("default model should be overridden: %s", body)
+	}
+	if strings.Contains(body, "--effort\nlow") {
+		t.Errorf("default effort should be overridden: %s", body)
+	}
+}
+
+// TestBrief_NoAssignmentKeepsConfiguredDefaults pins the fall-through
+// path: a nil Assignment (or empty fields) preserves the configured
+// Model and Effort.
+func TestBrief_NoAssignmentKeepsConfiguredDefaults(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	a := New(Config{
+		Binary: fixture(t, "fake-claude-echo-args.sh"),
+		Model:  "default-model",
+		Effort: "low",
+	})
+	_, err := a.Brief(context.Background(), director.BrieferInput{
+		AgentID:  "briefer-001",
+		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath: "/tmp/spec.md",
+		PhaseID:  "p1",
+		Attempt:  1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Brief: %v", err)
+	}
+	out, _ := os.ReadFile(argsPath)
+	body := string(out)
+	if !strings.Contains(body, "--model\ndefault-model") {
+		t.Errorf("expected --model default-model, got: %s", body)
+	}
+	if !strings.Contains(body, "--effort\nlow") {
+		t.Errorf("expected --effort low, got: %s", body)
+	}
+}
+
+// TestPlan_RegistryRendersInPrompt confirms the planner prompt embeds
+// the configured CapabilityRegistry models so the agent can pick from
+// them when authoring per-phase assignments.
+func TestPlan_RegistryRendersInPrompt(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	a := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
+	registry := director.CapabilityRegistry{
+		Models: []director.Capability{
+			{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "high"}, Description: "Strongest reasoning."},
+			{Family: "claude", Model: "claude-haiku-4-5", Tier: "fast", Description: "Cheapest."},
+		},
+	}
+	_, _, err := a.Plan(context.Background(), director.PlannerInput{
+		AgentID:  "planner-001",
+		SpecPath: "/tmp/spec.md",
+		SpecHash: "h",
+		Registry: registry,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	out, _ := os.ReadFile(argsPath)
+	body := string(out)
+	for _, want := range []string{"claude-opus-4-7", "frontier", "Strongest reasoning", "claude-haiku-4-5", "fast", "low, high"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("planner prompt missing %q in:\n%s", want, body)
+		}
+	}
+}
+
 // TestComposePrompt_EmbedsAbsoluteRestrictions guards against the
 // renderer dropping the safety partial. Plan, brief, and review
 // prompts must all carry the absolute_restrictions text.

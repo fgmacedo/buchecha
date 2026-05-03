@@ -107,6 +107,7 @@ The PRD describes the normative model; the migration spec describes the eight ph
 | [index.md](./index.md) | initiative | approved | This vision document |
 | [2026-05-02-executable-plan-dag.md](./2026-05-02-executable-plan-dag.md) | prd | approved | Plan is a DAG of phases and tasks; all communication flows through a real MCP handler; loop is DAG-driven |
 | [2026-05-02-reviewed-execution-corrections.md](./2026-05-02-reviewed-execution-corrections.md) | spec | done | Implementation spec executed in eight phases (P1-P8): sessions, DAG types, run-wide MCP, all-roles tools, MCP method surface, DAG-driven loop, four-option escalation, wire-protocol partial rewrite |
+| [2026-05-03-capability-aware-execution.md](./2026-05-03-capability-aware-execution.md) | prd | done | Per-phase capability assignments: each adapter publishes its model registry; the Planner attributes model+effort to Briefer/Executor/Reviewer per phase, and may emit a `prepared_briefing` to skip the Briefer agent on mechanical phases |
 
 ## Cross-cutting decisions
 
@@ -134,7 +135,6 @@ Tracked as enhancement issues:
 
 - **Spec validation gate**: pre-flight pass that scores a spec for executability before the Planner runs.
 - **Parallel phase execution**: independent phases run in parallel worktrees with a Director-driven reconciliation.
-- **Capability-aware execution**: executor adapters publish capability registries; the Director assigns per-task model and effort.
 
 ## References
 

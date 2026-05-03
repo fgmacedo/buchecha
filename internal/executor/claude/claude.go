@@ -77,6 +77,12 @@ type Config struct {
 	// Model is passed via --model. Empty omits the flag.
 	Model string
 
+	// Effort is passed via --effort (claude CLI: low|medium|high|xhigh|max,
+	// availability per model). Empty omits the flag. Set per-spawn from
+	// the Phase's executor_assignment, falling back to the configured
+	// default when the Planner does not attribute one.
+	Effort string
+
 	// ExtraArgs are appended to the command line after the protocol
 	// flags, MCP wiring, --model, and before the prompt positional
 	// argument. Reserve for ad-hoc additions.
@@ -209,6 +215,9 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	}
 	if e.cfg.Model != "" {
 		args = append(args, "--model", e.cfg.Model)
+	}
+	if e.cfg.Effort != "" {
+		args = append(args, "--effort", e.cfg.Effort)
 	}
 	args = append(args, e.cfg.ExtraArgs...)
 	if e.cfg.SystemPromptFile == "" {

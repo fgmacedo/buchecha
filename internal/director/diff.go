@@ -153,8 +153,17 @@ func diffPhase(a, b Phase) []string {
 	if !reflect.DeepEqual(a.Tasks, b.Tasks) {
 		out = append(out, fmt.Sprintf("tasks: %d → %d", len(a.Tasks), len(b.Tasks)))
 	}
+	if !reflect.DeepEqual(a.BrieferAssignment, b.BrieferAssignment) {
+		out = append(out, "briefer_assignment changed")
+	}
 	if !reflect.DeepEqual(a.ExecutorAssignment, b.ExecutorAssignment) {
 		out = append(out, "executor_assignment changed")
+	}
+	if !reflect.DeepEqual(a.ReviewerAssignment, b.ReviewerAssignment) {
+		out = append(out, "reviewer_assignment changed")
+	}
+	if !reflect.DeepEqual(a.PreparedBriefing, b.PreparedBriefing) {
+		out = append(out, "prepared_briefing changed")
 	}
 	return out
 }

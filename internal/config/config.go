@@ -48,8 +48,15 @@ type Agent struct {
 
 // AgentClaude configures the claude executor adapter.
 type AgentClaude struct {
-	Binary    string   `toml:"binary"`
-	Model     string   `toml:"model"`
+	Binary string `toml:"binary"`
+	Model  string `toml:"model"`
+	// Effort is the default --effort level claude uses when the
+	// Planner does not attribute one on the Phase via
+	// executor_assignment. Empty omits the flag. Allowed values depend
+	// on the model (low|medium|high|xhigh|max); the loop validates
+	// per-phase overrides against the capability registry, so an
+	// invalid default here is only caught at spawn time by the CLI.
+	Effort    string   `toml:"effort"`
 	ExtraArgs []string `toml:"extra_args"`
 
 	// SkipPermissions, when true (the default), instructs the adapter to
@@ -126,8 +133,13 @@ func (d DirectorConfig) IsMCPAuditEnabled() bool {
 // MaxBudgetUSD == 0 disables the cost cap; > 0 maps to the binary's
 // --max-budget-usd flag and the call fails fail-closed if exceeded.
 type DirectorClaude struct {
-	Binary       string   `toml:"binary"`
-	Model        string   `toml:"model"`
+	Binary string `toml:"binary"`
+	Model  string `toml:"model"`
+	// Effort is the default --effort level for Director roles
+	// (Planner, Briefer, Reviewer) when the Planner did not attribute
+	// one on the Phase via briefer_assignment / reviewer_assignment.
+	// Empty omits the flag. Same allowed values as AgentClaude.Effort.
+	Effort       string   `toml:"effort"`
 	ExtraArgs    []string `toml:"extra_args"`
 	MaxBudgetUSD float64  `toml:"max_budget_usd"`
 }

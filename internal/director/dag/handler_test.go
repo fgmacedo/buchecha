@@ -148,6 +148,90 @@ func TestHandlePlanEmit_RejectsCycle(t *testing.T) {
 	}
 }
 
+func TestHandlePlanEmit_RejectsAssignmentOutsideRegistry(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	caps := &director.CapabilityRegistry{
+		Models: []director.Capability{
+			{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
+		},
+	}
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{CapabilityRegistry: caps})
+	plan := validPlanInput(t)
+	plan["phases"].([]any)[0].(map[string]any)["executor_assignment"] = map[string]any{
+		"model": "claude-mystery-9-9",
+	}
+	_, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     plan,
+	})
+	if err == nil {
+		t.Fatal("expected rejection on unknown model assignment")
+	}
+	if !strings.Contains(err.Error(), "not in capability registry") {
+		t.Fatalf("error %q missing capability rejection text", err)
+	}
+}
+
+func TestRecordSyntheticBriefing_ValidatesAndStores(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	h := NewHandler(nil, registry)
+	pid, _ := registry.Register(RolePlanner, RegisterArgs{})
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(pid),
+		"plan":     validPlanInput(t),
+	}); err != nil {
+		t.Fatalf("plan emit: %v", err)
+	}
+	br := director.Briefing{
+		IterationID:   "P1-1",
+		PhaseID:       "P1",
+		SubDAGTaskIDs: []string{"t1"},
+		Instructions:  "ship it",
+		SpecPath:      "/tmp/spec.md",
+	}
+	if err := h.RecordSyntheticBriefing(br); err != nil {
+		t.Fatalf("RecordSyntheticBriefing: %v", err)
+	}
+	got := h.Briefing("P1-1")
+	if got == nil {
+		t.Fatal("synthetic briefing not stored")
+	}
+	if got.Instructions != "ship it" || got.PhaseID != "P1" {
+		t.Fatalf("unexpected briefing stored: %+v", got)
+	}
+}
+
+func TestRecordSyntheticBriefing_RejectsUnknownTask(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	h := NewHandler(nil, registry)
+	pid, _ := registry.Register(RolePlanner, RegisterArgs{})
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(pid),
+		"plan":     validPlanInput(t),
+	}); err != nil {
+		t.Fatalf("plan emit: %v", err)
+	}
+	err := h.RecordSyntheticBriefing(director.Briefing{
+		IterationID:   "P1-1",
+		PhaseID:       "P1",
+		SubDAGTaskIDs: []string{"ghost"},
+		Instructions:  "x",
+		SpecPath:      "/tmp/spec.md",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not in phase") {
+		t.Fatalf("expected unknown-task rejection, got %v", err)
+	}
+}
+
+func TestRecordSyntheticBriefing_RequiresIterationID(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	err := h.RecordSyntheticBriefing(director.Briefing{PhaseID: "P1"})
+	if err == nil || !strings.Contains(err.Error(), "empty iteration_id") {
+		t.Fatalf("expected empty-iteration_id rejection, got %v", err)
+	}
+}
+
 // emitSamplePlan installs samplePlan() into the handler via the
 // bcc_plan_emit path so subsequent tests run against a real DAG state.
 func emitSamplePlan(t *testing.T, h *Handler) {

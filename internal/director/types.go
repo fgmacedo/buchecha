@@ -24,17 +24,28 @@ type Plan struct {
 // across re-plans (see PhaseID in ids.go) so DAG state collected
 // against a previous plan version stays addressable. A Phase owns its
 // task DAG; cross-phase task dependencies are not representable.
+//
+// The four optional capability fields (BrieferAssignment,
+// ExecutorAssignment, ReviewerAssignment, PreparedBriefing) carry the
+// Planner's per-phase routing choices: which model and effort each role
+// uses, and an inline Briefing that lets the loop skip the Briefer
+// agent entirely when the Planner already has enough context to author
+// it directly. Each field is independent; absent fields fall back to
+// the configured defaults and the regular Briefer flow.
 type Phase struct {
-	ID                 string              `json:"id"`
-	Title              string              `json:"title"`
-	Intent             string              `json:"intent"`
-	DependsOn          []string            `json:"depends_on"`
-	Parallelizable     bool                `json:"parallelizable"`
-	Priority           int                 `json:"priority,omitempty"`
-	ScopeIn            []string            `json:"scope_in"`
-	ScopeOut           []string            `json:"scope_out"`
-	Tasks              []Task              `json:"tasks"`
-	ExecutorAssignment *ExecutorAssignment `json:"executor_assignment,omitempty"`
+	ID                 string            `json:"id"`
+	Title              string            `json:"title"`
+	Intent             string            `json:"intent"`
+	DependsOn          []string          `json:"depends_on"`
+	Parallelizable     bool              `json:"parallelizable"`
+	Priority           int               `json:"priority,omitempty"`
+	ScopeIn            []string          `json:"scope_in"`
+	ScopeOut           []string          `json:"scope_out"`
+	Tasks              []Task            `json:"tasks"`
+	BrieferAssignment  *RoleAssignment   `json:"briefer_assignment,omitempty"`
+	ExecutorAssignment *RoleAssignment   `json:"executor_assignment,omitempty"`
+	ReviewerAssignment *RoleAssignment   `json:"reviewer_assignment,omitempty"`
+	PreparedBriefing   *PreparedBriefing `json:"prepared_briefing,omitempty"`
 }
 
 // Task is the atomic unit of progress inside a Phase. Tasks own their
@@ -62,13 +73,26 @@ type AcceptanceItem struct {
 	Evidence    EvidenceKind `json:"evidence"`
 }
 
-// ExecutorAssignment is a reserved hook for PRD 4 (capability-aware
-// execution). The loop ignores it until that PRD lands; it is parsed
-// and persisted so plans authored under PRD 4 survive a downgrade.
-type ExecutorAssignment struct {
-	Family string `json:"family,omitempty"`
+// RoleAssignment carries the Planner's per-phase routing for one role
+// (Briefer, Executor, or Reviewer). Model picks a member of the
+// CapabilityRegistry exposed at planning time; Effort, when present,
+// must be supported by that model. Empty fields fall back to the
+// configured default for the corresponding role; the loop and adapters
+// never invent a value.
+type RoleAssignment struct {
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+}
+
+// PreparedBriefing lets the Planner skip the Briefer agent for a phase
+// it already understands well enough to brief inline. When present, the
+// loop synthesizes a Briefing from these fields and records it in the
+// audit log under role "planner" instead of spawning a Briefer
+// subprocess; on retry the loop reuses the same instructions and
+// prepends the Reviewer's prior_feedback automatically.
+type PreparedBriefing struct {
+	SubDAGTaskIDs []string `json:"sub_dag_task_ids"`
+	Instructions  string   `json:"instructions"`
 }
 
 // Briefing is the Briefer's per-iteration instruction set for one
@@ -99,6 +123,26 @@ func (p *Plan) PhaseByID(id string) *Phase {
 	return nil
 }
 
+// AssignmentFor returns the Phase's RoleAssignment for the named role,
+// or nil when the Planner did not attribute one. Accepted role names
+// are "briefer", "executor", and "reviewer"; any other value yields
+// nil. The returned pointer aliases the Phase field; callers must not
+// mutate it.
+func (p *Phase) AssignmentFor(role string) *RoleAssignment {
+	if p == nil {
+		return nil
+	}
+	switch role {
+	case "briefer":
+		return p.BrieferAssignment
+	case "executor":
+		return p.ExecutorAssignment
+	case "reviewer":
+		return p.ReviewerAssignment
+	}
+	return nil
+}
+
 // TaskByID returns a pointer to the Task within the Phase whose ID
 // matches id, or nil when no task matches. Task IDs are scoped to the
 // owning phase: the same id can repeat across different phases.
@@ -121,7 +165,14 @@ func (p *Phase) TaskByID(id string) *Task {
 // task-level deps resolving to task ids within the same phase, and
 // acyclic edge sets at both levels. Failures carry the offending ids
 // so the Planner can correct and re-emit.
-func ValidatePlan(p *Plan) error {
+//
+// When registry is non-nil the validator additionally rejects per-phase
+// role assignments whose Model is not in the registry or whose Effort
+// is not among the model's supported levels, and PreparedBriefings
+// referencing tasks not in the owning phase. nil registry skips those
+// checks; tests that drive ValidatePlan without a configured registry
+// rely on this.
+func ValidatePlan(p *Plan, registry *CapabilityRegistry) error {
 	if p == nil {
 		return errors.New("director: nil plan")
 	}
@@ -172,9 +223,70 @@ func ValidatePlan(p *Plan) error {
 		if err := detectTaskCycle(ph); err != nil {
 			return err
 		}
+		if err := validatePhaseCapabilityFields(ph, registry); err != nil {
+			return err
+		}
 	}
 
 	return detectPhaseCycle(p)
+}
+
+// validatePhaseCapabilityFields enforces the capability-aware fields on
+// a Phase: per-role assignments must reference a model in the registry
+// (and an effort that model supports, when set), and a PreparedBriefing
+// must list at least one task and only tasks owned by the phase. A nil
+// registry skips the model/effort checks but still validates the
+// PreparedBriefing structure since it does not depend on the registry.
+func validatePhaseCapabilityFields(ph Phase, registry *CapabilityRegistry) error {
+	taskIDs := make(map[string]struct{}, len(ph.Tasks))
+	for _, t := range ph.Tasks {
+		taskIDs[t.ID] = struct{}{}
+	}
+
+	type roleSlot struct {
+		name       string
+		assignment *RoleAssignment
+	}
+	for _, slot := range []roleSlot{
+		{"briefer", ph.BrieferAssignment},
+		{"executor", ph.ExecutorAssignment},
+		{"reviewer", ph.ReviewerAssignment},
+	} {
+		if slot.assignment == nil {
+			continue
+		}
+		if registry == nil {
+			continue
+		}
+		if slot.assignment.Model != "" {
+			if _, ok := registry.ByModel(slot.assignment.Model); !ok {
+				return fmt.Errorf("director: phase %q %s_assignment model %q not in capability registry",
+					ph.ID, slot.name, slot.assignment.Model)
+			}
+			if slot.assignment.Effort != "" && !registry.SupportsEffort(slot.assignment.Model, slot.assignment.Effort) {
+				return fmt.Errorf("director: phase %q %s_assignment effort %q not supported by model %q",
+					ph.ID, slot.name, slot.assignment.Effort, slot.assignment.Model)
+			}
+		} else if slot.assignment.Effort != "" {
+			return fmt.Errorf("director: phase %q %s_assignment has effort %q without model",
+				ph.ID, slot.name, slot.assignment.Effort)
+		}
+	}
+
+	if pb := ph.PreparedBriefing; pb != nil {
+		if pb.Instructions == "" {
+			return fmt.Errorf("director: phase %q prepared_briefing has empty instructions", ph.ID)
+		}
+		if len(pb.SubDAGTaskIDs) == 0 {
+			return fmt.Errorf("director: phase %q prepared_briefing has empty sub_dag_task_ids", ph.ID)
+		}
+		for _, tid := range pb.SubDAGTaskIDs {
+			if _, ok := taskIDs[tid]; !ok {
+				return fmt.Errorf("director: phase %q prepared_briefing references unknown task %q", ph.ID, tid)
+			}
+		}
+	}
+	return nil
 }
 
 // detectPhaseCycle runs DFS three-color marking on the phase-level DAG

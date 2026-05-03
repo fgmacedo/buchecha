@@ -38,7 +38,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		return l.terminate(events, "fatal", ExitInvalid),
 			errors.New("loop: Director requires Plan, Briefer, Reviewer, Store, NewExecutor, and Handler")
 	}
-	if err := director.ValidatePlan(d.Plan); err != nil {
+	if err := director.ValidatePlan(d.Plan, d.Handler.CapabilityRegistry()); err != nil {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan: %w", err)
 	}
 	state := d.Handler.State()
@@ -94,31 +94,53 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			budget = l.Config.Director.RetryBudget
 		}
 
-		brieferID, err := registry.Register(dag.RoleBriefer, dag.RegisterArgs{PhaseID: phaseID})
-		if err != nil {
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: register briefer: %w", err)
-		}
-		briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, 1, subDAG, priorFeedback)
-		if err != nil {
+		iterationID := fmt.Sprintf("%s-%d", phaseID, 1)
+		var briefing *director.Briefing
+		if phase.PreparedBriefing != nil {
+			synthetic := director.Briefing{
+				IterationID:   iterationID,
+				PhaseID:       phaseID,
+				SubDAGTaskIDs: append([]string(nil), phase.PreparedBriefing.SubDAGTaskIDs...),
+				Instructions:  phase.PreparedBriefing.Instructions,
+				SpecPath:      l.SpecPath,
+			}
+			if priorFeedback != "" {
+				pf := priorFeedback
+				synthetic.PriorFeedback = &pf
+			}
+			if err := d.Handler.RecordSyntheticBriefing(synthetic); err != nil {
+				return l.terminate(events, "fatal", ExitInvalid),
+					fmt.Errorf("director: record synthetic briefing for phase %s: %w", phaseID, err)
+			}
+			briefing = d.Handler.Briefing(iterationID)
+		} else {
+			brieferID, err := registry.Register(dag.RoleBriefer, dag.RegisterArgs{PhaseID: phaseID})
+			if err != nil {
+				return l.terminate(events, "fatal", ExitInvalid),
+					fmt.Errorf("director: register briefer: %w", err)
+			}
+			briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, 1, subDAG, priorFeedback)
+			if err != nil {
+				registry.Deregister(brieferID)
+				return l.terminate(events, "fatal", ExitInvalid),
+					fmt.Errorf("director: briefing input phase %s: %w", phaseID, err)
+			}
+			briefIn.AgentID = string(brieferID)
+			briefIn.Assignment = phase.AssignmentFor("briefer")
+			brierr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
+				_, e := d.Briefer.Brief(ctx, *briefIn, agentEvents)
+				return e
+			})
 			registry.Deregister(brieferID)
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: briefing input phase %s: %w", phaseID, err)
+			if brierr != nil {
+				return l.terminate(events, "fatal", ExitInvalid),
+					fmt.Errorf("director: brief phase %s: %w", phaseID, brierr)
+			}
+			briefing = d.Handler.Briefing(briefIn.IterationID)
 		}
-		briefIn.AgentID = string(brieferID)
-		brierr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
-			_, e := d.Briefer.Brief(ctx, *briefIn, agentEvents)
-			return e
-		})
-		registry.Deregister(brieferID)
-		if brierr != nil {
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: brief phase %s: %w", phaseID, brierr)
-		}
-		briefing := d.Handler.Briefing(briefIn.IterationID)
 		if briefing == nil {
 			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: briefer did not emit briefing %q", briefIn.IterationID)
+				fmt.Errorf("director: briefer did not emit briefing %q", iterationID)
 		}
 		if briefing.PhaseID != phaseID {
 			return l.terminate(events, "fatal", ExitInvalid),
@@ -205,7 +227,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				PhaseID:    phaseID,
 				SubDAG:     actualSub,
 			}
-			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(execArgs, renderSystem), userPrompt, events, d.Handler, briefing.IterationID)
+			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(execArgs, renderSystem, phase.AssignmentFor("executor")), userPrompt, events, d.Handler, briefing.IterationID)
 			if execErr != nil {
 				return l.terminate(events, "fatal", ExitInvalid), execErr
 			}
@@ -253,6 +275,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 					IterationID: briefing.IterationID,
 					PhaseID:     phaseID,
 					SubDAG:      actualSub,
+					Assignment:  phase.AssignmentFor("reviewer"),
 				}, agentEvents)
 				return e
 			})

@@ -97,8 +97,14 @@ type Config struct {
 	// Binary is the path or PATH name of the claude binary.
 	Binary string
 
-	// Model is passed via --model. Empty omits the flag.
+	// Model is passed via --model. Empty omits the flag. Per-phase
+	// role assignments (briefer_assignment, reviewer_assignment) override
+	// this on individual Brief/Review calls.
 	Model string
+
+	// Effort is the default effort level passed via --effort when no
+	// per-call assignment overrides it. Empty omits the flag.
+	Effort string
 
 	// ExtraArgs are appended to the command line after the protocol
 	// flags and --max-budget-usd, before the prompt positional argument.
@@ -164,6 +170,7 @@ func New(cfg Config) *Adapter {
 type planView struct {
 	AgentID  string
 	SpecPath string
+	Registry director.CapabilityRegistry
 }
 
 type briefView struct {
@@ -195,16 +202,20 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 	prompt, err := composePrompt(director.PlanPromptTemplate(), planView{
 		AgentID:  in.AgentID,
 		SpecPath: in.SpecPath,
+		Registry: in.Registry,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("director/claude: compose plan prompt: %w", err)
 	}
-	stats, err := a.runRole(ctx, dag.RolePlanner, prompt, events)
+	stats, err := a.runRole(ctx, dag.RolePlanner, prompt, events, "", "")
 	return nil, stats, err
 }
 
 // Brief implements director.Briefer. Same shape as Plan: render, run,
 // return. The Briefing lands in the dag handler via bcc_briefing_emit.
+// in.Assignment, when non-nil, overrides the configured Model and
+// Effort on this call so per-phase capability routing flows through to
+// the spawned claude process.
 func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
 	if in.AgentID == "" {
 		return nil, ErrMissingAgentID
@@ -219,13 +230,15 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)
 	}
-	return a.runRole(ctx, dag.RoleBriefer, prompt, events)
+	model, effort := assignmentOverride(in.Assignment)
+	return a.runRole(ctx, dag.RoleBriefer, prompt, events, model, effort)
 }
 
 // Review implements director.Reviewer. The Reviewer's work is recorded
 // as DAG mutations (bcc_task_approved / bcc_task_needs_fix) plus a
 // final bcc_review_finished outcome; the handler is the source of
-// truth for the resulting state.
+// truth for the resulting state. in.Assignment, when non-nil, overrides
+// the configured Model and Effort on this call.
 func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
 	if in.AgentID == "" {
 		return nil, ErrMissingAgentID
@@ -237,7 +250,18 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)
 	}
-	return a.runRole(ctx, dag.RoleReviewer, prompt, events)
+	model, effort := assignmentOverride(in.Assignment)
+	return a.runRole(ctx, dag.RoleReviewer, prompt, events, model, effort)
+}
+
+// assignmentOverride extracts the per-call (model, effort) pair from a
+// RoleAssignment. nil or empty fields produce empty strings, which
+// runRole reads as "use the configured default".
+func assignmentOverride(a *director.RoleAssignment) (string, string) {
+	if a == nil {
+		return "", ""
+	}
+	return a.Model, a.Effort
 }
 
 // composePrompt expands a role's prompt template with the agentcontract
@@ -260,7 +284,12 @@ func composePrompt(promptTpl string, view any) (string, error) {
 // forwards them to events when non-nil, and derives DirectorCallStats
 // from the terminal KindResultSummary so the cost panel and budget
 // check share a single source of truth.
-func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+// runRole spawns claude for one role invocation. modelOverride and
+// effortOverride, when non-empty, replace the adapter's configured
+// values for this single spawn so per-phase capability assignments
+// flow into the CLI flags. Empty strings preserve the configured
+// defaults.
+func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, events chan<- agentcontract.AgentEvent, modelOverride, effortOverride string) (*director.DirectorCallStats, error) {
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -278,8 +307,19 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, eve
 		args = append(args, "--mcp-config", path, "--strict-mcp-config")
 	}
 
-	if a.cfg.Model != "" {
-		args = append(args, "--model", a.cfg.Model)
+	model := a.cfg.Model
+	if modelOverride != "" {
+		model = modelOverride
+	}
+	effort := a.cfg.Effort
+	if effortOverride != "" {
+		effort = effortOverride
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
 	}
 	if a.cfg.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(a.cfg.MaxBudgetUSD, 'f', -1, 64))

@@ -280,6 +280,41 @@ func TestRun_OmitsModelWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestRun_PassesEffortWhenSet(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	e := New(Config{
+		Binary: fixture(t, "fake-claude-echo-args.sh"),
+		Effort: "high",
+	})
+	if _, _, err := collectEvents(t, e, "p"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	out, _ := os.ReadFile(argsPath)
+	args := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	found := false
+	for i, a := range args {
+		if a == "--effort" && i+1 < len(args) && args[i+1] == "high" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("--effort high not in args: %q", out)
+	}
+}
+
+func TestRun_OmitsEffortWhenEmpty(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	e := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
+	if _, _, err := collectEvents(t, e, "p"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	out, _ := os.ReadFile(argsPath)
+	if strings.Contains(string(out), "--effort") {
+		t.Errorf("--effort should be omitted when Effort is empty: %q", out)
+	}
+}
+
 func TestRun_OmitsSkipPermissionsWhenFalse(t *testing.T) {
 	argsPath := echoArgsOut(t)
 	e := New(Config{

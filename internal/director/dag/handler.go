@@ -92,6 +92,8 @@ type Handler struct {
 	briefingStore BriefingPersister
 	dagStore      DAGSnapshotPersister
 
+	capabilityRegistry *director.CapabilityRegistry
+
 	mu             sync.Mutex
 	plan           *director.Plan
 	planSkipped    bool
@@ -105,13 +107,14 @@ type Handler struct {
 // persistence, no diff, no journal delta) so tests can construct a
 // handler with only the inputs they need.
 type HandlerOptions struct {
-	Git              GitDiffProvider
-	Journal          JournalDeltaProvider
-	Audit            *AuditLog
-	PlanStore        PlanPersister
-	BriefingStore    BriefingPersister
-	DAGSnapshotStore DAGSnapshotPersister
-	Now              func() time.Time
+	Git                GitDiffProvider
+	Journal            JournalDeltaProvider
+	Audit              *AuditLog
+	PlanStore          PlanPersister
+	BriefingStore      BriefingPersister
+	DAGSnapshotStore   DAGSnapshotPersister
+	CapabilityRegistry *director.CapabilityRegistry
+	Now                func() time.Time
 }
 
 // NewHandler wires a Handler against a State and an AgentRegistry. The
@@ -136,17 +139,18 @@ func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOp
 		now = time.Now
 	}
 	h := &Handler{
-		state:         state,
-		registry:      registry,
-		schemas:       schemas,
-		git:           opts.Git,
-		journal:       opts.Journal,
-		audit:         opts.Audit,
-		planStore:     opts.PlanStore,
-		briefingStore: opts.BriefingStore,
-		dagStore:      opts.DAGSnapshotStore,
-		briefings:     make(map[string]*briefingState),
-		now:           now,
+		state:              state,
+		registry:           registry,
+		schemas:            schemas,
+		git:                opts.Git,
+		journal:            opts.Journal,
+		audit:              opts.Audit,
+		planStore:          opts.PlanStore,
+		briefingStore:      opts.BriefingStore,
+		dagStore:           opts.DAGSnapshotStore,
+		capabilityRegistry: opts.CapabilityRegistry,
+		briefings:          make(map[string]*briefingState),
+		now:                now,
 	}
 	h.dispatch = map[string]methodSpec{
 		MethodPlanEmit: {
@@ -286,6 +290,26 @@ func (h *Handler) AttachAudit(audit *AuditLog) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.audit = audit
+}
+
+// SetCapabilityRegistry installs the merged capability registry the
+// handler uses to validate per-phase role assignments emitted with
+// bcc_plan_emit. Plans land before the registry on cli boot ordering,
+// so this is exposed as a setter rather than a constructor argument.
+// nil disables capability validation; assignments are then accepted
+// without checking model or effort against any registry.
+func (h *Handler) SetCapabilityRegistry(reg *director.CapabilityRegistry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.capabilityRegistry = reg
+}
+
+// CapabilityRegistry returns the registry the handler validates
+// bcc_plan_emit assignments against, or nil when none was attached.
+func (h *Handler) CapabilityRegistry() *director.CapabilityRegistry {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.capabilityRegistry
 }
 
 // AttachStores binds the per-session persistence ports to the handler.
@@ -447,7 +471,7 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	if err := json.Unmarshal(body, &plan); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: parse plan: %w", err)
 	}
-	if err := director.ValidatePlan(&plan); err != nil {
+	if err := director.ValidatePlan(&plan, h.capabilityRegistry); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
 	newState := NewStateFromPlan(&plan)
@@ -493,7 +517,7 @@ func (h *Handler) handlePlanSkip(_ context.Context, _ AgentEntry, input map[stri
 // current plan + DAG state, stores it, and returns a confirmation. The
 // emitted briefing is later looked up by Executor and Reviewer agents
 // whose registry entries point at its iteration_id.
-func (h *Handler) handleBriefingEmit(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+func (h *Handler) handleBriefingEmit(_ context.Context, _ AgentEntry, input map[string]any) (string, error) {
 	briefRaw, ok := input["briefing"]
 	if !ok {
 		return "", errors.New("dag: bcc_briefing_emit: missing briefing")
@@ -509,49 +533,94 @@ func (h *Handler) handleBriefingEmit(_ context.Context, entry AgentEntry, input 
 	if brief.IterationID == "" {
 		brief.IterationID = fmt.Sprintf("%s-%d", brief.PhaseID, h.now().UnixNano())
 	}
+	if err := h.storeValidatedBriefing(&brief, "dag: bcc_briefing_emit"); err != nil {
+		return "", err
+	}
+	out, _ := json.Marshal(map[string]any{
+		"ok":           true,
+		"iteration_id": brief.IterationID,
+	})
+	return string(out), nil
+}
 
+// RecordSyntheticBriefing stores a Briefing the Planner authored
+// inline on the Phase (Phase.PreparedBriefing) so the loop can run an
+// iteration without spawning a Briefer agent. The briefing is
+// validated against the current plan with the same rules as
+// bcc_briefing_emit, then persisted and recorded in the audit log
+// under role "planner" so the timeline still shows where the briefing
+// came from.
+func (h *Handler) RecordSyntheticBriefing(brief director.Briefing) error {
+	if brief.IterationID == "" {
+		return errors.New("dag: RecordSyntheticBriefing: empty iteration_id")
+	}
+	briefCopy := brief
+	if err := h.storeValidatedBriefing(&briefCopy, "dag: RecordSyntheticBriefing"); err != nil {
+		return err
+	}
+	if h.audit != nil {
+		_ = h.audit.Append(AuditEntry{
+			At:     h.now(),
+			Role:   "planner",
+			Method: "synthetic_briefing",
+			Input: map[string]any{
+				"iteration_id":     brief.IterationID,
+				"phase_id":         brief.PhaseID,
+				"sub_dag_task_ids": stringSliceToAny(brief.SubDAGTaskIDs),
+			},
+			Result: `{"ok":true}`,
+		})
+	}
+	return nil
+}
+
+// storeValidatedBriefing checks the structural invariants both the
+// Briefer-emitted and Planner-prepared briefings must satisfy and
+// stores the result on the handler. errPrefix flavors the messages so
+// callers (the bcc_briefing_emit handler vs. RecordSyntheticBriefing)
+// remain distinguishable in the audit log and logs.
+func (h *Handler) storeValidatedBriefing(brief *director.Briefing, errPrefix string) error {
 	h.mu.Lock()
 	state := h.state
 	h.mu.Unlock()
 	if state == nil {
-		return "", errors.New("dag: bcc_briefing_emit: no plan emitted yet")
+		return fmt.Errorf("%s: no plan emitted yet", errPrefix)
 	}
-	phase := state.Phase(brief.PhaseID)
+	phase := state.Phase(PhaseID(brief.PhaseID))
 	if phase == nil {
-		return "", fmt.Errorf("dag: bcc_briefing_emit: unknown phase %q", brief.PhaseID)
+		return fmt.Errorf("%s: unknown phase %q", errPrefix, brief.PhaseID)
 	}
-	if !phaseIsEligible(state, brief.PhaseID) {
-		return "", fmt.Errorf("dag: bcc_briefing_emit: phase %q not eligible (deps not done)", brief.PhaseID)
+	if !phaseIsEligible(state, PhaseID(brief.PhaseID)) {
+		return fmt.Errorf("%s: phase %q not eligible (deps not done)", errPrefix, brief.PhaseID)
 	}
 	if len(brief.SubDAGTaskIDs) == 0 {
-		return "", errors.New("dag: bcc_briefing_emit: empty sub_dag_task_ids")
+		return fmt.Errorf("%s: empty sub_dag_task_ids", errPrefix)
 	}
 	subSet := make(map[string]bool, len(brief.SubDAGTaskIDs))
 	for _, tid := range brief.SubDAGTaskIDs {
-		t, ok := phase.Tasks[tid]
+		t, ok := phase.Tasks[TaskID(tid)]
 		if !ok {
-			return "", fmt.Errorf("dag: bcc_briefing_emit: task %q not in phase %q", tid, brief.PhaseID)
+			return fmt.Errorf("%s: task %q not in phase %q", errPrefix, tid, brief.PhaseID)
 		}
 		if t.Status != director.TaskPending && t.Status != director.TaskNeedsFix {
-			return "", fmt.Errorf("dag: bcc_briefing_emit: task %q status %q is not pending/needs_fix",
-				tid, string(t.Status))
+			return fmt.Errorf("%s: task %q status %q is not pending/needs_fix",
+				errPrefix, tid, string(t.Status))
 		}
 		subSet[tid] = true
 	}
 	for _, tid := range brief.SubDAGTaskIDs {
-		t := phase.Tasks[tid]
+		t := phase.Tasks[TaskID(tid)]
 		for _, dep := range t.DependsOn {
-			if subSet[dep] {
+			if subSet[string(dep)] {
 				continue
 			}
 			depTask := phase.Tasks[dep]
 			if depTask == nil || depTask.Status != director.TaskDone {
-				return "", fmt.Errorf("dag: bcc_briefing_emit: task %q depends on %q which is neither in sub-DAG nor done",
-					tid, dep)
+				return fmt.Errorf("%s: task %q depends on %q which is neither in sub-DAG nor done",
+					errPrefix, tid, dep)
 			}
 		}
 	}
-	_ = entry
 
 	h.mu.Lock()
 	bs := h.briefings[brief.IterationID]
@@ -559,20 +628,27 @@ func (h *Handler) handleBriefingEmit(_ context.Context, entry AgentEntry, input 
 		bs = &briefingState{}
 		h.briefings[brief.IterationID] = bs
 	}
-	briefCopy := brief
+	briefCopy := *brief
 	bs.briefing = &briefCopy
 	h.mu.Unlock()
 
 	if h.briefingStore != nil {
-		if err := h.briefingStore.WriteBriefing(&brief); err != nil {
-			return "", fmt.Errorf("dag: bcc_briefing_emit: persist briefing: %w", err)
+		if err := h.briefingStore.WriteBriefing(brief); err != nil {
+			return fmt.Errorf("%s: persist briefing: %w", errPrefix, err)
 		}
 	}
-	out, _ := json.Marshal(map[string]any{
-		"ok":           true,
-		"iteration_id": brief.IterationID,
-	})
-	return string(out), nil
+	return nil
+}
+
+// stringSliceToAny converts a []string to []any for audit log inputs.
+// The audit serializer is JSON-driven and accepts heterogenous slices
+// only as []any.
+func stringSliceToAny(in []string) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
 }
 
 // handleGetDAGSnapshot returns the live DAG state. The Briefer sees

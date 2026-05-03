@@ -132,8 +132,11 @@ type DirectorPorts struct {
 	// the path to a rendered system prompt on disk that includes the
 	// Identity block. args carry the per-iteration scope (BriefingID,
 	// PhaseID, SubDAG) the Executor's MCP calls will be checked
-	// against. Required.
-	NewExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error)) Executor
+	// against. assignment, when non-nil, carries the Planner's per-phase
+	// model+effort routing for the Executor role; the factory applies it
+	// as override on top of the configured defaults. nil means use the
+	// configured defaults. Required.
+	NewExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) Executor
 
 	// Handler is the run-wide MCP handler. The loop reads briefings,
 	// per-task statuses, and review outcomes through it; the Briefer

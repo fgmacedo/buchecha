@@ -215,6 +215,7 @@ type recordingExecutor struct {
 	promptPaths      []string
 	handler          *dag.Handler
 	args             dag.RegisterArgs
+	assignment       *director.RoleAssignment
 }
 
 func (r *recordingExecutor) Run(ctx context.Context, _ string, _ chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
@@ -244,9 +245,9 @@ func (r *recordingExecutor) Run(ctx context.Context, _ string, _ chan<- agentcon
 // The factory captures the system_prompt_file path on each call. The
 // handler reference lets the executor mirror a production agent: it
 // registers, reports the iteration signal via MCP, and deregisters.
-func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func(dag.RegisterArgs, func(string) (string, error)) loop.Executor, *recordingExecutor) {
+func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor, *recordingExecutor) {
 	rec := &recordingExecutor{emitSignal: signal, handler: h}
-	return func(args dag.RegisterArgs, renderSystem func(string) (string, error)) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(string) (string, error), assignment *director.RoleAssignment) loop.Executor {
 		path := ""
 		if renderSystem != nil {
 			p, err := renderSystem("test-executor-agent")
@@ -258,6 +259,7 @@ func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func
 		rec.mu.Lock()
 		rec.systemPromptFile = path
 		rec.args = args
+		rec.assignment = assignment
 		rec.mu.Unlock()
 		return rec
 	}, rec
@@ -454,7 +456,7 @@ func TestRunDirectorWith_AbortPath(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -556,7 +558,7 @@ func TestRunDirectorWith_RejectsEmptyPlan(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -611,7 +613,7 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		registerFn: testRegisterFn(h),
@@ -681,7 +683,7 @@ func TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		registerFn: testRegisterFn(h),
@@ -731,7 +733,7 @@ func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		registerFn: testRegisterFn(h),
@@ -1050,7 +1052,7 @@ func TestRunDirectorWith_ResumeHashMismatch_AbortPath(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -1365,7 +1367,7 @@ func TestRunDirectorWith_SessionFlag_RejectsUnknownID(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		baseDir:  filepath.Join(tmp, ".bcc"),
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -1412,7 +1414,7 @@ func TestRunDirectorWith_SessionFlag_RejectsSpecMismatch(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		baseDir:  filepath.Join(tmp, ".bcc"),
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -1462,7 +1464,7 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		baseDir:  filepath.Join(tmp, ".bcc"),
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,

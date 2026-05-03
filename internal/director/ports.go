@@ -47,10 +47,17 @@ type Reviewer interface {
 // downstream resume can detect divergence. AgentID is the opaque id
 // the run-wide registry assigned for this spawn; the adapter embeds it
 // in the prompt so the agent passes it back on every MCP call.
+//
+// Registry is the merged set of models the Planner may pick from when
+// it attributes per-phase model+effort to each role. Empty Registry
+// means the Planner has nothing to choose between; it should still
+// emit a Plan, leaving every assignment unset, and the loop falls back
+// to configured defaults.
 type PlannerInput struct {
 	AgentID  string
 	SpecPath string
 	SpecHash string
+	Registry CapabilityRegistry
 }
 
 // BrieferInput is the request payload for Briefer.Brief. IterationID
@@ -71,6 +78,11 @@ type BrieferInput struct {
 	SubDAGTaskIDs []string
 	Attempt       int
 	PriorFeedback string
+	// Assignment, when non-nil, overrides the Briefer adapter's
+	// configured model and effort for this single call. The Planner
+	// emits it on the Phase via briefer_assignment; the loop forwards
+	// it here. Empty fields fall back to the configured defaults.
+	Assignment *RoleAssignment
 }
 
 // ReviewerInput is the request payload for Reviewer.Review. The
@@ -85,6 +97,10 @@ type ReviewerInput struct {
 	IterationID string
 	PhaseID     string
 	SubDAG      []string
+	// Assignment, when non-nil, overrides the Reviewer adapter's
+	// configured model and effort for this single call. Same semantics
+	// as BrieferInput.Assignment.
+	Assignment *RoleAssignment
 }
 
 // DirectorCallStats reports the cost and shape of a single Director
