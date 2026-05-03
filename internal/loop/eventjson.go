@@ -74,6 +74,19 @@ func jsonPayload(ev Event) map[string]any {
 			"phase_id": e.PhaseID,
 			"attempt":  e.Attempt,
 		}
+		assignments := map[string]any{}
+		if a := assignmentJSON(e.BrieferModel, e.BrieferEffort, e.BrieferSkipped); a != nil {
+			assignments["briefer"] = a
+		}
+		if a := assignmentJSON(e.ExecutorModel, e.ExecutorEffort, false); a != nil {
+			assignments["executor"] = a
+		}
+		if a := assignmentJSON(e.ReviewerModel, e.ReviewerEffort, e.ReviewSkipped); a != nil {
+			assignments["reviewer"] = a
+		}
+		if len(assignments) > 0 {
+			out["assignments"] = assignments
+		}
 		return out
 	case PhaseReviewed:
 		out := map[string]any{
@@ -183,4 +196,25 @@ func formatAt(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// assignmentJSON returns the per-role spawn parameters for the
+// phase_briefed event. Returns nil when nothing useful applies (no
+// model, no effort, not skipped) so the caller can omit the role
+// entry entirely.
+func assignmentJSON(model, effort string, skipped bool) map[string]any {
+	if model == "" && effort == "" && !skipped {
+		return nil
+	}
+	out := map[string]any{}
+	if model != "" {
+		out["model"] = model
+	}
+	if effort != "" {
+		out["effort"] = effort
+	}
+	if skipped {
+		out["skipped"] = true
+	}
+	return out
 }

@@ -95,6 +95,13 @@ type directorPanel struct {
 	// flight.
 	currentSubDAG []string
 
+	// phaseCapability records the resolved per-role spawn parameters
+	// for each phase as the loop emits PhaseBriefed events. The panel
+	// renders these inline alongside the phase row so the human can see
+	// which model and effort each role used and whether the Planner
+	// asked the loop to skip the Briefer or Reviewer agent.
+	phaseCapability map[string]phaseCapability
+
 	// escalation latches when a DirectorEscalation event arrives so the
 	// View renders the modal overlay; cleared by handleEscalationKey when
 	// the user resolves the modal by sending an EscalationReply on the
@@ -108,6 +115,22 @@ type directorPanel struct {
 	// HintInput accepts free text and Enter/Esc.
 	escalationState escalationState
 	hintInput       textinput.Model
+}
+
+// phaseCapability captures the resolved per-role spawn parameters the
+// loop reports on PhaseBriefed: what model and effort each role will
+// use for the upcoming iteration, and whether the Planner asked the
+// loop to skip the Briefer or Reviewer agent. The panel renders this
+// next to the phase row so the human sees the routing as it happens.
+type phaseCapability struct {
+	BrieferModel   string
+	BrieferEffort  string
+	ExecutorModel  string
+	ExecutorEffort string
+	ReviewerModel  string
+	ReviewerEffort string
+	BrieferSkipped bool
+	ReviewSkipped  bool
 }
 
 // phaseMark is the visual state of a single phase in the panel.
@@ -176,7 +199,7 @@ const planningTaskID = "planning"
 
 // onPhaseBriefed marks the phase as in-progress and points the active
 // cursor at it.
-func (d *directorPanel) onPhaseBriefed(phaseID string, attempt int, b *director.Briefing) {
+func (d *directorPanel) onPhaseBriefed(phaseID string, attempt int, b *director.Briefing, cap phaseCapability) {
 	if d.phaseStatus == nil {
 		d.phaseStatus = map[string]phaseMark{}
 	}
@@ -190,6 +213,10 @@ func (d *directorPanel) onPhaseBriefed(phaseID string, attempt int, b *director.
 	} else {
 		d.currentSubDAG = nil
 	}
+	if d.phaseCapability == nil {
+		d.phaseCapability = map[string]phaseCapability{}
+	}
+	d.phaseCapability[phaseID] = cap
 }
 
 // onPhaseReviewed records the review outcome and updates the phase
@@ -246,6 +273,59 @@ func (d *directorPanel) onCost(usd float64) {
 // active reports whether the panel has a plan to render. The host uses
 // it to decide whether to allocate layout space.
 func (d directorPanel) active() bool { return d.plan != nil }
+
+// capabilityBadge formats a phase's resolved capability state as a
+// compact bracketed annotation, e.g. "[E:opus/high B:skip R:skip]".
+// Returns empty when nothing meaningful applies (no overrides set, no
+// skips). Models are shortened to drop the family prefix when present
+// so the badge stays narrow on the dashboard.
+func capabilityBadge(c phaseCapability) string {
+	parts := []string{}
+	if part := roleBadge("E", c.ExecutorModel, c.ExecutorEffort, false); part != "" {
+		parts = append(parts, part)
+	}
+	if part := roleBadge("B", c.BrieferModel, c.BrieferEffort, c.BrieferSkipped); part != "" {
+		parts = append(parts, part)
+	}
+	if part := roleBadge("R", c.ReviewerModel, c.ReviewerEffort, c.ReviewSkipped); part != "" {
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
+// roleBadge renders one role's badge fragment. Empty model+effort
+// without skip yields an empty string so default-only roles do not
+// clutter the line; skipped roles always render.
+func roleBadge(prefix, model, effort string, skipped bool) string {
+	if skipped {
+		return prefix + ":skip"
+	}
+	if model == "" && effort == "" {
+		return ""
+	}
+	value := shortModel(model)
+	if effort != "" {
+		if value == "" {
+			value = "(default)"
+		}
+		value += "/" + effort
+	}
+	return prefix + ":" + value
+}
+
+// shortModel drops the family prefix from a canonical model id so the
+// dashboard badge fits in narrow terminals. "claude-opus-4-7" becomes
+// "opus-4-7"; ids that do not match the expected pattern stay
+// untouched.
+func shortModel(model string) string {
+	if i := strings.Index(model, "-"); i > 0 {
+		return model[i+1:]
+	}
+	return model
+}
 
 // viewWithPlanning is the dispatch the host calls. When the planner is
 // still in flight (planningPending is true and plan == nil), it renders
@@ -342,6 +422,11 @@ func (d directorPanel) view(width int) string {
 			active := fmt.Sprintf(" (attempt %d)", d.currentAttempt)
 			row += theme.subtle.Render(active)
 			row = lipgloss.NewStyle().Bold(true).Render(row)
+		}
+		if cap, ok := d.phaseCapability[ph.ID]; ok {
+			if badge := capabilityBadge(cap); badge != "" {
+				row += " " + theme.subtle.Render(badge)
+			}
 		}
 		b.WriteString(row)
 		b.WriteByte('\n')

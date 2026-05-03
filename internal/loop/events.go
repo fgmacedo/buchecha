@@ -70,11 +70,29 @@ func (PhasePlanned) isLoopEvent() {}
 // PhaseBriefed is emitted when the Director's Briefer returned a
 // Briefing for (PhaseID, Attempt) and bcc has materialized the prompt
 // to disk. The Executor is about to run.
+//
+// Capability fields surface the resolved per-role spawn parameters
+// for the upcoming iteration: the model+effort each role will use
+// after the Planner's phase-level assignments have been merged with
+// the configured defaults. Empty Model/Effort means the corresponding
+// flag is omitted from the spawn (the agent CLI uses its built-in
+// default). BrieferSkipped is true when the Planner authored a
+// PreparedBriefing and the Briefer agent was bypassed; ReviewSkipped
+// is true when the Phase has SkipReview=true and the Reviewer agent
+// will be bypassed.
 type PhaseBriefed struct {
-	PhaseID  string
-	Attempt  int
-	Briefing *director.Briefing
-	At       time.Time
+	PhaseID        string
+	Attempt        int
+	Briefing       *director.Briefing
+	BrieferModel   string
+	BrieferEffort  string
+	ExecutorModel  string
+	ExecutorEffort string
+	ReviewerModel  string
+	ReviewerEffort string
+	BrieferSkipped bool
+	ReviewSkipped  bool
+	At             time.Time
 }
 
 func (PhaseBriefed) isLoopEvent() {}

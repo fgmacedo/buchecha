@@ -251,6 +251,55 @@ func TestMarshalJSONEvent_AgentRateLimitWarn(t *testing.T) {
 	}
 }
 
+func TestMarshalJSONEvent_PhaseBriefed_WithAssignments(t *testing.T) {
+	at := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	ev := loop.PhaseBriefed{
+		PhaseID:        "p1",
+		Attempt:        1,
+		At:             at,
+		ExecutorModel:  "claude-opus-4-7",
+		ExecutorEffort: "high",
+		BrieferSkipped: true,
+		ReviewSkipped:  true,
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	assignments, ok := payload["assignments"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected assignments in payload, got %v", payload)
+	}
+	exec, _ := assignments["executor"].(map[string]any)
+	if exec["model"] != "claude-opus-4-7" || exec["effort"] != "high" {
+		t.Errorf("executor entry = %v, want model=claude-opus-4-7 effort=high", exec)
+	}
+	briefer, _ := assignments["briefer"].(map[string]any)
+	if briefer["skipped"] != true {
+		t.Errorf("briefer skipped = %v, want true", briefer)
+	}
+	reviewer, _ := assignments["reviewer"].(map[string]any)
+	if reviewer["skipped"] != true {
+		t.Errorf("reviewer skipped = %v, want true", reviewer)
+	}
+}
+
+func TestMarshalJSONEvent_PhaseBriefed_OmitsEmptyAssignments(t *testing.T) {
+	at := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	ev := loop.PhaseBriefed{PhaseID: "p1", Attempt: 1, At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(got), "assignments") {
+		t.Errorf("payload should omit assignments when nothing applies: %s", got)
+	}
+}
+
 func TestMarshalJSONEvent_AgentInit(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
 	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{

@@ -189,9 +189,26 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return systemPromptPath, nil
 		}
 
+		brieferModel, brieferEffort := resolveAssignment(phase.AssignmentFor("briefer"),
+			l.Config.Director.Claude.Model, l.Config.Director.Claude.Effort)
+		executorModel, executorEffort := resolveAssignment(phase.AssignmentFor("executor"),
+			l.Config.Agent.Claude.Model, l.Config.Agent.Claude.Effort)
+		reviewerModel, reviewerEffort := resolveAssignment(phase.AssignmentFor("reviewer"),
+			l.Config.Director.Claude.Model, l.Config.Director.Claude.Effort)
+		brieferSkipped := phase.PreparedBriefing != nil
+		reviewSkipped := phase.SkipReview
 		emit(events, PhaseBriefed{
 			PhaseID: phaseID, Attempt: 1,
-			Briefing: briefing, At: time.Now(),
+			Briefing:       briefing,
+			BrieferModel:   brieferModel,
+			BrieferEffort:  brieferEffort,
+			ExecutorModel:  executorModel,
+			ExecutorEffort: executorEffort,
+			ReviewerModel:  reviewerModel,
+			ReviewerEffort: reviewerEffort,
+			BrieferSkipped: brieferSkipped,
+			ReviewSkipped:  reviewSkipped,
+			At:             time.Now(),
 		})
 
 		iterationDone := false
@@ -458,6 +475,24 @@ func parseSignalString(v string) agentcontract.Signal {
 	default:
 		return agentcontract.SignalUnknown
 	}
+}
+
+// resolveAssignment returns the (model, effort) the loop will pass to
+// the spawn for one role: the Planner's per-phase override when set,
+// falling back to the configured defaults. Empty defaults stay empty
+// so the adapter omits the flag entirely.
+func resolveAssignment(a *director.RoleAssignment, defaultModel, defaultEffort string) (string, string) {
+	model := defaultModel
+	effort := defaultEffort
+	if a != nil {
+		if a.Model != "" {
+			model = a.Model
+		}
+		if a.Effort != "" {
+			effort = a.Effort
+		}
+	}
+	return model, effort
 }
 
 // maxRetryBudget aggregates the per-task retry budgets in subDAG into

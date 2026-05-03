@@ -24,6 +24,60 @@ func samplePlan() *director.Plan {
 	}
 }
 
+func TestCapabilityBadge(t *testing.T) {
+	cases := []struct {
+		name string
+		cap  phaseCapability
+		want string
+	}{
+		{"empty yields empty badge", phaseCapability{}, ""},
+		{
+			"executor only with effort",
+			phaseCapability{ExecutorModel: "claude-opus-4-7", ExecutorEffort: "high"},
+			"[E:opus-4-7/high]",
+		},
+		{
+			"all three roles with skips",
+			phaseCapability{
+				ExecutorModel:  "claude-sonnet-4-6",
+				ExecutorEffort: "low",
+				BrieferSkipped: true,
+				ReviewSkipped:  true,
+			},
+			"[E:sonnet-4-6/low B:skip R:skip]",
+		},
+		{
+			"effort only without model surfaces (default)",
+			phaseCapability{ExecutorEffort: "max"},
+			"[E:(default)/max]",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := capabilityBadge(tc.cap); got != tc.want {
+				t.Fatalf("capabilityBadge:\n got=%q\nwant=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDirectorPanel_PhaseBriefed_RendersCapabilityBadge(t *testing.T) {
+	d := directorPanel{}
+	d.onPhasePlanned(samplePlan())
+	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-1", PhaseID: "p1"}, phaseCapability{
+		ExecutorModel:  "claude-opus-4-7",
+		ExecutorEffort: "high",
+		BrieferSkipped: true,
+	})
+	out := d.view(120)
+	if !strings.Contains(out, "E:opus-4-7/high") {
+		t.Errorf("executor badge missing in panel:\n%s", out)
+	}
+	if !strings.Contains(out, "B:skip") {
+		t.Errorf("briefer skip badge missing in panel:\n%s", out)
+	}
+}
+
 func TestDirectorPanel_FreshPlan_RendersChecklist(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
@@ -43,7 +97,7 @@ func TestDirectorPanel_FreshPlan_RendersChecklist(t *testing.T) {
 func TestDirectorPanel_PhaseInProgress_HighlightsActive(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-1", PhaseID: "p1"})
+	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-1", PhaseID: "p1"}, phaseCapability{})
 	if d.currentPhaseID != "p1" {
 		t.Errorf("currentPhaseID = %q, want p1", d.currentPhaseID)
 	}
@@ -59,7 +113,7 @@ func TestDirectorPanel_PhaseInProgress_HighlightsActive(t *testing.T) {
 func TestDirectorPanel_PhaseEscalated_MarksRow(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p2", 1, nil)
+	d.onPhaseBriefed("p2", 1, nil, phaseCapability{})
 	d.onEscalation("p2", 3, "reviewer kept rejecting changes")
 	if d.phaseStatus["p2"] != phaseEscalated {
 		t.Errorf("p2 status = %v, want phaseEscalated", d.phaseStatus["p2"])
@@ -140,7 +194,7 @@ func TestDirectorPanel_SubDAGHighlight_RendersUnderActivePhase(t *testing.T) {
 		IterationID:   "p2-1",
 		PhaseID:       "p2",
 		SubDAGTaskIDs: []string{"p2.t1", "p2.t2"},
-	})
+	}, phaseCapability{})
 	out := d.view(80)
 	for _, want := range []string{"p2.t1", "p2.t2"} {
 		if !strings.Contains(out, want) {
@@ -153,7 +207,7 @@ func TestDirectorPanel_SubDAGHighlight_RendersUnderActivePhase(t *testing.T) {
 		IterationID:   "p3-1",
 		PhaseID:       "p3",
 		SubDAGTaskIDs: nil,
-	})
+	}, phaseCapability{})
 	out = d.view(80)
 	if strings.Contains(out, "p2.t1") {
 		t.Errorf("stale sub-DAG row should be cleared\n%s", out)

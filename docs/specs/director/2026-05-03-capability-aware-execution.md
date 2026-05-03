@@ -68,12 +68,35 @@ agent process.
 
 - CLI / spec-level user overrides on top of Planner assignments.
 - Automatic escalation to a stronger model on retry after review.
-- TUI badges that surface the assigned model per phase. The
-  `mcp-log.jsonl` audit log captures the spawn args; a dashboard widget
-  is future work.
 - Adapters beyond Claude. The ports already accept any
   `CapabilityProvider`; Codex and Gemini follow when their adapters
   land.
+
+## Surfacement
+
+The `PhaseBriefed` event carries the resolved per-role spawn
+parameters for the upcoming iteration: `BrieferModel`,
+`BrieferEffort`, `ExecutorModel`, `ExecutorEffort`, `ReviewerModel`,
+`ReviewerEffort`, plus `BrieferSkipped` and `ReviewSkipped` flags.
+Resolved means "Planner-attributed override merged with the
+configured default": empty Model/Effort means the adapter omits the
+flag entirely so the agent CLI uses its built-in default.
+
+- **TUI**: the director panel renders a compact bracketed badge
+  alongside each phase row as it begins iterating, e.g.
+  `[E:opus-4-7/high B:skip R:skip]`. Models drop the family prefix to
+  fit narrow terminals. Skipped roles read literal `skip`. Default-
+  only roles contribute nothing to the badge.
+- **--output text**: the per-event line for `phase briefed` includes
+  three slog attributes (one per role) carrying the same compact
+  `model/effort` notation.
+- **--output json**: the `phase_briefed` payload gains an
+  `assignments` object keyed by role, each entry containing `model`,
+  `effort`, and `skipped` (only when applicable). Empty defaults are
+  omitted so consumers can treat absence as "use built-in".
+- **`mcp-log.jsonl`**: the per-spawn `--model` / `--effort` flags
+  reach the agent process; `synthetic_briefing` and
+  `synthetic_approval` audit entries cover the skip paths.
 
 ## Domain model
 

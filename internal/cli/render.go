@@ -156,6 +156,15 @@ func textRenderEvent(ev loop.Event) (string, []slog.Attr) {
 			slog.Bool("head_advanced", e.HEADAdvanced),
 			slog.Int64("duration_ms", e.DurationMS),
 		}
+	case loop.PhaseBriefed:
+		attrs := []slog.Attr{
+			slog.String("phase", e.PhaseID),
+			slog.Int("attempt", e.Attempt),
+		}
+		attrs = append(attrs, roleSpawnAttrs("briefer", e.BrieferModel, e.BrieferEffort, e.BrieferSkipped)...)
+		attrs = append(attrs, roleSpawnAttrs("executor", e.ExecutorModel, e.ExecutorEffort, false)...)
+		attrs = append(attrs, roleSpawnAttrs("reviewer", e.ReviewerModel, e.ReviewerEffort, e.ReviewSkipped)...)
+		return "phase briefed", attrs
 	case loop.LoopFinished:
 		return "loop finished", []slog.Attr{
 			slog.String("reason", e.Reason),
@@ -166,6 +175,27 @@ func textRenderEvent(ev loop.Event) (string, []slog.Attr) {
 	default:
 		return "event", nil
 	}
+}
+
+// roleSpawnAttrs renders a role's resolved spawn parameters as slog
+// attrs. When skipped is true the role attribute reads "skip"; when
+// model and effort are both empty (no override and no default) the
+// role contributes no attrs at all so the line stays terse.
+func roleSpawnAttrs(role, model, effort string, skipped bool) []slog.Attr {
+	if skipped {
+		return []slog.Attr{slog.String(role, "skip")}
+	}
+	if model == "" && effort == "" {
+		return nil
+	}
+	value := model
+	if effort != "" {
+		if value == "" {
+			value = "(default)"
+		}
+		value += "/" + effort
+	}
+	return []slog.Attr{slog.String(role, value)}
 }
 
 func textRenderAgentEvent(ae agentcontract.AgentEvent) (string, []slog.Attr) {
