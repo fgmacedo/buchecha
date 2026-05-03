@@ -544,6 +544,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		Gate:            gate,
 		SpecPath:        specPath,
 		Branch:          branch,
+		SessionID:       deps.store.Session().ID,
 		MaxIter:         cfg.Loop.MaxIterations,
 		GitProbe:        gitProbeAdapter,
 		GitCtx:          ctx,
@@ -661,12 +662,27 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 
 	if _, err := program.Run(); err != nil {
 		cancel()
+		printSessionResumeHint(dio.stderr, deps.store.Session().ID, specPath)
 		return err
 	}
+	printSessionResumeHint(dio.stderr, deps.store.Session().ID, specPath)
 	resultMu.Lock()
 	defer resultMu.Unlock()
 	ExitCode = latest.code
 	return latest.err
+}
+
+// printSessionResumeHint writes a one-line stderr message after the TUI
+// alt-screen has been released so the user sees the session id and the
+// exact command needed to resume the run. Headless callers (text/json)
+// already print session=<id> at startup; the TUI counterpart was lost
+// to the alt-screen, so this restores it on exit.
+func printSessionResumeHint(w io.Writer, sessionID, specPath string) {
+	if w == nil || sessionID == "" {
+		return
+	}
+	fmt.Fprintf(w, "bcc: session=%s (resume with: bcc run %s --resume --session %s)\n",
+		sessionID, specPath, sessionID)
 }
 
 // LoopFinishedReasonNothingToDo is the canonical Reason carried on the

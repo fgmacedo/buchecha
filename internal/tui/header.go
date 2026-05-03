@@ -14,6 +14,7 @@ type header struct {
 	branch    string
 	iter      int
 	maxIter   int
+	sessionID string
 	startedAt time.Time
 	lastEvent time.Time
 	paused    bool
@@ -51,8 +52,12 @@ func (h header) titleText(now time.Time) string {
 	if h.iter == 0 {
 		stage = "planning..."
 	}
-	return fmt.Sprintf("bcc %s  %s  %s",
+	title := fmt.Sprintf("bcc %s  %s  %s",
 		trimEmpty(h.branch), stage, elapsed)
+	if h.sessionID != "" {
+		title += "  session " + h.sessionID
+	}
+	return title
 }
 
 // view renders the header body line: spec path, alive dot, and the

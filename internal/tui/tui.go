@@ -189,14 +189,15 @@ func (m *Model) SetProgram(p *tea.Program) {
 // Options bundles construction parameters for New. Optional fields may
 // be left zero.
 type Options struct {
-	Events   <-chan loop.Event
-	Cancel   context.CancelFunc
-	Gate     *Gate
-	SpecPath string
-	Branch   string
-	MaxIter  int
-	GitProbe GitProbe
-	GitCtx   context.Context
+	Events    <-chan loop.Event
+	Cancel    context.CancelFunc
+	Gate      *Gate
+	SpecPath  string
+	Branch    string
+	SessionID string
+	MaxIter   int
+	GitProbe  GitProbe
+	GitCtx    context.Context
 
 	// NewEvents is the host's factory for a fresh loop run. Invoked when
 	// the user presses [r] in the session menu. Nil disables the resume
@@ -243,6 +244,7 @@ func New(opts Options) Model {
 			specPath:  opts.SpecPath,
 			branch:    opts.Branch,
 			maxIter:   opts.MaxIter,
+			sessionID: opts.SessionID,
 			startedAt: now,
 		},
 		health:          healthPanel{startedAt: now},
