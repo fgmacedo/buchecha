@@ -2,53 +2,36 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
-	"runtime/debug"
-	"sync"
 	"syscall"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/colorprofile"
 	"github.com/spf13/cobra"
 
 	"github.com/fgmacedo/buchecha/internal/config"
 	configloader "github.com/fgmacedo/buchecha/internal/configloader/toml"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
-	"github.com/fgmacedo/buchecha/internal/executor/claude"
-	markdown_bcc "github.com/fgmacedo/buchecha/internal/format/markdown_bcc"
-	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/tui"
 )
 
 var (
-	runSingleShot     bool
-	runMaxIter        int
-	runEnvFlags       []string
-	runExtra          string
-	runConfigPath     string
-	runAllowDirty     bool
-	runOutput         string
-	runVerbosity      string
-	runNoColor        bool
-	runSpecFormat     string
-	runAgentName      string
-	runDirectorFlag   bool
-	runNoDirectorFlag bool
-	runAutoProceed    bool
-	runResume         bool
-	runSessionID      string
+	runEnvFlags    []string
+	runConfigPath  string
+	runAllowDirty  bool
+	runOutput      string
+	runVerbosity   string
+	runNoColor     bool
+	runAgentName   string
+	runAutoProceed bool
+	runResume      bool
+	runSessionID   string
 )
 
 var runCmd = &cobra.Command{
 	Use:   "run <spec>",
 	Short: "Run the loop on a spec",
-	Long:  "Read a Markdown spec, invoke the configured agent in a phase-by-phase loop, and decide based on the journal entries.",
+	Long:  "Read a Markdown spec and drive the Director plan/brief/execute/review pipeline against it.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
@@ -58,21 +41,15 @@ var runCmd = &cobra.Command{
 }
 
 func init() {
-	runCmd.Flags().BoolVar(&runSingleShot, "single-shot", false, "single-shot mode: one agent invocation tries all phases")
-	runCmd.Flags().IntVar(&runMaxIter, "max-iterations", 0, "iteration cap (overrides .bcc.toml; 0 = use config)")
 	runCmd.Flags().StringSliceVar(&runEnvFlags, "env", nil, "KEY=VALUE env override (repeatable; highest precedence)")
-	runCmd.Flags().StringVar(&runExtra, "extra", "", "additional instructions appended to the prompt")
 	runCmd.Flags().StringVar(&runConfigPath, "config", "", "path to .bcc.toml (overrides discovery)")
 	runCmd.Flags().BoolVarP(&runAllowDirty, "allow-dirty", "d", false, "skip the pre-flight clean-tree check (the agent will see the dirty tree)")
 	runCmd.Flags().StringVar(&runOutput, "output", OutputTUI, "render backend: tui|text|json")
 	runCmd.Flags().StringVar(&runVerbosity, "verbosity", loop.LevelInfo.String(), "event level low-water mark: error|warn|info|debug|trace")
 	runCmd.Flags().BoolVar(&runNoColor, "no-color", false, "disable color output (lipgloss styles render as plain text)")
-	runCmd.Flags().StringVar(&runSpecFormat, "spec-format", "", "active spec-format adapter (overrides [spec].format for this run)")
 	runCmd.Flags().StringVar(&runAgentName, "agent", "", "active agent adapter (overrides [agent].name for this run)")
-	runCmd.Flags().BoolVar(&runDirectorFlag, "director", false, "force the Director-driven loop on; overrides [director].enabled=false in .bcc.toml")
-	runCmd.Flags().BoolVar(&runNoDirectorFlag, "no-director", false, "force the Director-driven loop off; overrides the default and [director].enabled=true")
-	runCmd.Flags().BoolVar(&runAutoProceed, "auto-proceed", false, "skip the post-plan confirmation prompt (Director mode only)")
-	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan with a diff prompt when the spec hash diverges (Director mode only)")
+	runCmd.Flags().BoolVar(&runAutoProceed, "auto-proceed", false, "skip the post-plan confirmation prompt")
+	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan with a diff prompt when the spec hash diverges")
 	runCmd.Flags().StringVar(&runSessionID, "session", "", "resume the named session id (combine with --resume to resolve; without --resume, fails if the session does not exist)")
 	rootCmd.AddCommand(runCmd)
 }
@@ -108,29 +85,8 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		return err
 	}
 
-	if runMaxIter > 0 {
-		cfg.Loop.MaxIterations = runMaxIter
-	}
-	if runSpecFormat != "" {
-		cfg.Spec.Format = runSpecFormat
-	}
 	if runAgentName != "" {
 		cfg.Agent.Name = runAgentName
-	}
-	// CLI flags override the TOML/default tristate. --director and
-	// --no-director are mutually exclusive; if both are set, abort
-	// rather than silently picking one.
-	if runDirectorFlag && runNoDirectorFlag {
-		ExitCode = loop.ExitInvalid
-		return errors.New("--director and --no-director are mutually exclusive")
-	}
-	switch {
-	case runDirectorFlag:
-		v := true
-		cfg.Director.Enabled = &v
-	case runNoDirectorFlag:
-		v := false
-		cfg.Director.Enabled = &v
 	}
 
 	if err := cfg.ApplyEnv(runEnvFlags); err != nil {
@@ -144,281 +100,7 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=<defaults; no .bcc.toml found>\n", specPath)
 	}
 
-	if cfg.Director.IsEnabled() {
-		return runDirector(ctx, cancel, specPath, cfg)
-	}
-
-	if cfg.Spec.Format != "markdown_bcc" {
-		ExitCode = loop.ExitInvalid
-		return fmt.Errorf("unsupported spec format %q (only markdown_bcc is wired today)", cfg.Spec.Format)
-	}
-	if cfg.Agent.Name != "claude" {
-		ExitCode = loop.ExitInvalid
-		return fmt.Errorf("unsupported agent %q (only claude is wired today)", cfg.Agent.Name)
-	}
-
-	skip := cfg.Agent.Claude.ShouldSkipPermissions()
-	if skip {
-		fmt.Fprintf(os.Stderr,
-			"bcc: WARNING: agent permission prompts are SUPPRESSED (executor.skip_permissions=true).\n"+
-				"  The agent will read, write, edit, and run shell commands without confirmation.\n"+
-				"  This is required for autonomous mode. To opt out, set skip_permissions=false\n"+
-				"  in .bcc.toml; the loop will likely degrade or stall on the first tool use.\n",
-		)
-	} else {
-		fmt.Fprintf(os.Stderr,
-			"bcc: WARNING: skip_permissions=false. The agent runs in -p mode without\n"+
-				"  --dangerously-skip-permissions. Tool calls that require user approval will\n"+
-				"  abort or be skipped silently; the loop is unlikely to converge. Use this only\n"+
-				"  for dry-runs or when the agent does not require permission prompts.\n",
-		)
-	}
-
-	gitProbe := gitcli.New("")
-
-	// Pre-flight: refuse to run on a dirty working tree unless the user
-	// explicitly allowed it. The agent assumes a clean entry tree to
-	// commit only its own work; mixing in the user's unrelated changes
-	// would either contaminate the iteration commits or force the agent
-	// to hand-curate `git add` paths every iteration.
-	if !runAllowDirty {
-		clean, gerr := gitProbe.IsClean(ctx)
-		if gerr != nil {
-			ExitCode = loop.ExitInvalid
-			return fmt.Errorf("check working tree: %w", gerr)
-		}
-		if !clean {
-			ExitCode = loop.ExitInvalid
-			return errors.New(
-				"working tree is not clean (uncommitted changes or untracked files).\n" +
-					"  commit or stash before running, or pass --allow-dirty / -d to override.",
-			)
-		}
-	}
-
-	// Print the BCC_* contract once at startup so the user (and observer)
-	// know what the agent will see in each iteration. BCC_ITERATION
-	// varies per iteration; the names and meanings are fixed.
-	branchHint := ""
-	if br, gerr := gitProbe.CurrentBranch(ctx); gerr == nil {
-		branchHint = br
-	}
-	fmt.Fprintf(os.Stderr,
-		"bcc: agent subprocess will see: BCC_RUNNING=1, BCC_ITERATION=<n>, "+
-			"BCC_MAX_ITERATIONS=%d, BCC_SPEC_PATH=%s, BCC_BRANCH=%s\n",
-		cfg.Loop.MaxIterations, specPath, branchHint,
-	)
-
-	boot, err := startMCPBoot(nil)
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return err
-	}
-	defer boot.Close()
-	mcpCfg, releaseAgent, err := boot.executorMCPConfig(dag.RoleExecutor, dag.RegisterArgs{})
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return fmt.Errorf("register executor agent: %w", err)
-	}
-	defer releaseAgent()
-
-	executor := claude.New(claude.Config{
-		Binary:            cfg.Agent.Claude.Binary,
-		Model:             cfg.Agent.Claude.Model,
-		ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
-		SkipPermissions:   skip,
-		Stderr:            os.Stderr,
-		MCPURL:            mcpCfg.MCPURL,
-		MCPToken:          mcpCfg.MCPToken,
-		MCPConnectionName: mcpCfg.MCPConnectionName,
-		AgentID:           mcpCfg.AgentID,
-	})
-
-	briefing := markdown_bcc.New(markdown_bcc.Config{
-		PlanHeading:    cfg.Spec.MarkdownBCC.PlanHeading,
-		JournalHeading: cfg.Spec.MarkdownBCC.JournalHeading,
-		JournalStore:   cfg.Journal.Store,
-		JournalPath:    cfg.Journal.File.Path,
-		MaxIterations:  cfg.Loop.MaxIterations,
-	})
-
-	l := &loop.Loop{
-		SpecPath:   specPath,
-		Config:     cfg,
-		Executor:   executor,
-		Git:        gitProbe,
-		Briefing:   briefing,
-		Extra:      runExtra,
-		SingleShot: runSingleShot,
-	}
-
-	if runOutput == OutputTUI {
-		buildLoop := func() *loop.Loop {
-			return &loop.Loop{
-				SpecPath:   specPath,
-				Config:     cfg,
-				Executor:   executor,
-				Git:        gitProbe,
-				Briefing:   briefing,
-				Extra:      runExtra,
-				SingleShot: runSingleShot,
-			}
-		}
-		return runWithTUI(ctx, cancel, buildLoop, specPath, branchHint, verbosity, runNoColor)
-	}
-
-	events, drained, err := dispatchEvents(runOutput, verbosity)
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return err
-	}
-
-	code, runErr := l.Run(ctx, events)
-	<-drained
-	ExitCode = code
-	return runErr
-}
-
-// runWithTUI inverts the foreground/background relationship for TUI
-// mode: bubbletea owns the main goroutine (it must, to read keys and
-// drive renders), and the loop runs in a goroutine. The loop's events
-// flow into the bubbletea program via the bridge tea.Cmd.
-//
-// The pause gate is wired here so a single source-of-truth lives in
-// the TUI Model: the user toggles paused via the keyboard, the gate
-// posts release tokens, and the Loop blocks on PauseGate before each
-// iteration after the first.
-//
-// buildLoop is a factory that returns a fresh loop.Loop on every call.
-// The first call drives the inner loop; subsequent calls fire when the
-// user resumes the run from the post-loop session menu (P2.11). The
-// factory captures all loop construction parameters in its closure so
-// the host needs no other knowledge to spawn replacement runs.
-func runWithTUI(ctx context.Context, cancel context.CancelFunc, buildLoop func() *loop.Loop, specPath, branch string, verbosity loop.Level, noColor bool) error {
-	// The TUI ignores --verbosity per the Phase 2 spec ("TUI panels are
-	// already curated"); raw is consumed directly. The verbosity arg is
-	// kept on the function signature so callers do not branch.
-	_ = verbosity
-
-	first := buildLoop()
-	gate := tui.NewGate()
-
-	// In TUI mode, the loop's milestone slog calls (`loop start`,
-	// `iter start`, ...) are duplicated as IterationStarted /
-	// IterationFinished / LoopFinished events on the channel and
-	// surfaced by panels. Pin a discard logger on the Loop so those
-	// duplicate messages never reach stderr; otherwise they smear into
-	// the alt-screen scrollback and become visible when the program
-	// exits.
-	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
-	first.Logger = discard
-	first.PauseGate = gate.Chan()
-
-	gitProbeAdapter, _ := first.Git.(tui.GitProbe)
-
-	type runResult struct {
-		code int
-		err  error
-	}
-	var (
-		resultMu     sync.Mutex
-		latestResult runResult
-	)
-
-	// runOne spawns one loop in a goroutine. The result is stashed in
-	// latestResult under resultMu; the host returns it once the
-	// bubbletea program exits (after [q] / Ctrl+C in session mode, or
-	// after a "user cancelled" / "fatal" LoopFinished closes the
-	// channel and Quit fires).
-	runOne := func(l *loop.Loop, events chan<- loop.Event) {
-		defer func() {
-			if r := recover(); r != nil {
-				resultMu.Lock()
-				latestResult = runResult{
-					code: loop.ExitInvalid,
-					err:  fmt.Errorf("loop panicked: %v\n%s", r, debug.Stack()),
-				}
-				resultMu.Unlock()
-			}
-		}()
-		code, err := l.Run(ctx, events)
-		resultMu.Lock()
-		latestResult = runResult{code: code, err: err}
-		resultMu.Unlock()
-	}
-
-	// newEvents builds the next loop run on demand: invoked by the
-	// Model when the user presses [r] in the session menu. Each call
-	// produces a fresh events channel that the Model rebinds to its
-	// bridge cmd.
-	newEvents := func() <-chan loop.Event {
-		ch := make(chan loop.Event, 256)
-		l := buildLoop()
-		l.Logger = discard
-		l.PauseGate = gate.Chan()
-		go runOne(l, ch)
-		return ch
-	}
-
-	raw := make(chan loop.Event, 256)
-
-	model := tui.New(tui.Options{
-		Events:    raw,
-		Cancel:    cancel,
-		Gate:      gate,
-		SpecPath:  specPath,
-		Branch:    branch,
-		MaxIter:   first.Config.Loop.MaxIterations,
-		GitProbe:  gitProbeAdapter,
-		GitCtx:    ctx,
-		NewEvents: newEvents,
-	})
-	// WithoutSignalHandler: signal.NotifyContext in RunE owns SIGINT /
-	// SIGTERM; bubbletea must not install a competing handler. Alt-screen
-	// and mouse cell motion are now properties of the Model's tea.View
-	// (set in Model.View), no longer ProgramOptions in v2. --no-color
-	// becomes a colour-profile override on the Program: passing
-	// colorprofile.NoTTY forces the renderer to strip every SGR escape
-	// (colours and resets) so the output reaches the terminal as plain
-	// text, matching the v1 behaviour of termenv.Ascii.
-	progOpts := []tea.ProgramOption{
-		tea.WithContext(ctx),
-		tea.WithoutSignalHandler(),
-	}
-	if noColor {
-		progOpts = append(progOpts, tea.WithColorProfile(colorprofile.NoTTY))
-	}
-	program := tea.NewProgram(model, progOpts...)
-	// SetProgram wires the program reference into the model so the
-	// session menu's [e] action can call ReleaseTerminal /
-	// RestoreTerminal around the $EDITOR invocation.
-	model.SetProgram(program)
-
-	// Belt-and-braces terminal restoration: program.Run() restores the
-	// terminal during normal exit and bubbletea installs its own panic
-	// handler for in-program panics, but neither protects against an
-	// outer panic in this function before Run returns. The deferred
-	// ReleaseTerminal undoes the alt-screen / raw mode in that path so
-	// the user is not left staring at a broken terminal.
-	defer func() {
-		if r := recover(); r != nil {
-			_ = program.ReleaseTerminal()
-			fmt.Fprintf(os.Stderr, "bcc: panic in TUI host: %v\n%s\n", r, debug.Stack())
-			panic(r)
-		}
-	}()
-
-	go runOne(first, raw)
-
-	if _, err := program.Run(); err != nil {
-		cancel()
-		return err
-	}
-
-	resultMu.Lock()
-	defer resultMu.Unlock()
-	ExitCode = latestResult.code
-	return latestResult.err
+	return runDirector(ctx, cancel, specPath, cfg)
 }
 
 func validOutputMode(s string) bool {

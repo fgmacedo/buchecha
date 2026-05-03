@@ -8,7 +8,6 @@ import (
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/executor/claude"
-	"github.com/fgmacedo/buchecha/internal/format/markdown_bcc"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/mcp"
@@ -27,11 +26,11 @@ type mcpBoot struct {
 }
 
 // startMCPBoot brings up the run-wide MCP server with a Handler bound
-// to (state, registry). state may be nil for legacy non-Director runs;
-// the placeholder methods that depend on state (P5) are not invoked in
-// that case. The advertised tool list is the Director method surface
-// (bcc_plan_emit, bcc_task_started, ...): any agent connected to this
-// server discovers them via tools/list and dispatches to handler.
+// to (state, registry). state is nil before the Plan is confirmed; the
+// loop seeds it from the Plan once the planner returns. The advertised
+// tool list is the Director method surface (bcc_plan_emit,
+// bcc_task_started, ...): any agent connected to this server
+// discovers them via tools/list and dispatches to handler.
 func startMCPBoot(state *dag.State) (*mcpBoot, error) {
 	registry := dag.NewAgentRegistry(nil)
 	handler := dag.NewHandler(state, registry)
@@ -107,12 +106,6 @@ func directorEffectiveHandler(deps directorDeps) *dag.Handler {
 	}
 	return deps.boot.handler
 }
-
-// markdownAdapterAsJournalProvider exposes the markdown_bcc adapter
-// (already constructed for the executor briefing) as a
-// dag.JournalDeltaProvider, so the handler answers bcc_get_journal_delta
-// without owning a second copy of the format adapter.
-func markdownAdapterAsJournalProvider(r *markdown_bcc.Reader) dag.JournalDeltaProvider { return r }
 
 func (b *mcpBoot) Close() error {
 	if b == nil || b.server == nil {

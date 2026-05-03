@@ -25,12 +25,6 @@ func TestLoad_FullExample(t *testing.T) {
 [project]
 language = "pt-BR"
 
-[spec]
-format = "markdown_bcc"
-
-[spec.markdown_bcc]
-dir = "specs"
-
 [journal]
 store = "markdown_inspec"
 
@@ -42,7 +36,6 @@ binary = "/usr/bin/claude"
 extra_args = ["--verbose"]
 
 [loop]
-mode = "phase"
 max_iterations = 10
 
 [git]
@@ -50,7 +43,6 @@ branch_prefix = "feat"
 require_commit_per_iteration = true
 
 [director]
-enabled = true
 retry_budget = 4
 
 [director.claude]
@@ -73,9 +65,6 @@ FOO = "bar"
 	if c.Project.Language != "pt-BR" {
 		t.Errorf("Language = %q", c.Project.Language)
 	}
-	if c.Spec.Format != "markdown_bcc" {
-		t.Errorf("Spec.Format = %q", c.Spec.Format)
-	}
 	if c.Agent.Name != "claude" {
 		t.Errorf("Agent.Name = %q", c.Agent.Name)
 	}
@@ -88,13 +77,6 @@ FOO = "bar"
 	if c.Loop.MaxIterations != 10 {
 		t.Errorf("MaxIterations = %d", c.Loop.MaxIterations)
 	}
-	if c.Spec.MarkdownBCC.Dir != "specs" {
-		t.Errorf("Spec.MarkdownBCC.Dir = %q", c.Spec.MarkdownBCC.Dir)
-	}
-	// pt-BR defaults applied for headings.
-	if c.Spec.MarkdownBCC.PlanHeading != "## Plano de implementação" {
-		t.Errorf("PlanHeading = %q (default not applied)", c.Spec.MarkdownBCC.PlanHeading)
-	}
 	if c.Journal.Store != "markdown_inspec" {
 		t.Errorf("Journal.Store = %q", c.Journal.Store)
 	}
@@ -103,9 +85,6 @@ FOO = "bar"
 	}
 	if !c.Git.RequireCommitPerIteration {
 		t.Errorf("Git.RequireCommitPerIteration = false")
-	}
-	if !c.Director.IsEnabled() {
-		t.Errorf("Director.IsEnabled() = false, want true (TOML had enabled = true)")
 	}
 	if c.Director.RetryBudget != 4 {
 		t.Errorf("Director.RetryBudget = %d, want 4", c.Director.RetryBudget)

@@ -35,17 +35,14 @@ func TestRunCmd_DefaultVerbosityIsInfo(t *testing.T) {
 	}
 }
 
-// TestRunCmd_DirectorFlagDefaultsOff locks the contract that the
-// Director path is opt-in: a user running plain `bcc run` keeps MVP
-// behaviour, and only `--director` (or `[director].enabled = true` in
-// .bcc.toml) routes through the new pipeline. Flipping this default
-// would re-route every existing run into a not-yet-wired branch.
-func TestRunCmd_DirectorFlagDefaultsOff(t *testing.T) {
-	flag := runCmd.Flags().Lookup("director")
-	if flag == nil {
-		t.Fatal("runCmd has no --director flag")
-	}
-	if got := flag.DefValue; got != "false" {
-		t.Errorf("--director default = %q, want false", got)
+// TestRunCmd_DoesNotExposeLegacyFlags locks the contract that the
+// legacy single-agent flags are gone: the Director DAG-driven pipeline
+// is the only execution path, so toggles that selected the old loop
+// (or single-shot mode) must not be reachable from the CLI.
+func TestRunCmd_DoesNotExposeLegacyFlags(t *testing.T) {
+	for _, name := range []string{"director", "no-director", "single-shot", "max-iterations", "extra"} {
+		if runCmd.Flags().Lookup(name) != nil {
+			t.Errorf("legacy flag --%s should be removed from runCmd", name)
+		}
 	}
 }

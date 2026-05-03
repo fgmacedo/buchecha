@@ -22,7 +22,6 @@ import (
 	directorclaude "github.com/fgmacedo/buchecha/internal/director/claude"
 	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/executor/claude"
-	"github.com/fgmacedo/buchecha/internal/format/markdown_bcc"
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
@@ -182,15 +181,11 @@ func runDirectorWith(
 	fmt.Fprintf(dio.stderr, "bcc: session=%s status=%s\n", deps.store.Session().ID, deps.store.Session().Status)
 
 	if deps.boot != nil {
-		journalAdapter := markdownAdapterAsJournalProvider(markdown_bcc.New(markdown_bcc.Config{
-			PlanHeading:    cfg.Spec.MarkdownBCC.PlanHeading,
-			JournalHeading: cfg.Spec.MarkdownBCC.JournalHeading,
-		}))
 		var gitProvider dag.GitDiffProvider
 		if g, ok := deps.git.(dag.GitDiffProvider); ok {
 			gitProvider = g
 		}
-		deps.boot.bindSession(deps.store, cfg.Director.IsMCPAuditEnabled(), gitProvider, journalAdapter)
+		deps.boot.bindSession(deps.store, cfg.Director.IsMCPAuditEnabled(), gitProvider, director.JournalDeltaProvider{})
 	}
 
 	if runOutput == OutputTUI {
@@ -526,11 +521,10 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		model.ClearPlanningPending()
 
 		l := &loop.Loop{
-			SpecPath:  specPath,
-			Config:    cfg,
-			Git:       deps.git,
-			Logger:    discard,
-			PauseGate: gate.Chan(),
+			SpecPath: specPath,
+			Config:   cfg,
+			Git:      deps.git,
+			Logger:   discard,
 			Director: &loop.DirectorPorts{
 				Plan:        plan,
 				Briefer:     deps.briefer,

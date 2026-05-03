@@ -106,8 +106,8 @@ func TestGatherDiff_PropagatesError(t *testing.T) {
 	}
 }
 
-// guard against typo in the canonical journal heading; specs and the
-// markdown_bcc adapter share this string verbatim.
+// guard against typo in the canonical journal heading; the Reviewer's
+// audit and the journal-delta provider must read the same string.
 func TestJournalHeading_Canonical(t *testing.T) {
 	if !strings.HasPrefix(JournalHeading, "## ") {
 		t.Errorf("JournalHeading must be an H2 heading, got %q", JournalHeading)

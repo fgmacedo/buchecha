@@ -23,24 +23,6 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
-// BccToolPrefix is the namespace Claude prepends to MCP tool names when
-// it surfaces them to the agent. The MCP server registers itself as
-// "bcc" in the mcp-config; Claude exposes its tools as
-// "mcp__bcc__<name>". The bare name reaches the server side, and is
-// what FromToolCall expects.
-const BccToolPrefix = "mcp__bcc__"
-
-// StripBccPrefix returns the bare wire-protocol tool name when name has
-// the Claude MCP prefix, and false otherwise. Used by ParseLine to
-// decide whether a tool_use envelope should be routed as a wire event
-// or surfaced as an ordinary tool call.
-func StripBccPrefix(name string) (string, bool) {
-	if strings.HasPrefix(name, BccToolPrefix) {
-		return strings.TrimPrefix(name, BccToolPrefix), true
-	}
-	return "", false
-}
-
 // Stream reads stream-json from r line by line, parses each line into
 // zero or more AgentEvents, and forwards each event on the events
 // channel. Returns when r EOFs or ctx is done. Lines longer than

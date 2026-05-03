@@ -149,5 +149,5 @@ Desligue o audit log com `[director].mcp_audit = false` se ele crescer demais; o
 
 - O Director roda apenas contra o adapter Claude. O protocolo MCP é vendor-neutral por construção; adapters codex e gemini estão desbloqueados mas não foram escritos.
 - Edições no spec mid-run não são detectadas automaticamente. Edite o spec, pare o run, e rode `bcc run --resume <spec>` para pegar a mudança.
-- Atribuição capability-aware (modelo por fase) está reservada para a [PRD 4](../specs/director/2026-04-30-capability-aware-execution.md); o Plano ainda não carrega metadados de executor por fase.
-- Execução paralela de sub-DAGs em worktrees está reservada para a [PRD 3](../specs/director/2026-04-30-parallel-phase-execution.md); hoje o loop roda um Executor por vez.
+- Atribuição capability-aware (modelo por task) está rastreada na [issue #3](https://github.com/fgmacedo/buchecha/issues/3); o Plano ainda não carrega metadados de executor por task.
+- Execução paralela de sub-DAGs em worktrees está rastreada na [issue #2](https://github.com/fgmacedo/buchecha/issues/2); hoje o loop roda um Executor por vez.

@@ -9,11 +9,22 @@ import (
 
 // JournalHeading is the canonical H2 the Director's review pipeline
 // expects in the spec: the section the Executor appends entries to and
-// the section bcc reads to compute the per-iteration journal delta. The
-// markdown_bcc adapter localizes this for the agent's prompt at the
-// format layer; the director domain pins one canonical heading because
-// the Reviewer must agree with bcc on where to look.
+// the section bcc reads to compute the per-iteration journal delta.
+// The director domain pins one canonical heading because the Reviewer
+// and the journal-delta provider must agree on where to look.
 const JournalHeading = "## Execution Journal"
+
+// JournalDeltaProvider is the inline implementation of
+// dag.JournalDeltaProvider that delegates to GatherJournalDelta. The
+// run boot wires this directly into the MCP handler so
+// bcc_get_journal_delta resolves through the canonical Execution
+// Journal heading without an extra format adapter.
+type JournalDeltaProvider struct{}
+
+// JournalDelta satisfies dag.JournalDeltaProvider.
+func (JournalDeltaProvider) JournalDelta(before, after []byte) string {
+	return GatherJournalDelta(before, after)
+}
 
 // GatherJournalDelta returns the text appended to the Execution Journal
 // section between the before and after snapshots of a spec. When the

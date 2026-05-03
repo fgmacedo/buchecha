@@ -14,10 +14,11 @@ type GitDiffProvider interface {
 	Diff(ctx context.Context, baseSHA, headSHA string) (string, error)
 }
 
-// JournalDeltaProvider is the format-adapter port the handler consults
-// to answer bcc_get_journal_delta. The markdown_bcc adapter implements
-// it on top of director.GatherJournalDelta; future format adapters
-// supply their own implementation here.
+// JournalDeltaProvider is the port the handler consults to answer
+// bcc_get_journal_delta. director.JournalDeltaProvider is the
+// in-tree implementation, delegating to GatherJournalDelta against
+// the canonical "## Execution Journal" heading; alternative
+// implementations may pin a different heading.
 type JournalDeltaProvider interface {
 	JournalDelta(before, after []byte) string
 }

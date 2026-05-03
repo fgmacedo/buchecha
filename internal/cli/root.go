@@ -18,7 +18,7 @@ var ExitCode int
 var rootCmd = &cobra.Command{
 	Use:           "bcc",
 	Short:         "Behavior-driven Coding Cycle for autonomous agent loops",
-	Long:          "bcc runs a coding agent against a Markdown spec in a phase-by-phase loop, with a strict journal contract for handoff between iterations and a live status dashboard.",
+	Long:          "bcc drives a Director-led pipeline (Plan, Brief, Execute, Review) against a Markdown spec. Roles communicate exclusively through an in-process MCP server; bcc owns the loop, per-session state, and the live status TUI.",
 	Version:       version,
 	SilenceUsage:  true,
 	SilenceErrors: true,

@@ -14,7 +14,6 @@ package config
 // nothing and are written by `bcc init` for forward-compat.
 type Config struct {
 	Project  Project        `toml:"project"`
-	Spec     Spec           `toml:"spec"`
 	Journal  Journal        `toml:"journal"`
 	Agent    Agent          `toml:"agent"`
 	Loop     Loop           `toml:"loop"`
@@ -28,25 +27,8 @@ type Project struct {
 	Language string `toml:"language"`
 }
 
-// Spec selects the active spec-format adapter and carries per-adapter
-// options. Format names a subtable below.
-type Spec struct {
-	Format      string          `toml:"format"`
-	MarkdownBCC SpecMarkdownBCC `toml:"markdown_bcc"`
-}
-
-// SpecMarkdownBCC carries options consumed by the markdown_bcc adapter
-// when rendering its embedded contract template. Heading strings are
-// localized; defaults follow Project.Language.
-type SpecMarkdownBCC struct {
-	Dir            string `toml:"dir"`
-	PlanHeading    string `toml:"plan_heading"`
-	JournalHeading string `toml:"journal_heading"`
-}
-
-// Journal selects the journal-storage hint passed to the active spec
-// adapter's prompt template. bcc never reads the journal; the agent
-// owns the write side.
+// Journal selects the journal-storage hint passed to the agent's
+// prompt. bcc never reads the journal; the agent owns the write side.
 type Journal struct {
 	Store string      `toml:"store"`
 	File  JournalFile `toml:"file"`
@@ -95,8 +77,7 @@ func (a AgentClaude) ShouldSkipPermissions() bool {
 
 // Loop configures the iteration loop.
 type Loop struct {
-	Mode          string `toml:"mode"`
-	MaxIterations int    `toml:"max_iterations"`
+	MaxIterations int `toml:"max_iterations"`
 }
 
 // Git holds git-related settings.
@@ -111,22 +92,15 @@ type Env struct {
 	Vars  map[string]string `toml:"vars"`
 }
 
-// DirectorConfig opts in to the Director-driven loop and carries the
-// global retry budget plus per-adapter subtables.
+// DirectorConfig carries the global retry budget plus per-adapter
+// subtables for the Director-driven loop.
 //
-// The wiring follows the same shape as Spec/Agent: the top-level toggle
-// (Enabled, RetryBudget) lives here; per-adapter knobs sit in their own
-// subtable. There is no adapter selector yet because only the Claude
-// adapter is wired; future adapters add a sibling subtable and the
-// runtime branches on which one is non-zero.
+// The wiring follows the same shape as Agent: the top-level knobs
+// (RetryBudget) live here; per-adapter knobs sit in their own subtable.
+// There is no adapter selector yet because only the Claude adapter is
+// wired; future adapters add a sibling subtable and the runtime branches
+// on which one is non-zero.
 type DirectorConfig struct {
-	// Enabled toggles the Director-driven loop. Tristate via pointer:
-	// nil means "absent in TOML, use default" (default: true). Setting
-	// `enabled = false` in .bcc.toml is an explicit opt-out, falling
-	// back to the legacy single-agent loop.
-	//
-	// Use IsEnabled() to read; never dereference directly.
-	Enabled     *bool          `toml:"enabled"`
 	RetryBudget int            `toml:"retry_budget"`
 	Claude      DirectorClaude `toml:"claude"`
 
@@ -145,15 +119,6 @@ func (d DirectorConfig) IsMCPAuditEnabled() bool {
 		return true
 	}
 	return *d.MCPAudit
-}
-
-// IsEnabled returns the effective value of the Enabled tristate,
-// applying the default (true) when absent.
-func (d DirectorConfig) IsEnabled() bool {
-	if d.Enabled == nil {
-		return true
-	}
-	return *d.Enabled
 }
 
 // DirectorClaude configures the Director's Claude adapter (P3+).

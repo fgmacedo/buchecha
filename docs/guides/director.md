@@ -149,5 +149,5 @@ Disable the audit log with `[director].mcp_audit = false` if it grows uncomforta
 
 - The Director runs only against the Claude adapter. The MCP protocol is vendor-neutral by construction; codex and gemini adapters are unblocked but not written.
 - Mid-run spec edits are not detected automatically. Edit the spec, stop the run, then `bcc run --resume <spec>` to pick up the change.
-- Capability-aware execution (per-phase model assignment) is reserved for [PRD 4](../specs/director/2026-04-30-capability-aware-execution.md); the Plan does not yet carry per-phase executor metadata.
-- Parallel sub-DAG execution across worktrees is reserved for [PRD 3](../specs/director/2026-04-30-parallel-phase-execution.md); today the loop runs one Executor at a time.
+- Capability-aware execution (per-task model assignment) is tracked in [issue #3](https://github.com/fgmacedo/buchecha/issues/3); the Plan does not yet carry per-task executor metadata.
+- Parallel sub-DAG execution across worktrees is tracked in [issue #2](https://github.com/fgmacedo/buchecha/issues/2); today the loop runs one Executor at a time.

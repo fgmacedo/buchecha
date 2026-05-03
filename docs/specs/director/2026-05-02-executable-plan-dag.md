@@ -27,7 +27,7 @@ comments: true
 
 The Director's plan is a directed acyclic graph of **phases and tasks**, where tasks are the atomic units of work and progress. Director roles (Planner, Briefer, Reviewer) are interactive read-only agents with the same tool envelope: `Read`, `Bash`, `Grep`, `Glob`, plus access to the bcc MCP server. The bcc MCP server is **run-wide**, has a **real handler** with per-method schema validation and per-connection authorization, and is the **single protocol of record** between agents and bcc. All agent output (plan emission, briefing emission, verdict emission, task progress) and all agent context queries (current briefing, pending tasks, DAG snapshot, diff, journal delta) flow through MCP method calls. The iteration loop is DAG-driven: it advances while pending tasks remain, picking sub-DAG slices per iteration, and terminates when the DAG has no pending tasks.
 
-This PRD supersedes PRD 2 (`2026-04-30-reviewed-execution.md`). The phase-only granularity and parser-based wire protocol introduced there are the two design choices this document corrects.
+This PRD supersedes the original phase-only / parser-based design that an earlier iteration of the Director shipped. The phase-only granularity and parser-based wire protocol are the two design choices this document corrects.
 
 ## Context
 
@@ -360,10 +360,9 @@ The existing `wire_protocol.md` partial is rewritten as the user-facing manual f
 ## References
 
 - [Initiative index](./index.md)
-- [PRD 1: Spec validation gate](./2026-04-30-spec-validation-gate.md)
-- [PRD 2: Reviewed execution (superseded)](./2026-04-30-reviewed-execution.md)
-- [PRD 3: Parallel phase execution](./2026-04-30-parallel-phase-execution.md)
-- [PRD 4: Capability-aware execution](./2026-04-30-capability-aware-execution.md)
 - [Spec: Reviewed execution corrections](./2026-05-02-reviewed-execution-corrections.md)
+- Spec validation gate: tracked in [issue #1](https://github.com/fgmacedo/buchecha/issues/1)
+- Parallel phase execution: tracked in [issue #2](https://github.com/fgmacedo/buchecha/issues/2)
+- Capability-aware execution: tracked in [issue #3](https://github.com/fgmacedo/buchecha/issues/3)
 - `internal/mcp/`: the MCP server that becomes the protocol substrate
 - `internal/loop/agentcontract/wire_protocol.md`: rewritten as the MCP usage manual

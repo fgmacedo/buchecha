@@ -19,7 +19,7 @@ var (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize .bcc.toml in the current project (interactive wizard)",
-	Long:  "Walk through an interactive wizard to generate .bcc.toml with project language, spec format, agent, journal store, loop settings, and env handling.",
+	Long:  "Walk through an interactive wizard to generate .bcc.toml with project language, agent, journal store, loop settings, and env handling.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInitWizard(os.Stdin, os.Stdout, ".bcc.toml")
 	},
@@ -35,13 +35,10 @@ func init() {
 // WriteConfigTOML so tests can drive it directly without stdin scripting.
 type initInput struct {
 	Language        string
-	SpecFormat      string // active [spec].format
 	JournalStore    string // active [journal].store
 	AgentName       string // active [agent].name
 	Binary          string // active agent's binary
 	Model           string // active agent's model (claude only)
-	SpecsDir        string
-	Mode            string
 	MaxIter         int
 	BranchPrefix    string
 	EnvFiles        []string
@@ -59,13 +56,10 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 
 	in := initInput{
 		Language:        initLanguage,
-		SpecFormat:      "markdown_bcc",
 		JournalStore:    "markdown_inspec",
 		AgentName:       "claude",
-		Mode:            "phase",
 		MaxIter:         20,
 		BranchPrefix:    "feat",
-		SpecsDir:        "docs/specs",
 		EnvFiles:        []string{".env"},
 		SkipPermissions: true,
 	}
@@ -75,11 +69,6 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 	}
 	if in.Language != "en" && in.Language != "pt-BR" {
 		return fmt.Errorf("invalid language %q (use en or pt-BR)", in.Language)
-	}
-
-	in.SpecFormat = ask(r, stdout, "Spec format [markdown_bcc/openspec/kiro/speckit/bmad]", in.SpecFormat)
-	if in.SpecFormat != "markdown_bcc" {
-		fmt.Fprintf(stdout, "  note: only markdown_bcc has a working adapter today; %q is reserved for future support.\n", in.SpecFormat)
 	}
 
 	in.AgentName = ask(r, stdout, "Agent [claude/codex/gemini]", in.AgentName)
@@ -105,13 +94,6 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 		in.JournalFilePath = ask(r, stdout, "Journal sidecar path", ".bcc/journal.ndjson")
 	default:
 		return fmt.Errorf("invalid journal store %q", in.JournalStore)
-	}
-
-	in.SpecsDir = ask(r, stdout, "Spec directory", in.SpecsDir)
-
-	in.Mode = ask(r, stdout, "Loop mode [phase/single-shot]", in.Mode)
-	if in.Mode != "phase" && in.Mode != "single-shot" {
-		return fmt.Errorf("invalid loop mode %q", in.Mode)
 	}
 
 	maxIterStr := ask(r, stdout, "Max iterations", "20")
@@ -156,29 +138,11 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 // WriteConfigTOML writes a .bcc.toml file at path with the provided
 // settings. Exposed for tests; the wizard wraps it. The output emits
 // stub subtables for known-but-inactive adapters so the user can switch
-// `[spec].format` or `[agent].name` later without re-editing the file.
+// `[agent].name` later without re-editing the file.
 func WriteConfigTOML(path string, in initInput) error {
 	var sb strings.Builder
 	sb.WriteString("[project]\n")
 	sb.WriteString(fmt.Sprintf("language = %q\n\n", in.Language))
-
-	sb.WriteString("# Active spec-format adapter. Other [spec.<name>] subtables hold\n")
-	sb.WriteString("# defaults so switching is one key change.\n")
-	sb.WriteString("[spec]\n")
-	sb.WriteString(fmt.Sprintf("format = %q\n\n", in.SpecFormat))
-
-	sb.WriteString("[spec.markdown_bcc]\n")
-	sb.WriteString(fmt.Sprintf("dir = %q\n\n", in.SpecsDir))
-
-	sb.WriteString("[spec.openspec]\n")
-	sb.WriteString("# tasks_path = \"tasks.md\"\n")
-	sb.WriteString("# proposal_path = \"proposal.md\"\n")
-	sb.WriteString("# design_path = \"design.md\"\n\n")
-
-	sb.WriteString("[spec.kiro]\n")
-	sb.WriteString("# tasks_path = \"tasks.md\"\n")
-	sb.WriteString("# requirements_path = \"requirements.md\"\n")
-	sb.WriteString("# design_path = \"design.md\"\n\n")
 
 	sb.WriteString("# Active journal-storage hint passed to the agent's contract template.\n")
 	sb.WriteString("# bcc never reads the journal; the agent owns the write side.\n")
@@ -243,19 +207,15 @@ func WriteConfigTOML(path string, in initInput) error {
 	sb.WriteString("\n")
 
 	sb.WriteString("[loop]\n")
-	sb.WriteString(fmt.Sprintf("mode = %q\n", in.Mode))
 	sb.WriteString(fmt.Sprintf("max_iterations = %d\n\n", in.MaxIter))
 
 	sb.WriteString("[git]\n")
 	sb.WriteString(fmt.Sprintf("branch_prefix = %q\n", in.BranchPrefix))
 	sb.WriteString("require_commit_per_iteration = true\n\n")
 
-	sb.WriteString("# Director: plan/brief/review loop on top of the Executor.\n")
-	sb.WriteString("# Default ON; set enabled = false (or pass --no-director) to fall back\n")
-	sb.WriteString("# to the legacy single-agent loop. The retry budget applies per phase;\n")
-	sb.WriteString("# phase-level overrides live in the generated plan.\n")
+	sb.WriteString("# Director: plan/brief/execute/review pipeline. retry_budget applies\n")
+	sb.WriteString("# per phase; per-task overrides live in the generated plan.\n")
 	sb.WriteString("[director]\n")
-	sb.WriteString("enabled = true\n")
 	sb.WriteString("retry_budget = 2\n\n")
 
 	sb.WriteString("# max_budget_usd > 0 caps the cost of each Director call (--max-budget-usd);\n")

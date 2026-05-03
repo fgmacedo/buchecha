@@ -1,31 +1,26 @@
 // Package agentcontract owns the format-agnostic surface of bcc's
 // contract with any agent: the canonical Signal alphabet that closes
 // every iteration, the normalized stream-telemetry envelope every
-// executor / director adapter produces, and the cross-format markdown
-// blocks that ship inside every spec adapter's prompt.
+// executor / director adapter produces, and the cross-role markdown
+// blocks that ship inside every prompt bcc renders.
 //
 // Signal (continue / review / done / blocked) is the wire vocabulary
 // the loop and the TUI consume regardless of which role (executor,
 // planner, briefer, reviewer) emitted it. AgentEvent and friends
 // (AgentEventKind, InitInfo, ToolCallInfo, UsageInfo, RateLimitInfo,
 // ResultSummaryInfo) define the shape adapters use to forward
-// streaming agent activity. Other format-neutral blocks
+// streaming agent activity. The format-neutral markdown blocks
 // (wire_protocol.md, absolute_restrictions.md, working_tree.md) ship
 // from here so there is one canonical bcc-level statement of these
-// rules, and every per-format adapter composes its prompt by including
-// them via Go text/template partials.
+// rules; every per-role prompt under internal/director/prompts/
+// composes its template by extending Partials().
 //
-// What is NOT here: per-format procedure, scope discipline, journal
-// shape. Those live in the format adapter (e.g.,
-// internal/format/markdown_bcc/contract.md), which composes the final
-// prompt by extending Partials() with its own template. The MCP
-// transport itself (HTTP server, mcp-config generation, name
-// prefixing) lives in the executor adapter (internal/executor/<flavor>
-// + internal/mcp); this package only fixes the abstract events. The
-// per-vendor stream-json parser likewise lives under the relevant
-// adapter (e.g. internal/executor/claude/streamjson). The MCP method
-// dispatch table that translates bcc_* method calls into DAG mutations
-// lives in internal/director/dag.
+// What is NOT here: the MCP transport itself (HTTP server, mcp-config
+// generation, name prefixing), which lives under internal/mcp and the
+// executor adapter; the per-vendor stream-json parser, which lives
+// under the relevant adapter (e.g. internal/executor/claude/streamjson);
+// the MCP method dispatch table that translates bcc_* method calls into
+// DAG mutations, which lives in internal/director/dag.
 package agentcontract
 
 import (
