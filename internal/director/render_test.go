@@ -147,7 +147,7 @@ func TestRenderBriefingUser_OmitsContractSections(t *testing.T) {
 // agentcontract partials end up in the system prompt; their absence
 // would relax the bcc contract.
 func TestRenderBriefingSystem_IncludesPartials(t *testing.T) {
-	got, err := RenderBriefingSystem()
+	got, err := RenderBriefingSystem("agent-test")
 	if err != nil {
 		t.Fatalf("RenderBriefingSystem: %v", err)
 	}
@@ -156,10 +156,22 @@ func TestRenderBriefingSystem_IncludesPartials(t *testing.T) {
 		"absolute restrictions",
 		"git push",
 		"Clean on entry",
+		"agent-test",
+		"## Identity",
 	} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(marker)) {
 			t.Errorf("partial marker %q missing from system prompt", marker)
 		}
+	}
+}
+
+// TestRenderBriefingSystem_RejectsEmptyAgentID guards the Identity
+// block: an Executor system prompt without a populated agent_id would
+// leave the agent unable to authenticate any MCP call, stalling the
+// iteration.
+func TestRenderBriefingSystem_RejectsEmptyAgentID(t *testing.T) {
+	if _, err := RenderBriefingSystem(""); err == nil {
+		t.Fatalf("expected error on empty agent_id")
 	}
 }
 

@@ -27,17 +27,21 @@ type briefingView struct {
 
 // RenderBriefingSystem returns the Executor's system prompt: the bcc
 // contract (wire_protocol, absolute_restrictions, working_tree) framed
-// as the durable rules every iteration must obey. The output carries no
-// per-iteration data; callers can render it once per session and reuse
-// it across iterations. The contract sections are concatenated, never
+// as the durable rules every iteration must obey, plus the per-spawn
+// agent_id the Executor must pass on every MCP call. The agent_id is
+// the only per-spawn input; the rest of the prompt is stable across
+// iterations. The contract sections are concatenated, never
 // substituted; a render that omits one would relax the contract.
-func RenderBriefingSystem() (string, error) {
+func RenderBriefingSystem(agentID string) (string, error) {
+	if agentID == "" {
+		return "", fmt.Errorf("director: RenderBriefingSystem: empty agent_id")
+	}
 	t := agentcontract.Partials()
 	if _, err := t.New("briefing_system").Parse(briefingSystemMD); err != nil {
 		return "", fmt.Errorf("director: parse briefing_system template: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, "briefing_system", nil); err != nil {
+	if err := t.ExecuteTemplate(&buf, "briefing_system", struct{ AgentID string }{AgentID: agentID}); err != nil {
 		return "", fmt.Errorf("director: render briefing_system: %w", err)
 	}
 	return buf.String(), nil

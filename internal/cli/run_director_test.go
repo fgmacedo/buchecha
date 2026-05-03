@@ -244,9 +244,17 @@ func (r *recordingExecutor) Run(ctx context.Context, _ string, _ chan<- agentcon
 // The factory captures the system_prompt_file path on each call. The
 // handler reference lets the executor mirror a production agent: it
 // registers, reports the iteration signal via MCP, and deregisters.
-func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func(string, dag.RegisterArgs) loop.Executor, *recordingExecutor) {
+func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func(dag.RegisterArgs, func(string) (string, error)) loop.Executor, *recordingExecutor) {
 	rec := &recordingExecutor{emitSignal: signal, handler: h}
-	return func(path string, args dag.RegisterArgs) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(string) (string, error)) loop.Executor {
+		path := ""
+		if renderSystem != nil {
+			p, err := renderSystem("test-executor-agent")
+			if err != nil {
+				return &failingExecutor{err: err}
+			}
+			path = p
+		}
 		rec.mu.Lock()
 		rec.systemPromptFile = path
 		rec.args = args
@@ -440,14 +448,16 @@ func TestRunDirectorWith_AbortPath(t *testing.T) {
 	store := mkSessionStore(t, tmp, specPath)
 	h := newTestHandler()
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     briefer,
-		reviewer:    &fake.Reviewer{},
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		now:         time.Now,
+		handler:  h,
+		planner:  planner,
+		briefer:  briefer,
+		reviewer: &fake.Reviewer{},
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now: time.Now,
 	}
 	dio := directorIO{stdin: strings.NewReader("a\n"), stderr: io.Discard}
 
@@ -540,14 +550,16 @@ func TestRunDirectorWith_RejectsEmptyPlan(t *testing.T) {
 	store := mkSessionStore(t, tmp, specPath)
 	h := newTestHandler()
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    &fake.Reviewer{},
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		now:         time.Now,
+		handler:  h,
+		planner:  planner,
+		briefer:  scriptedBriefer(h),
+		reviewer: &fake.Reviewer{},
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now: time.Now,
 	}
 	dio := directorIO{stdin: strings.NewReader("p\n"), stderr: io.Discard}
 
@@ -593,15 +605,17 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 	}
 	store := mkSessionStore(t, tmp, specPath)
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    approvingReviewer(h),
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		registerFn:  testRegisterFn(h),
-		now:         func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
+		handler:  h,
+		planner:  planner,
+		briefer:  scriptedBriefer(h),
+		reviewer: approvingReviewer(h),
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		registerFn: testRegisterFn(h),
+		now:        func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
 	}
 
 	var stderr bytes.Buffer
@@ -661,15 +675,17 @@ func TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero(t *testing.T) {
 	}
 	store := mkSessionStore(t, tmp, specPath)
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    approvingReviewer(h),
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		registerFn:  testRegisterFn(h),
-		now:         func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
+		handler:  h,
+		planner:  planner,
+		briefer:  scriptedBriefer(h),
+		reviewer: approvingReviewer(h),
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		registerFn: testRegisterFn(h),
+		now:        func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
 	}
 
 	var stderr bytes.Buffer
@@ -709,15 +725,17 @@ func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
 	}
 	store := mkSessionStore(t, tmp, specPath)
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    approvingReviewer(h),
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		registerFn:  testRegisterFn(h),
-		now:         time.Now,
+		handler:  h,
+		planner:  planner,
+		briefer:  scriptedBriefer(h),
+		reviewer: approvingReviewer(h),
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		registerFn: testRegisterFn(h),
+		now:        time.Now,
 	}
 	dio := directorIO{stdin: strings.NewReader(""), stderr: io.Discard}
 
@@ -1026,14 +1044,16 @@ func TestRunDirectorWith_ResumeHashMismatch_AbortPath(t *testing.T) {
 	}
 	h := newTestHandler()
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     briefer,
-		reviewer:    &fake.Reviewer{},
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		now:         time.Now,
+		handler:  h,
+		planner:  planner,
+		briefer:  briefer,
+		reviewer: &fake.Reviewer{},
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now: time.Now,
 	}
 	dio := directorIO{stdin: strings.NewReader("a\n"), stderr: io.Discard, resume: true}
 
@@ -1339,14 +1359,16 @@ func TestRunDirectorWith_SessionFlag_RejectsUnknownID(t *testing.T) {
 	}
 	h := newTestHandler()
 	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    &fake.Reviewer{},
-		baseDir:     filepath.Join(tmp, ".bcc"),
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		now:         time.Now,
+		handler:  h,
+		planner:  planner,
+		briefer:  scriptedBriefer(h),
+		reviewer: &fake.Reviewer{},
+		baseDir:  filepath.Join(tmp, ".bcc"),
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now: time.Now,
 	}
 	dio := directorIO{
 		stdin:   strings.NewReader(""),
@@ -1384,14 +1406,16 @@ func TestRunDirectorWith_SessionFlag_RejectsSpecMismatch(t *testing.T) {
 
 	h := newTestHandler()
 	deps := directorDeps{
-		handler:     h,
-		planner:     &fake.Planner{},
-		briefer:     scriptedBriefer(h),
-		reviewer:    &fake.Reviewer{},
-		baseDir:     filepath.Join(tmp, ".bcc"),
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		now:         time.Now,
+		handler:  h,
+		planner:  &fake.Planner{},
+		briefer:  scriptedBriefer(h),
+		reviewer: &fake.Reviewer{},
+		baseDir:  filepath.Join(tmp, ".bcc"),
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now: time.Now,
 	}
 	dio := directorIO{
 		stdin:   strings.NewReader(""),
@@ -1432,14 +1456,16 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 
 	h := newTestHandler()
 	deps := directorDeps{
-		handler:     h,
-		planner:     &fake.Planner{},
-		briefer:     scriptedBriefer(h),
-		reviewer:    &fake.Reviewer{},
-		baseDir:     filepath.Join(tmp, ".bcc"),
-		git:         newAdvancingGit(),
-		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
-		now:         time.Now,
+		handler:  h,
+		planner:  &fake.Planner{},
+		briefer:  scriptedBriefer(h),
+		reviewer: &fake.Reviewer{},
+		baseDir:  filepath.Join(tmp, ".bcc"),
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now: time.Now,
 	}
 	dio := directorIO{
 		stdin:  strings.NewReader(""),

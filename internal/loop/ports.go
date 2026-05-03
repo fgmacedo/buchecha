@@ -126,12 +126,14 @@ type DirectorPorts struct {
 	// Required.
 	Store *director.Store
 
-	// NewExecutor builds a fresh Executor for one (phase, attempt) with
-	// systemPromptFile pointing at the rendered Briefing prompt on
-	// disk and args carrying the per-iteration scope (BriefingID,
+	// NewExecutor builds a fresh Executor for one (phase, attempt). The
+	// factory registers the Executor against the run-wide registry so it
+	// learns its agent_id, then invokes renderSystem(agentID) to obtain
+	// the path to a rendered system prompt on disk that includes the
+	// Identity block. args carry the per-iteration scope (BriefingID,
 	// PhaseID, SubDAG) the Executor's MCP calls will be checked
 	// against. Required.
-	NewExecutor func(systemPromptFile string, args dag.RegisterArgs) Executor
+	NewExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error)) Executor
 
 	// Handler is the run-wide MCP handler. The loop reads briefings,
 	// per-task statuses, and review outcomes through it; the Briefer

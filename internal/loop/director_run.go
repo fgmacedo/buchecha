@@ -137,11 +137,6 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: render briefing user prompt: %w", err)
 		}
-		systemPrompt, err := director.RenderBriefingSystem()
-		if err != nil {
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: render briefing system prompt: %w", err)
-		}
 		briefingsDir := filepath.Join(d.Store.SessionDir(), "briefings")
 		if err := os.MkdirAll(briefingsDir, 0o755); err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
@@ -155,9 +150,21 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		}
 		systemPromptPath := filepath.Join(briefingsDir,
 			fmt.Sprintf("%s.system.md", briefing.IterationID))
-		if err := os.WriteFile(systemPromptPath, []byte(systemPrompt), 0o644); err != nil {
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: write briefing system prompt: %w", err)
+		// renderSystem is invoked by the NewExecutor factory once the
+		// Executor's per-spawn agent_id is known. The factory passes the
+		// freshly registered agent_id; we render the system prompt with
+		// the matching Identity block and persist it. Each attempt
+		// rewrites the same path because each attempt registers a fresh
+		// agent_id; only the latest rendered file is consumed.
+		renderSystem := func(agentID string) (string, error) {
+			systemPrompt, err := director.RenderBriefingSystem(agentID)
+			if err != nil {
+				return "", fmt.Errorf("director: render briefing system prompt: %w", err)
+			}
+			if err := os.WriteFile(systemPromptPath, []byte(systemPrompt), 0o644); err != nil {
+				return "", fmt.Errorf("director: write briefing system prompt: %w", err)
+			}
+			return systemPromptPath, nil
 		}
 
 		emit(events, PhaseBriefed{
@@ -198,7 +205,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				PhaseID:    phaseID,
 				SubDAG:     actualSub,
 			}
-			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(systemPromptPath, execArgs), userPrompt, events, d.Handler, briefing.IterationID)
+			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(execArgs, renderSystem), userPrompt, events, d.Handler, briefing.IterationID)
 			if execErr != nil {
 				return l.terminate(events, "fatal", ExitInvalid), execErr
 			}

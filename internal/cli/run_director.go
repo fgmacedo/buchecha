@@ -68,7 +68,7 @@ type directorDeps struct {
 	baseDir     string
 	store       *director.Store
 	git         loop.GitProbe
-	newExecutor func(systemPromptFile string, args dag.RegisterArgs) loop.Executor
+	newExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error)) loop.Executor
 	now         func() time.Time
 	// handler, when non-nil, overrides the run-wide MCP handler the
 	// loop receives in DirectorPorts. Tests inject one to drive the
@@ -145,10 +145,15 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		registerFn: boot.registerDirectorAgent,
 		baseDir:    ".bcc",
 		git:        gitcli.New(""),
-		newExecutor: func(systemPromptFile string, args dag.RegisterArgs) loop.Executor {
+		newExecutor: func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error)) loop.Executor {
 			mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
 			if err != nil {
 				return &failingExecutor{err: fmt.Errorf("register executor agent: %w", err)}
+			}
+			systemPromptFile, err := renderSystem(mcpCfg.AgentID)
+			if err != nil {
+				cleanup()
+				return &failingExecutor{err: fmt.Errorf("render executor system prompt: %w", err)}
 			}
 			inner := claude.New(claude.Config{
 				Binary:            cfg.Agent.Claude.Binary,

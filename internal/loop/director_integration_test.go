@@ -149,10 +149,25 @@ func (e *directorFakeExec) Run(ctx context.Context, _ string, events chan<- agen
 	return loop.ExecResult{ExitCode: 0}, nil
 }
 
-func directorNewExecutor(h *dag.Handler, signal agentcontract.Signal, runs *directorFakeRuns) func(string, dag.RegisterArgs) loop.Executor {
-	return func(_ string, args dag.RegisterArgs) loop.Executor {
+func directorNewExecutor(h *dag.Handler, signal agentcontract.Signal, runs *directorFakeRuns) func(dag.RegisterArgs, func(string) (string, error)) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(string) (string, error)) loop.Executor {
+		if renderSystem != nil {
+			if _, err := renderSystem("integration-executor-agent"); err != nil {
+				return &failingDirectorExec{err: err}
+			}
+		}
 		return &directorFakeExec{signal: signal, handler: h, args: args, runs: runs}
 	}
+}
+
+// failingDirectorExec mirrors the production failingExecutor: when the
+// integration test's renderSystem callback fails, the factory returns a
+// loop.Executor whose Run surfaces the error, letting the loop driver
+// abort with the expected fatal exit code.
+type failingDirectorExec struct{ err error }
+
+func (e *failingDirectorExec) Run(_ context.Context, _ string, _ chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
+	return loop.ExecResult{ExitCode: -1}, e.err
 }
 
 // briefingEmitter wires a fake.Briefer that emits a Briefing for the
