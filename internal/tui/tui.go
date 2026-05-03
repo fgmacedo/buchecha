@@ -40,20 +40,21 @@ const nowHealthSplit = 0.6
 type keyMap struct {
 	Quit  key.Binding
 	Pause key.Binding
+	Mouse key.Binding
 	Help  key.Binding
 }
 
 // ShortHelp returns the bindings rendered as a single inline footer line
 // (the help.Model's ShortHelp mode).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Quit, k.Pause, k.Help}
+	return []key.Binding{k.Quit, k.Pause, k.Mouse, k.Help}
 }
 
 // FullHelp returns the bindings grouped by column for the ? overlay
 // (help.Model's FullHelp mode). One column today; columns are added by
 // returning more nested slices.
 func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Quit, k.Pause, k.Help}}
+	return [][]key.Binding{{k.Quit, k.Pause, k.Mouse, k.Help}}
 }
 
 func defaultKeyMap() keyMap {
@@ -65,6 +66,10 @@ func defaultKeyMap() keyMap {
 		Pause: key.NewBinding(
 			key.WithKeys(" ", "space"),
 			key.WithHelp("space", "pause / resume between iterations"),
+		),
+		Mouse: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "toggle mouse capture (off: select/copy text)"),
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
@@ -147,6 +152,21 @@ type Model struct {
 	sessionMode    bool
 	sessionReason  string
 	sessionExitMsg string // best-effort hint surfaced after a failed [e] edit
+
+	// nothingToDoMode latches when the Planner reports via bcc_plan_skip
+	// that the spec is already complete. The dashboard renders a
+	// quit-only friendly screen and stays alive until the user presses
+	// q / Ctrl+C; nothingToDoReason carries the planner's free-text
+	// explanation rendered to the user.
+	nothingToDoMode   bool
+	nothingToDoReason string
+
+	// mouseCaptureOff toggles the View's MouseMode between
+	// MouseModeCellMotion (default) and MouseModeNone. Off allows the
+	// terminal/multiplexer to handle mouse events itself, restoring
+	// native drag-to-select for copy/paste at the cost of in-app
+	// scroll-wheel handling.
+	mouseCaptureOff bool
 
 	// Keybindings + help renderer (single source of truth).
 	keys         keyMap
@@ -245,15 +265,20 @@ func New(opts Options) Model {
 	return m
 }
 
-// Init starts the event-pump cmd plus the periodic ticks (spinner,
-// git probe). The bubbletea program runs them as soon as the program
-// enters its event loop.
+// Init starts the event-pump cmd plus the periodic ticks (git probe).
+// The spinner is animated on demand: it only ticks while the agent has
+// an in-flight tool call or while the planner is still in flight, so
+// an idle dashboard does not repaint at 10 FPS for no visible change.
+// KindToolUse arms the spinner from inside Update; here we arm it once
+// when the run boots in planning mode so the placeholder animates.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{}
 	if m.events != nil {
 		cmds = append(cmds, readEventCmd(m.events))
 	}
-	cmds = append(cmds, m.now.spinner.Tick)
+	if m.planningPending {
+		cmds = append(cmds, m.now.spinner.Tick)
+	}
 	if m.gitProbe != nil {
 		cmds = append(cmds, gitProbeCmd(m.gitCtx, m.gitProbe, m.runBaselineSHA))
 	}
@@ -275,6 +300,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.nothingToDoMode {
+			return m.handleNothingToDoKey(msg)
+		}
 		if m.director.escalation {
 			return m.handleEscalationKey(msg)
 		}
@@ -289,15 +317,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		if msg.closed {
 			m.finished = true
-			// In session mode the loop has terminated but bcc remains
-			// alive so the user can resume / edit / quit. Stay parked
-			// instead of quitting bubbletea.
-			if m.sessionMode {
+			// In session mode (loop reached a recoverable terminal state)
+			// or nothing-to-do mode (planner said the spec is done) the
+			// dashboard stays alive until the user resolves the screen.
+			if m.sessionMode || m.nothingToDoMode {
 				return m, nil
 			}
 			return m, tea.Quit
 		}
 		return m.handleLoopEvent(msg.ev)
+
+	case planSkippedMsg:
+		m.nothingToDoMode = true
+		m.nothingToDoReason = msg.reason
+		m.planningPending = false
+		m.planReady = false
+		return m, nil
 
 	case planReadyMsg:
 		// Planner returned a plan and confirmation is pending. Latch
@@ -345,15 +380,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.sessionExitMsg = ""
 		}
-		// Re-arm the spinner: ReleaseTerminal stalled the bubbletea
-		// renderer, so the previously scheduled spinner.Tick may have
-		// been swallowed.
-		return m, m.now.spinner.Tick
+		// Re-arm the spinner only if there is something to animate: a
+		// tool may still be in flight after the user returned from the
+		// editor. Idle session mode does not need a tick.
+		if m.now.currentTool != nil && !m.finished {
+			return m, m.now.spinner.Tick
+		}
+		return m, nil
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.now.spinner, cmd = m.now.spinner.Update(msg)
-		if m.finished {
+		// Stop the tick loop when there is nothing to animate: the run
+		// finished, no tool is in flight, and the planner is no longer
+		// pending. The spinner re-arms on the next KindToolUse (or on
+		// the next planner-driven boot) so the panel resumes animating
+		// without polling between iterations.
+		if m.finished || (m.now.currentTool == nil && !m.planningPending) {
 			return m, nil
 		}
 		return m, cmd
@@ -398,9 +441,23 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.header.paused = m.paused
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.Mouse):
+		m.mouseCaptureOff = !m.mouseCaptureOff
+		return m, nil
 	case key.Matches(msg, m.keys.Help):
 		m.helpVisible = !m.helpVisible
 		return m, nil
+	}
+	return m, nil
+}
+
+// handleNothingToDoKey routes input while the nothing-to-do terminal
+// screen is up. Only quit bindings are honoured; everything else is a
+// no-op so the user cannot accidentally trigger pause/help/etc on what
+// is effectively a final screen.
+func (m Model) handleNothingToDoKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Quit) {
+		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -495,6 +552,7 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		// via the next eventMsg{closed: true} from readEventCmd unless
 		// sessionMode latched.
 	case loop.AgentEventReceived:
+		toolBefore := m.now.currentTool
 		m.now.onAgentEvent(e.Event)
 		m.health.onAgentEvent(e.Event)
 		m.actions.onAgentEvent(e.Event)
@@ -502,6 +560,12 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.header.onAny(e.Event.At)
 		if e.Event.Kind == agentcontract.KindResultSummary && e.Event.Done != nil {
 			m.director.onCost(e.Event.Done.TotalCostUSD)
+		}
+		// Arm the spinner the first moment a tool becomes active. Idle
+		// transitions (tool finished) leave the tick loop to wind down
+		// naturally on the next spinner.TickMsg.
+		if toolBefore == nil && m.now.currentTool != nil && !m.finished {
+			cmds = append(cmds, m.now.spinner.Tick)
 		}
 	case loop.PhasePlanned:
 		m.director.onPhasePlanned(e.Plan)
@@ -544,7 +608,11 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	v := tea.NewView(m.viewContent())
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	if m.mouseCaptureOff {
+		v.MouseMode = tea.MouseModeNone
+	} else {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
 }
 
@@ -553,6 +621,13 @@ func (m Model) View() tea.View {
 // call m.View().Content directly without losing the AltScreen / mouse
 // metadata.
 func (m Model) viewContent() string {
+	// Nothing-to-do takes precedence: when the planner skipped, the
+	// dashboard is replaced with a friendly terminal screen so the user
+	// has nothing to act on except quit. This must come before session
+	// mode and the bare finished branches.
+	if m.nothingToDoMode {
+		return m.viewNothingToDo()
+	}
 	// Session mode freezes the dashboard with a menu of next steps; it
 	// must take precedence over the bare-string finished branches below
 	// (which only fire for "user cancelled" / "fatal" reasons that bypass
@@ -572,6 +647,24 @@ func (m Model) viewContent() string {
 	}
 
 	return m.viewDashboard(false)
+}
+
+// viewNothingToDo renders the friendly terminal screen latched when the
+// Planner declared the spec done via bcc_plan_skip. The user has no
+// remediation to perform, so the screen exposes only a quit
+// instruction. The reason text the planner attached is shown verbatim
+// so the user can see why the run was a no-op.
+func (m Model) viewNothingToDo() string {
+	var b lipgloss.Style = theme.title
+	title := b.Render("[ bcc: nothing to do ]")
+	reason := m.nothingToDoReason
+	if reason == "" {
+		reason = "the planner reported the spec is already complete"
+	}
+	body := "\n" + title + "\n\n"
+	body += "  " + theme.ok.Render(reason) + "\n\n"
+	body += "  " + theme.subtle.Render("press [q] or Ctrl+C to exit") + "\n"
+	return body
 }
 
 // viewSession renders the dashboard frozen behind a session menu. The

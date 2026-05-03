@@ -416,6 +416,75 @@ func TestView_DirectorPanelVisibleAfterPhasePlanned(t *testing.T) {
 	}
 }
 
+// TestUpdate_PlanSkippedLatchesNothingToDoMode covers the friendly
+// terminal screen for the planner-skip path: planSkippedMsg latches
+// the mode + reason, clears planning placeholders, and the channel
+// close that follows on the wire does not schedule tea.Quit.
+func TestUpdate_PlanSkippedLatchesNothingToDoMode(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	m.planningPending = true
+	got, _ := m.Update(planSkippedMsg{reason: "spec is complete: 18/18 acceptance bullets done"})
+	mm := got.(Model)
+	if !mm.nothingToDoMode {
+		t.Fatal("nothingToDoMode not latched after planSkippedMsg")
+	}
+	if mm.nothingToDoReason != "spec is complete: 18/18 acceptance bullets done" {
+		t.Errorf("nothingToDoReason = %q, want the reason from planSkippedMsg", mm.nothingToDoReason)
+	}
+	if mm.planningPending {
+		t.Error("planningPending should be cleared after planSkippedMsg")
+	}
+
+	got2, cmd := mm.Update(eventMsg{closed: true})
+	if cmd != nil {
+		t.Errorf("nothing-to-do mode must swallow channel close; got cmd %v", cmd)
+	}
+	mm2 := got2.(Model)
+	if !mm2.finished {
+		t.Error("finished should be true after channel close")
+	}
+	if !mm2.nothingToDoMode {
+		t.Error("nothingToDoMode dropped after channel close; want sticky")
+	}
+}
+
+func TestView_NothingToDoRendersFriendlyScreen(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	mm0, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	mm1, _ := mm0.(Model).Update(planSkippedMsg{reason: "every Done bullet is checked off"})
+	out := mm1.(Model).View().Content
+	for _, want := range []string{
+		"bcc: nothing to do",
+		"every Done bullet is checked off",
+		"press [q] or Ctrl+C to exit",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("nothing-to-do view missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestUpdate_NothingToDoQuitOnly(t *testing.T) {
+	m, _, _, cancelled := newTestModel(t)
+	mm0, _ := m.Update(planSkippedMsg{reason: "done"})
+	m = mm0.(Model)
+
+	if _, cmd := m.Update(keyPress(" ")); cmd != nil {
+		t.Errorf("space (pause) must be a no-op in nothing-to-do mode; got cmd")
+	}
+	if _, cmd := m.Update(keyPress("r")); cmd != nil {
+		t.Errorf("r must be a no-op in nothing-to-do mode; got cmd")
+	}
+	if *cancelled {
+		t.Error("cancel callback fired for non-quit key")
+	}
+
+	_, cmd := m.Update(keyPress("q"))
+	if cmd == nil {
+		t.Error("q must trigger tea.Quit in nothing-to-do mode")
+	}
+}
+
 // asModel narrows tea.Model to the concrete tui.Model. Test setups that
 // chain multiple Update calls use this to avoid sprinkling type
 // assertions through every step.

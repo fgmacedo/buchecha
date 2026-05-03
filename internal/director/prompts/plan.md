@@ -13,10 +13,11 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 
 1. Call `bcc_task_started(agent_id, "planning")` so the timeline records that planning began.
 2. Read the spec via the `Read` tool: open `{{.SpecPath}}`. Quote the spec verbatim when it matters; never paraphrase a stop criterion or an acceptance bullet.
-3. Use `Grep`, `Glob`, and `Read` to inspect the surrounding repo as needed. You may run read-only `Bash` commands (`go vet`, `git log`, `ls`) to orient yourself.
-4. Compose the `Plan`: a two-level DAG of phases and tasks.
-5. Emit it via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection it returns a structured error with the offending ids; read the error, correct the plan, and re-emit. The Plan is replaced atomically when the emit succeeds.
-6. Call `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, root P1 establishes session boundary").
+3. **Decide first whether there is anything to do.** Skim the spec's checkboxes, acceptance bullets, and any Execution Journal section. If every item is already checked, every acceptance bullet is satisfied, and the journal records the run as complete, **fail fast**: call `bcc_plan_skip(agent_id, reason)` with a one-sentence `reason` that cites what you observed (e.g. "all 18 acceptance bullets in the Done section are checked off and the Execution Journal entry from 2026-05-01 marks the spec as shipped"), then call `bcc_task_completed(agent_id, "planning", "spec already complete; skipped")` and stop. Do **not** invent residual tasks to keep the run busy. `bcc_plan_skip` and `bcc_plan_emit` are mutually exclusive: pick one.
+4. Otherwise use `Grep`, `Glob`, and `Read` to inspect the surrounding repo as needed. You may run read-only `Bash` commands (`go vet`, `git log`, `ls`) to orient yourself.
+5. Compose the `Plan`: a two-level DAG of phases and tasks.
+6. Emit it via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection it returns a structured error with the offending ids; read the error, correct the plan, and re-emit. The Plan is replaced atomically when the emit succeeds.
+7. Call `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, root P1 establishes session boundary").
 
 ## Plan shape
 

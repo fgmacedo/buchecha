@@ -114,6 +114,70 @@ func TestUpdate_CtrlCQuitsAndCancels(t *testing.T) {
 	}
 }
 
+func TestUpdate_MouseKeyTogglesCaptureAndViewMouseMode(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	if m.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("default MouseMode = %v, want MouseModeCellMotion", m.View().MouseMode)
+	}
+	got, cmd := m.Update(keyPress("m"))
+	if cmd != nil {
+		t.Errorf("m key must not return a cmd; got %v", cmd)
+	}
+	mm := got.(Model)
+	if !mm.mouseCaptureOff {
+		t.Fatal("mouseCaptureOff = false after first m press")
+	}
+	if mm.View().MouseMode != tea.MouseModeNone {
+		t.Errorf("View MouseMode = %v after toggle off, want MouseModeNone", mm.View().MouseMode)
+	}
+	got2, _ := mm.Update(keyPress("m"))
+	mm2 := got2.(Model)
+	if mm2.mouseCaptureOff {
+		t.Fatal("mouseCaptureOff = true after second m press; want toggled back")
+	}
+	if mm2.View().MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("View MouseMode = %v after toggle on, want MouseModeCellMotion", mm2.View().MouseMode)
+	}
+}
+
+func TestUpdate_SpinnerTickStopsWhenIdle(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	// No tool active and no planning pending: tick must not re-arm.
+	got, cmd := m.Update(spinner.TickMsg{})
+	if cmd != nil {
+		t.Errorf("idle spinner tick must not re-arm; got cmd %v", cmd)
+	}
+	_ = got
+
+	// With planning pending the tick continues to arm so the
+	// "planning..." placeholder keeps animating.
+	m.planningPending = true
+	_, cmd2 := m.Update(spinner.TickMsg{})
+	if cmd2 == nil {
+		t.Error("spinner tick must re-arm while planningPending")
+	}
+}
+
+func TestUpdate_ToolUseArmsSpinner(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	// Idle tick: no cmd.
+	if _, cmd := m.Update(spinner.TickMsg{}); cmd != nil {
+		t.Fatalf("precondition: idle tick must not arm; got %v", cmd)
+	}
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse,
+		Tool: &agentcontract.ToolCallInfo{ID: "t1", Name: "Bash"},
+	}}
+	got, cmd := m.Update(eventMsg{ev: ev})
+	if cmd == nil {
+		t.Fatal("KindToolUse must arm the spinner; got nil cmd")
+	}
+	mm := got.(Model)
+	if mm.now.currentTool == nil {
+		t.Error("currentTool not set after KindToolUse")
+	}
+}
+
 func TestUpdate_SpaceTogglesPause(t *testing.T) {
 	m, _, gate, cancelled := newTestModel(t)
 	if gate.Paused() {
@@ -416,15 +480,17 @@ func TestUpdate_AgentEventRoutesToPanels(t *testing.T) {
 	}
 }
 
-// TestUpdate_SpinnerTickReschedules forwards a bubbles/v2/spinner.TickMsg
-// addressed to the embedded spinner and asserts the spinner.Update path
-// returns a follow-up cmd so the animation keeps advancing.
-func TestUpdate_SpinnerTickReschedules(t *testing.T) {
+// TestUpdate_SpinnerTickReschedulesWhenActive verifies the spinner
+// keeps animating while there is something to show: an in-flight tool
+// call is one of the conditions; the tick re-arms only then. Idle ticks
+// are covered by TestUpdate_SpinnerTickStopsWhenIdle.
+func TestUpdate_SpinnerTickReschedulesWhenActive(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
+	m.now.currentTool = &agentcontract.ToolCallInfo{ID: "t1", Name: "Bash"}
 	tick := m.now.spinner.Tick().(spinner.TickMsg)
 	_, cmd := m.Update(tick)
 	if cmd == nil {
-		t.Fatalf("spinner.TickMsg must reschedule itself via the embedded spinner")
+		t.Fatalf("spinner.TickMsg must reschedule itself while a tool is active")
 	}
 }
 

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_plan_skip",
+  "description": "Planner declares that the spec has nothing to do (every acceptance item already met, journal shows the run is complete, no [ ] checkboxes remain). The handler records the reason and the loop exits cleanly without a Plan. Mutually exclusive with bcc_plan_emit: whichever lands first wins; the second call is rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "reason"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 512 }
+  }
+}

@@ -37,6 +37,21 @@ var errDirectorAborted = errors.New("director: user aborted plan at confirmation
 // spec hash diverged from the persisted plan. ExitCode is ExitInvalid.
 var errDirectorRePlanAborted = errors.New("director: user aborted replanned plan at diff confirmation")
 
+// errPlannerSkipped is returned by freshPlan / resolveDirectorPlan when
+// the Planner declared the spec done by calling bcc_plan_skip. It is a
+// success path: callers map it to ExitDone and surface a friendly
+// "nothing to do" message instead of a fatal error.
+type errPlannerSkipped struct {
+	reason string
+}
+
+func (e errPlannerSkipped) Error() string {
+	if e.reason == "" {
+		return "director: planner skipped: nothing to do"
+	}
+	return "director: planner skipped: " + e.reason
+}
+
 // directorDeps groups the ports runDirector consumes. Production code
 // builds Claude adapters; tests inject scripted fakes. Session
 // resolution happens inside runDirectorWith from baseDir + the dio
@@ -197,6 +212,10 @@ func runDirectorWith(
 	plan, err := resolveDirectorPlan(ctx, specPath, hash, deps, dio, nil)
 	stopHeartbeat()
 	if err != nil {
+		var skipped errPlannerSkipped
+		if errors.As(err, &skipped) {
+			return finishHeadlessNothingToDo(deps, dio, skipped.reason)
+		}
 		_ = deps.store.Touch(director.SessionAborted, deps.now())
 		return err
 	}
@@ -485,6 +504,15 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 
 		plan, perr := resolveDirectorPlanTUI(ctx, specPath, hash, deps, dio, raw)
 		if perr != nil {
+			var skipped errPlannerSkipped
+			if errors.As(perr, &skipped) {
+				_ = deps.store.Touch(director.SessionDone, deps.now())
+				model.SignalPlanSkipped(skipped.reason)
+				setLatest(runResult{code: loop.ExitDone, err: nil})
+				emitLoopFinished(raw, LoopFinishedReasonNothingToDo, loop.ExitDone)
+				close(raw)
+				return
+			}
 			_ = deps.store.Touch(director.SessionAborted, deps.now())
 			if errors.Is(perr, errDirectorAborted) || errors.Is(perr, errDirectorRePlanAborted) {
 				setLatest(runResult{code: loop.ExitInvalid, err: perr})
@@ -563,6 +591,48 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 	defer resultMu.Unlock()
 	ExitCode = latest.code
 	return latest.err
+}
+
+// LoopFinishedReasonNothingToDo is the canonical Reason carried on the
+// LoopFinished event when the Planner declared the spec done via
+// bcc_plan_skip. Headless render backends (text/json) emit this reason
+// so consumers can branch deterministically; the TUI maps the same
+// reason to a friendly terminal screen.
+const LoopFinishedReasonNothingToDo = "nothing_to_do"
+
+// finishHeadlessNothingToDo runs the post-skip terminal sequence for
+// the text/json output paths: stamps the session as done, emits a
+// structured LoopFinished event through the chosen render backend so
+// JSON consumers see one terminal line, prints a friendly stderr
+// message in text mode, and exits with ExitDone (0). The TUI path has
+// its own handler so the dashboard stays alive.
+func finishHeadlessNothingToDo(deps directorDeps, dio directorIO, reason string) error {
+	now := deps.now
+	if now == nil {
+		now = time.Now
+	}
+	_ = deps.store.Touch(director.SessionDone, now())
+
+	events, drained, derr := dispatchEvents(runOutput, loop.LevelInfo)
+	if derr != nil {
+		ExitCode = loop.ExitInvalid
+		return derr
+	}
+	events <- loop.LoopFinished{
+		Reason:   LoopFinishedReasonNothingToDo,
+		ExitCode: loop.ExitDone,
+		At:       now(),
+	}
+	close(events)
+	<-drained
+
+	msg := reason
+	if msg == "" {
+		msg = "spec is already complete"
+	}
+	fmt.Fprintf(dio.stderr, "bcc: nothing to do; %s\n", msg)
+	ExitCode = loop.ExitDone
+	return nil
 }
 
 // emitLoopFinished sends a synthetic LoopFinished onto the events
@@ -698,7 +768,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		close(pumpDone)
 	}
 
-	plan, _, err := deps.planner.Plan(ctx, director.PlannerInput{
+	plan, _, runErr := deps.planner.Plan(ctx, director.PlannerInput{
 		AgentID:  agentID,
 		SpecPath: specPath,
 		SpecHash: hash,
@@ -707,13 +777,26 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		close(agentEvents)
 	}
 	<-pumpDone
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return nil, fmt.Errorf("director: plan: %w", err)
+
+	// The Plan flows through the MCP handler via bcc_plan_emit; the
+	// adapter return is nil by design. Handler state is authoritative:
+	// inspect it before honouring runErr so that a misbehaving agent
+	// that crashed after calling bcc_plan_emit / bcc_plan_skip still has
+	// its terminal call respected. A non-zero exit only becomes fatal
+	// when the planner left no terminal state behind.
+	if h := directorEffectiveHandler(deps); h != nil {
+		if hp := h.Plan(); hp != nil {
+			plan = hp
+		} else if h.PlanSkipped() {
+			return nil, errPlannerSkipped{reason: h.PlanSkipReason()}
+		}
 	}
 	if plan == nil {
 		ExitCode = loop.ExitInvalid
-		return nil, errors.New("director: planner returned nil plan; awaiting MCP handler implementation in P5")
+		if runErr != nil {
+			return nil, fmt.Errorf("director: plan: %w", runErr)
+		}
+		return nil, errors.New("director: planner exited without emitting a plan or calling bcc_plan_skip")
 	}
 	plan.SpecHash = hash
 	if plan.PlannedAt.IsZero() {

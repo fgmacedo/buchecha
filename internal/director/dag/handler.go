@@ -19,6 +19,7 @@ import (
 // time.
 const (
 	MethodPlanEmit          = "bcc_plan_emit"
+	MethodPlanSkip          = "bcc_plan_skip"
 	MethodBriefingEmit      = "bcc_briefing_emit"
 	MethodGetDAGSnapshot    = "bcc_get_dag_snapshot"
 	MethodGetBriefing       = "bcc_get_briefing"
@@ -91,10 +92,12 @@ type Handler struct {
 	briefingStore BriefingPersister
 	dagStore      DAGSnapshotPersister
 
-	mu        sync.Mutex
-	plan      *director.Plan
-	briefings map[string]*briefingState
-	now       func() time.Time
+	mu             sync.Mutex
+	plan           *director.Plan
+	planSkipped    bool
+	planSkipReason string
+	briefings      map[string]*briefingState
+	now            func() time.Time
 }
 
 // HandlerOptions parameterizes NewHandler. Every field is optional;
@@ -149,6 +152,10 @@ func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOp
 		MethodPlanEmit: {
 			allowedRoles: rolesSet(RolePlanner),
 			handle:       (*Handler).handlePlanEmit,
+		},
+		MethodPlanSkip: {
+			allowedRoles: rolesSet(RolePlanner),
+			handle:       (*Handler).handlePlanSkip,
 		},
 		MethodBriefingEmit: {
 			allowedRoles: rolesSet(RoleBriefer),
@@ -222,11 +229,33 @@ func (h *Handler) SetState(s *State) {
 
 // SetPlan stores the most recently confirmed Plan on the handler so
 // later queries (snapshots, briefings) see it. The loop calls this on
-// the resumed-plan path.
+// the resumed-plan path. Setting a non-nil plan also clears any prior
+// plan-skip state so the two terminals stay mutually exclusive.
 func (h *Handler) SetPlan(p *director.Plan) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.plan = p
+	if p != nil {
+		h.planSkipped = false
+		h.planSkipReason = ""
+	}
+}
+
+// PlanSkipped reports whether the Planner declared the spec done by
+// calling bcc_plan_skip. False before any planner terminal call lands
+// or after a Plan was successfully emitted.
+func (h *Handler) PlanSkipped() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.planSkipped
+}
+
+// PlanSkipReason returns the reason string the Planner attached to
+// bcc_plan_skip, or empty when the planner did not skip.
+func (h *Handler) PlanSkipReason() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.planSkipReason
 }
 
 // Plan returns the most recently emitted Plan, or nil before the
@@ -424,6 +453,10 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	newState := NewStateFromPlan(&plan)
 
 	h.mu.Lock()
+	if h.planSkipped {
+		h.mu.Unlock()
+		return "", errors.New("dag: bcc_plan_emit: plan was already skipped via bcc_plan_skip")
+	}
 	h.plan = &plan
 	h.state = newState
 	h.mu.Unlock()
@@ -436,6 +469,23 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	if err := h.persistDAG(newState); err != nil {
 		return "", err
 	}
+	return `{"ok":true}`, nil
+}
+
+// handlePlanSkip records the Planner's "nothing to do" verdict. The
+// loop reads PlanSkipped/PlanSkipReason after the planner adapter
+// returns and exits cleanly with ExitDone instead of synthesising a
+// Plan. Mutually exclusive with bcc_plan_emit.
+func (h *Handler) handlePlanSkip(_ context.Context, _ AgentEntry, input map[string]any) (string, error) {
+	reason, _ := input["reason"].(string)
+	h.mu.Lock()
+	if h.plan != nil {
+		h.mu.Unlock()
+		return "", errors.New("dag: bcc_plan_skip: plan was already emitted via bcc_plan_emit")
+	}
+	h.planSkipped = true
+	h.planSkipReason = reason
+	h.mu.Unlock()
 	return `{"ok":true}`, nil
 }
 

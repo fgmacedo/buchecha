@@ -185,6 +185,22 @@ func newTestHandler() *dag.Handler {
 	return dag.NewHandler(nil, dag.NewAgentRegistry(nil))
 }
 
+// testRegisterFn returns a directorDeps.registerFn closure that
+// registers Director agents against the supplied test handler's
+// registry, mirroring what the production MCP boot does. Tests that
+// need the planner / briefer / reviewer fakes to call MCP methods with
+// a registered agent_id wire this in.
+func testRegisterFn(h *dag.Handler) func(role dag.Role) (string, func(), error) {
+	return func(role dag.Role) (string, func(), error) {
+		id, err := h.Registry().Register(role, dag.RegisterArgs{})
+		if err != nil {
+			return "", func() {}, err
+		}
+		cleanup := func() { h.Registry().Deregister(id) }
+		return string(id), cleanup, nil
+	}
+}
+
 // recordingExecutor is a loop.Executor stand-in that captures Run
 // arguments and never spawns a subprocess. When emitSignal is set and
 // handler+args are wired, it registers an Executor agent on the run
@@ -548,6 +564,173 @@ func TestRunDirectorWith_RejectsEmptyPlan(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(store.SessionDir(), "plan.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("plan persisted despite validation error: %v", statErr)
+	}
+}
+
+// TestRunDirectorWith_PlannerSkipsHeadless drives the planner-skip
+// path end to end on the JSON output: the planner's fake calls
+// bcc_plan_skip via the handler and returns nil; runDirectorWith must
+// exit cleanly with ExitDone, mark the session as done, never prompt
+// for confirmation, and never persist a plan.
+func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
+	resetExitCode(t)
+	withOutputMode(t, OutputJSON)
+
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+
+	h := newTestHandler()
+	planner := &fake.Planner{
+		PlanFn: func(ctx context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+			if _, err := h.HandleCall(ctx, string(dag.RolePlanner), dag.MethodPlanSkip, map[string]any{
+				"agent_id": in.AgentID,
+				"reason":   "every acceptance bullet is checked off in the spec journal",
+			}); err != nil {
+				return nil, nil, err
+			}
+			return nil, &director.DirectorCallStats{}, nil
+		},
+	}
+	store := mkSessionStore(t, tmp, specPath)
+	deps := directorDeps{
+		handler:     h,
+		planner:     planner,
+		briefer:     scriptedBriefer(h),
+		reviewer:    approvingReviewer(h),
+		store:       store,
+		git:         newAdvancingGit(),
+		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
+		registerFn:  testRegisterFn(h),
+		now:         func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
+	}
+
+	var stderr bytes.Buffer
+	dio := directorIO{stdin: strings.NewReader(""), stderr: &stderr}
+
+	cfg := directorTestConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if ExitCode != loop.ExitDone {
+		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
+	}
+	if !strings.Contains(stderr.String(), "nothing to do") {
+		t.Errorf("stderr missing nothing-to-do hint: %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "[P]roceed") {
+		t.Error("confirmation prompt rendered despite skip")
+	}
+	if _, statErr := os.Stat(filepath.Join(store.SessionDir(), "plan.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("plan persisted despite skip: %v", statErr)
+	}
+	reopened, err := director.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+	if err != nil {
+		t.Fatalf("OpenSession after skip: %v", err)
+	}
+	if reopened.Session().Status != director.SessionDone {
+		t.Errorf("Session status = %q, want %q", reopened.Session().Status, director.SessionDone)
+	}
+}
+
+// TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero reproduces the
+// real-world failure where the planner subprocess called bcc_plan_skip
+// successfully but then exited with a non-zero status. Handler state
+// is authoritative: the run still surfaces the friendly nothing-to-do
+// path with ExitDone instead of treating the exit code as fatal.
+func TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero(t *testing.T) {
+	resetExitCode(t)
+	withOutputMode(t, OutputJSON)
+
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+
+	h := newTestHandler()
+	planner := &fake.Planner{
+		PlanFn: func(ctx context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+			if _, err := h.HandleCall(ctx, string(dag.RolePlanner), dag.MethodPlanSkip, map[string]any{
+				"agent_id": in.AgentID,
+				"reason":   "spec already complete; skipped",
+			}); err != nil {
+				return nil, nil, err
+			}
+			return nil, &director.DirectorCallStats{}, errors.New("director/claude: claude exited 1")
+		},
+	}
+	store := mkSessionStore(t, tmp, specPath)
+	deps := directorDeps{
+		handler:     h,
+		planner:     planner,
+		briefer:     scriptedBriefer(h),
+		reviewer:    approvingReviewer(h),
+		store:       store,
+		git:         newAdvancingGit(),
+		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
+		registerFn:  testRegisterFn(h),
+		now:         func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
+	}
+
+	var stderr bytes.Buffer
+	dio := directorIO{stdin: strings.NewReader(""), stderr: &stderr}
+
+	cfg := directorTestConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio); err != nil {
+		t.Fatalf("err = %v, want nil; agent exit code must not override handler skip", err)
+	}
+	if ExitCode != loop.ExitDone {
+		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
+	}
+	if !strings.Contains(stderr.String(), "nothing to do") {
+		t.Errorf("stderr missing nothing-to-do hint: %q", stderr.String())
+	}
+}
+
+// TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall keeps the
+// fatal path honest: when the agent crashed without ever calling
+// bcc_plan_emit or bcc_plan_skip, the run still aborts with
+// ExitInvalid and surfaces the underlying agent error.
+func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
+	resetExitCode(t)
+	withOutputMode(t, OutputJSON)
+
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+
+	h := newTestHandler()
+	planner := &fake.Planner{
+		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+			return nil, &director.DirectorCallStats{}, errors.New("director/claude: claude exited 1")
+		},
+	}
+	store := mkSessionStore(t, tmp, specPath)
+	deps := directorDeps{
+		handler:     h,
+		planner:     planner,
+		briefer:     scriptedBriefer(h),
+		reviewer:    approvingReviewer(h),
+		store:       store,
+		git:         newAdvancingGit(),
+		newExecutor: func(string, dag.RegisterArgs) loop.Executor { return &recordingExecutor{} },
+		registerFn:  testRegisterFn(h),
+		now:         time.Now,
+	}
+	dio := directorIO{stdin: strings.NewReader(""), stderr: io.Discard}
+
+	cfg := directorTestConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
+	if err == nil || !strings.Contains(err.Error(), "claude exited 1") {
+		t.Fatalf("err = %v, want wrapped agent exit error", err)
+	}
+	if ExitCode != loop.ExitInvalid {
+		t.Errorf("ExitCode = %d, want ExitInvalid", ExitCode)
 	}
 }
 

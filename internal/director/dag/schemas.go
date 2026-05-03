@@ -15,6 +15,7 @@ import (
 // separately against the existing Plan schema in internal/director.
 var methodSchemaFile = map[string]string{
 	MethodPlanEmit:          "schemas/mcp/bcc_plan_emit.schema.json",
+	MethodPlanSkip:          "schemas/mcp/bcc_plan_skip.schema.json",
 	MethodBriefingEmit:      "schemas/mcp/bcc_briefing_emit.schema.json",
 	MethodGetDAGSnapshot:    "schemas/mcp/bcc_get_dag_snapshot.schema.json",
 	MethodGetBriefing:       "schemas/mcp/bcc_get_briefing.schema.json",

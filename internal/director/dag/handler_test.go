@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fgmacedo/buchecha/internal/director"
 )
@@ -198,6 +199,124 @@ func emitSamplePlan(t *testing.T, h *Handler) {
 		t.Fatalf("emit sample plan: %v", err)
 	}
 	registry.Deregister(id)
+}
+
+func TestHandlePlanSkip_RecordsReason(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	res, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanSkip, map[string]any{
+		"agent_id": string(id),
+		"reason":   "every acceptance bullet is checked off in the spec journal",
+	})
+	if err != nil {
+		t.Fatalf("plan skip: %v", err)
+	}
+	if !strings.Contains(res, "true") {
+		t.Errorf("result %q lacks ok=true", res)
+	}
+	if !h.PlanSkipped() {
+		t.Fatal("PlanSkipped() = false after handlePlanSkip")
+	}
+	if got := h.PlanSkipReason(); got != "every acceptance bullet is checked off in the spec journal" {
+		t.Errorf("PlanSkipReason() = %q, want the recorded reason", got)
+	}
+	if h.Plan() != nil {
+		t.Error("Plan() should remain nil after skip")
+	}
+}
+
+func TestHandlePlanSkip_RejectsAfterPlanEmitted(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     validPlanInput(t),
+	}); err != nil {
+		t.Fatalf("plan emit: %v", err)
+	}
+	_, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanSkip, map[string]any{
+		"agent_id": string(id),
+		"reason":   "redundant skip after emit",
+	})
+	if err == nil {
+		t.Fatal("expected rejection when plan was already emitted")
+	}
+}
+
+func TestHandlePlanEmit_RejectsAfterPlanSkipped(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanSkip, map[string]any{
+		"agent_id": string(id),
+		"reason":   "nothing to do",
+	}); err != nil {
+		t.Fatalf("plan skip: %v", err)
+	}
+	_, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     validPlanInput(t),
+	})
+	if err == nil {
+		t.Fatal("expected rejection when plan was already skipped")
+	}
+}
+
+func TestHandlePlanSkip_RejectsNonPlanner(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RoleBriefer, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	_, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodPlanSkip, map[string]any{
+		"agent_id": string(id),
+		"reason":   "briefer cannot skip",
+	})
+	if err == nil {
+		t.Fatal("expected briefer to be rejected from plan-skip")
+	}
+}
+
+func TestHandlePlanSkip_SchemaRejectsEmptyReason(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	_, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanSkip, map[string]any{
+		"agent_id": string(id),
+		"reason":   "",
+	})
+	if err == nil {
+		t.Fatal("expected schema rejection for empty reason")
+	}
+}
+
+func TestSetPlan_ClearsSkipState(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanSkip, map[string]any{
+		"agent_id": string(id),
+		"reason":   "skip first",
+	}); err != nil {
+		t.Fatalf("plan skip: %v", err)
+	}
+	plan := director.Plan{
+		Goal:      "demo",
+		SpecHash:  "abc",
+		PlannedAt: time.Now(),
+		Phases: []director.Phase{{ID: "P1", Title: "p", Intent: "p", Tasks: []director.Task{{
+			ID: "t1", Title: "t", Intent: "t",
+			Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "ok", Evidence: director.EvidenceDiff}},
+			Status:     director.TaskPending,
+		}}}},
+	}
+	h.SetPlan(&plan)
+	if h.PlanSkipped() {
+		t.Error("SetPlan should clear PlanSkipped")
+	}
+	if h.PlanSkipReason() != "" {
+		t.Error("SetPlan should clear PlanSkipReason")
+	}
 }
 
 func TestHandleBriefingEmit_AcceptsAndStores(t *testing.T) {
