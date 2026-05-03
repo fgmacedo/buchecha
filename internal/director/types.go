@@ -25,13 +25,14 @@ type Plan struct {
 // against a previous plan version stays addressable. A Phase owns its
 // task DAG; cross-phase task dependencies are not representable.
 //
-// The four optional capability fields (BrieferAssignment,
-// ExecutorAssignment, ReviewerAssignment, PreparedBriefing) carry the
-// Planner's per-phase routing choices: which model and effort each role
-// uses, and an inline Briefing that lets the loop skip the Briefer
-// agent entirely when the Planner already has enough context to author
-// it directly. Each field is independent; absent fields fall back to
-// the configured defaults and the regular Briefer flow.
+// The optional capability fields (BrieferAssignment,
+// ExecutorAssignment, ReviewerAssignment, PreparedBriefing,
+// SkipReview) carry the Planner's per-phase routing choices: which
+// model and effort each role uses, an inline Briefing that lets the
+// loop skip the Briefer agent, and an opt-out from the Reviewer agent
+// for trivial phases. Each field is independent; absent fields fall
+// back to the configured defaults and the regular Briefer/Reviewer
+// flow.
 type Phase struct {
 	ID                 string            `json:"id"`
 	Title              string            `json:"title"`
@@ -46,6 +47,15 @@ type Phase struct {
 	ExecutorAssignment *RoleAssignment   `json:"executor_assignment,omitempty"`
 	ReviewerAssignment *RoleAssignment   `json:"reviewer_assignment,omitempty"`
 	PreparedBriefing   *PreparedBriefing `json:"prepared_briefing,omitempty"`
+	// SkipReview, when true, instructs the loop to mark every sub-DAG
+	// task done synthetically after the Executor completes the
+	// iteration, recording the approval under role "planner" in the
+	// audit log instead of spawning the Reviewer agent. The Planner is
+	// responsible for using this only on phases where the Executor's
+	// output is mechanically verifiable (a rename, a flag flip, a
+	// trivial wiring change); the loop has no separate gate to second-
+	// guess the call.
+	SkipReview bool `json:"skip_review,omitempty"`
 }
 
 // Task is the atomic unit of progress inside a Phase. Tasks own their

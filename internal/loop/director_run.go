@@ -260,29 +260,36 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 
 			d.Handler.SetBriefingDiffRange(briefing.IterationID, headBefore, headAfter)
 
-			reviewerID, err := registry.Register(dag.RoleReviewer, dag.RegisterArgs{
-				BriefingID: briefing.IterationID,
-				PhaseID:    phaseID,
-				SubDAG:     actualSub,
-			})
-			if err != nil {
-				return l.terminate(events, "fatal", ExitInvalid),
-					fmt.Errorf("director: register reviewer: %w", err)
-			}
-			rerr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
-				_, e := d.Reviewer.Review(ctx, director.ReviewerInput{
-					AgentID:     string(reviewerID),
-					IterationID: briefing.IterationID,
-					PhaseID:     phaseID,
-					SubDAG:      actualSub,
-					Assignment:  phase.AssignmentFor("reviewer"),
-				}, agentEvents)
-				return e
-			})
-			registry.Deregister(reviewerID)
-			if rerr != nil {
-				return l.terminate(events, "fatal", ExitInvalid),
-					fmt.Errorf("director: review phase %s attempt %d: %w", phaseID, attempt, rerr)
+			if phase.SkipReview {
+				if err := d.Handler.RecordSyntheticApproval(briefing.IterationID); err != nil {
+					return l.terminate(events, "fatal", ExitInvalid),
+						fmt.Errorf("director: record synthetic approval phase %s attempt %d: %w", phaseID, attempt, err)
+				}
+			} else {
+				reviewerID, err := registry.Register(dag.RoleReviewer, dag.RegisterArgs{
+					BriefingID: briefing.IterationID,
+					PhaseID:    phaseID,
+					SubDAG:     actualSub,
+				})
+				if err != nil {
+					return l.terminate(events, "fatal", ExitInvalid),
+						fmt.Errorf("director: register reviewer: %w", err)
+				}
+				rerr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
+					_, e := d.Reviewer.Review(ctx, director.ReviewerInput{
+						AgentID:     string(reviewerID),
+						IterationID: briefing.IterationID,
+						PhaseID:     phaseID,
+						SubDAG:      actualSub,
+						Assignment:  phase.AssignmentFor("reviewer"),
+					}, agentEvents)
+					return e
+				})
+				registry.Deregister(reviewerID)
+				if rerr != nil {
+					return l.terminate(events, "fatal", ExitInvalid),
+						fmt.Errorf("director: review phase %s attempt %d: %w", phaseID, attempt, rerr)
+				}
 			}
 			outcome := d.Handler.LastReviewOutcome(briefing.IterationID)
 			reasoning := d.Handler.LastReviewReasoning(briefing.IterationID)

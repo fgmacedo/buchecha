@@ -232,6 +232,60 @@ func TestRecordSyntheticBriefing_RequiresIterationID(t *testing.T) {
 	}
 }
 
+func TestRecordSyntheticApproval_MarksTasksDone(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	h := NewHandler(nil, registry)
+	pid, _ := registry.Register(RolePlanner, RegisterArgs{})
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(pid),
+		"plan":     validPlanInput(t),
+	}); err != nil {
+		t.Fatalf("plan emit: %v", err)
+	}
+	if err := h.RecordSyntheticBriefing(director.Briefing{
+		IterationID:   "P1-1",
+		PhaseID:       "P1",
+		SubDAGTaskIDs: []string{"t1"},
+		Instructions:  "x",
+		SpecPath:      "/tmp/spec.md",
+	}); err != nil {
+		t.Fatalf("RecordSyntheticBriefing: %v", err)
+	}
+	if err := h.RecordSyntheticApproval("P1-1"); err != nil {
+		t.Fatalf("RecordSyntheticApproval: %v", err)
+	}
+	if got := h.LastReviewOutcome("P1-1"); got != "approve" {
+		t.Errorf("review outcome = %q, want approve", got)
+	}
+	state := h.State()
+	if state == nil {
+		t.Fatal("nil state after approval")
+	}
+	phase := state.Phase("P1")
+	if phase == nil {
+		t.Fatal("phase missing after approval")
+	}
+	if phase.Tasks["t1"].Status != director.TaskDone {
+		t.Errorf("task t1 status = %q, want done", phase.Tasks["t1"].Status)
+	}
+}
+
+func TestRecordSyntheticApproval_RejectsUnknownIteration(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	err := h.RecordSyntheticApproval("missing")
+	if err == nil || !strings.Contains(err.Error(), "unknown iteration") {
+		t.Fatalf("expected unknown-iteration rejection, got %v", err)
+	}
+}
+
+func TestRecordSyntheticApproval_RequiresIterationID(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	err := h.RecordSyntheticApproval("")
+	if err == nil || !strings.Contains(err.Error(), "empty iteration_id") {
+		t.Fatalf("expected empty-iteration_id rejection, got %v", err)
+	}
+}
+
 // emitSamplePlan installs samplePlan() into the handler via the
 // bcc_plan_emit path so subsequent tests run against a real DAG state.
 func emitSamplePlan(t *testing.T, h *Handler) {

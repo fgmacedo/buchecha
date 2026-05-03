@@ -21,15 +21,19 @@ comments: true
 
 ## Summary
 
-Each Phase carries optional per-role capability assignments and an
-optional inline Briefing. The Planner picks model and effort for the
-Briefer, Executor, and Reviewer per phase from a CapabilityRegistry the
-configured adapters publish at boot. When the Planner already has
-enough context to author a Briefing for a mechanical phase, it may emit
-a `prepared_briefing` and the loop will skip the Briefer agent for that
-phase. Per-phase routing flows through the Director ports as
-RoleAssignment overrides and lands as `--model` / `--effort` flags on
-the spawned agent process.
+Each Phase carries optional per-role capability assignments, an
+optional inline Briefing, and an optional Reviewer opt-out. The
+Planner picks model and effort for the Briefer, Executor, and Reviewer
+per phase from a CapabilityRegistry the configured adapters publish at
+boot. When the Planner already has enough context to author a Briefing
+for a mechanical phase, it may emit a `prepared_briefing` and the loop
+will skip the Briefer agent for that phase. When the Planner judges a
+phase trivial enough that an independent Reviewer pass adds no value,
+it may set `skip_review: true` and the loop will mark every sub-DAG
+task done synthetically once the Executor completes the iteration.
+Per-phase routing flows through the Director ports as RoleAssignment
+overrides and lands as `--model` / `--effort` flags on the spawned
+agent process.
 
 ## Goals
 
@@ -49,6 +53,13 @@ the spawned agent process.
   the loop calls `Handler.RecordSyntheticBriefing` instead of spawning
   the Briefer agent; the audit log records the synthetic briefing under
   `role: "planner"`.
+- The Planner may set `skip_review: true` on a Phase. When set, the
+  loop calls `Handler.RecordSyntheticApproval` after the Executor
+  completes the iteration (marking every sub-DAG task done and
+  recording an "approve" outcome); the Reviewer agent is not spawned
+  for that phase. The audit log records the synthetic approval under
+  `role: "planner"`. The Planner is responsible for using this only on
+  trivial phases; the loop has no separate gate to second-guess.
 - Configured defaults (`[agent.claude].model`, `.effort`,
   `[director.claude].model`, `.effort`) apply when the Planner does not
   attribute one; assignments override them per call.
@@ -95,6 +106,7 @@ type Phase struct {
     ExecutorAssignment *RoleAssignment
     ReviewerAssignment *RoleAssignment
     PreparedBriefing   *PreparedBriefing
+    SkipReview         bool
 }
 ```
 
@@ -112,12 +124,13 @@ installs the result on the run-wide handler via
 
 ## Wire surface
 
-`bcc_plan_emit` accepts the four optional Phase fields documented
+`bcc_plan_emit` accepts the five optional Phase fields documented
 above. The handler validates per-phase assignments against the attached
 CapabilityRegistry (model must be in the registry, effort must be in
 the model's `Efforts` list when set) and validates `prepared_briefing`
 structurally (instructions non-empty, at least one task id, every
-referenced task owned by the phase). Rejections come back as structured
+referenced task owned by the phase). `skip_review` is a plain boolean
+and needs no further validation. Rejections come back as structured
 errors so the Planner can correct and re-emit, same as any other
 ValidatePlan failure.
 
@@ -132,13 +145,16 @@ when constructing the per-iteration Executor.
 ```
 for each eligible phase:
   if phase.PreparedBriefing != nil:
-    handler.RecordSyntheticBriefing(synthesized)        # role="planner" in audit log
+    handler.RecordSyntheticBriefing(synthesized)         # role="planner" in audit log
   else:
     spawn Briefer with phase.BrieferAssignment override
   for each attempt:
     spawn Executor with phase.ExecutorAssignment override
     review:
-      spawn Reviewer with phase.ReviewerAssignment override
+      if phase.SkipReview:
+        handler.RecordSyntheticApproval(iterationID)     # role="planner" in audit log
+      else:
+        spawn Reviewer with phase.ReviewerAssignment override
     decide
 ```
 
@@ -146,6 +162,10 @@ On retry the loop reuses the prepared briefing and prepends the
 Reviewer's `prior_feedback` to it; the Briefer is not invoked even on
 retry when `PreparedBriefing` is set, since the Planner judged the
 phase mechanical enough that a separate briefing pass adds no value.
+With `skip_review` the decider always sees an `approve` outcome, so
+phases marked this way never enter the retry path: a HEAD-stuck or
+SignalBlocked iteration still terminates, but the Reviewer never gets
+the chance to send a phase back for revision.
 
 ## Adapter contract
 
@@ -186,11 +206,13 @@ edit the spec.
 - `internal/director/capability.go`: `Capability`, `CapabilityRegistry`,
   `CapabilityProvider`.
 - `internal/director/types.go`: `RoleAssignment`, `PreparedBriefing`,
-  the four optional `Phase` fields, `Phase.AssignmentFor`,
+  the five optional `Phase` fields (3 assignments + prepared_briefing
+  + skip_review), `Phase.AssignmentFor`,
   `ValidatePlan(p, registry)`.
 - `internal/director/dag/handler.go`: `SetCapabilityRegistry`,
   `CapabilityRegistry()`, `RecordSyntheticBriefing`,
-  `storeValidatedBriefing` (shared with `bcc_briefing_emit`).
+  `RecordSyntheticApproval`, `storeValidatedBriefing` (shared with
+  `bcc_briefing_emit`).
 - `internal/director/prompts/plan.md`: Available models table and the
   PreparedBriefing guidance.
 - `internal/director/schemas/plan.schema.json`: `roleAssignment`,

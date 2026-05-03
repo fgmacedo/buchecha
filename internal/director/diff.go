@@ -165,6 +165,9 @@ func diffPhase(a, b Phase) []string {
 	if !reflect.DeepEqual(a.PreparedBriefing, b.PreparedBriefing) {
 		out = append(out, "prepared_briefing changed")
 	}
+	if a.SkipReview != b.SkipReview {
+		out = append(out, fmt.Sprintf("skip_review: %t → %t", a.SkipReview, b.SkipReview))
+	}
 	return out
 }
 

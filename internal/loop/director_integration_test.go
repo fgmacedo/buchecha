@@ -764,6 +764,82 @@ func (b *countingBriefer) callCount() int {
 	return b.calls
 }
 
+// countingReviewer wraps a real Reviewer and increments a counter on
+// every call so tests can assert the loop did or did not invoke it.
+type countingReviewer struct {
+	calls int
+	mu    sync.Mutex
+	inner director.Reviewer
+}
+
+func (r *countingReviewer) Review(ctx context.Context, in director.ReviewerInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+	r.mu.Lock()
+	r.calls++
+	r.mu.Unlock()
+	return r.inner.Review(ctx, in, events)
+}
+
+func (r *countingReviewer) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// TestDirectorIntegration_SkipReviewBypassesReviewer pins the Planner-
+// driven SkipReview path: when Phase.SkipReview is true the loop must
+// not spawn the Reviewer agent and the iteration must advance with a
+// synthetic approval. The reviewer wraps the real approver only to
+// count calls; a non-zero count fails the test.
+func TestDirectorIntegration_SkipReviewBypassesReviewer(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := directorTestSpec(t, tmp)
+	store := directorTestStore(t, tmp, specPath)
+	plan := directorTestPlan()
+	plan.SpecHash = "deadbeef"
+	plan.Phases[0].SkipReview = true
+	plan.Phases[1].SkipReview = true
+	if err := store.WritePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	h := directorTestHandler(plan)
+	runsCounter := &directorFakeRuns{}
+	cr := &countingReviewer{inner: approvingReviewer(t, h)}
+	cfg := newTestConfig()
+
+	l := &loop.Loop{
+		SpecPath: specPath,
+		Config:   cfg,
+		Git:      &directorAdvancingGit{},
+		Director: &loop.DirectorPorts{
+			Plan:        plan,
+			Briefer:     briefingEmitter(t, h),
+			Reviewer:    cr,
+			Store:       store,
+			Handler:     h,
+			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, runsCounter),
+		},
+	}
+
+	code, err, evs := runDirectorLoop(t, l)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != loop.ExitDone {
+		t.Errorf("exit = %d, want ExitDone", code)
+	}
+	if cr.callCount() != 0 {
+		t.Errorf("Reviewer was called %d times; expected 0 with SkipReview on every phase", cr.callCount())
+	}
+	for _, ev := range evs {
+		if rev, ok := ev.(loop.PhaseReviewed); ok {
+			if rev.Outcome != "approve" {
+				t.Errorf("phase %s: synthetic outcome = %q, want approve", rev.PhaseID, rev.Outcome)
+			}
+		}
+	}
+}
+
 // TestDirectorIntegration_PreparedBriefingSkipsBriefer pins the
 // Planner-prepared briefing path: when Phase.PreparedBriefing is set,
 // the loop must not spawn the Briefer agent for that phase. The

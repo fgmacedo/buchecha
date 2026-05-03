@@ -574,6 +574,73 @@ func (h *Handler) RecordSyntheticBriefing(brief director.Briefing) error {
 	return nil
 }
 
+// RecordSyntheticApproval marks every sub-DAG task bound to
+// iterationID as done and records the synthetic approval under role
+// "planner" in the audit log. The loop calls this when a Phase has
+// SkipReview=true so the Reviewer agent is bypassed entirely. The
+// recorded review outcome is "approve" so the decider's existing
+// advance-on-approve path runs unchanged.
+func (h *Handler) RecordSyntheticApproval(iterationID string) error {
+	if iterationID == "" {
+		return errors.New("dag: RecordSyntheticApproval: empty iteration_id")
+	}
+	h.mu.Lock()
+	bs := h.briefings[iterationID]
+	state := h.state
+	h.mu.Unlock()
+	if bs == nil || bs.briefing == nil {
+		return fmt.Errorf("dag: RecordSyntheticApproval: unknown iteration %q", iterationID)
+	}
+	if state == nil {
+		return errors.New("dag: RecordSyntheticApproval: no DAG state")
+	}
+	phaseID := PhaseID(bs.briefing.PhaseID)
+	phase := state.Phase(phaseID)
+	if phase == nil {
+		return fmt.Errorf("dag: RecordSyntheticApproval: phase %q unknown", phaseID)
+	}
+	approved := make([]string, 0, len(bs.briefing.SubDAGTaskIDs))
+	for _, tid := range bs.briefing.SubDAGTaskIDs {
+		t, ok := phase.Tasks[TaskID(tid)]
+		if !ok {
+			return fmt.Errorf("dag: RecordSyntheticApproval: task %q not in phase %q", tid, phaseID)
+		}
+		if t.Status == director.TaskDone {
+			continue
+		}
+		if err := state.SetTaskStatus(phaseID, TaskID(tid), director.TaskDone); err != nil {
+			return fmt.Errorf("dag: RecordSyntheticApproval: %w", err)
+		}
+		approved = append(approved, tid)
+	}
+	if err := h.persistDAG(state); err != nil {
+		return err
+	}
+
+	h.mu.Lock()
+	bs.reviewOutcome = "approve"
+	bs.reviewReason = "planner: skip_review on this phase"
+	h.mu.Unlock()
+
+	if h.audit != nil {
+		input := map[string]any{
+			"iteration_id": iterationID,
+			"phase_id":     string(phaseID),
+		}
+		if len(approved) > 0 {
+			input["approved_task_ids"] = stringSliceToAny(approved)
+		}
+		_ = h.audit.Append(AuditEntry{
+			At:     h.now(),
+			Role:   "planner",
+			Method: "synthetic_approval",
+			Input:  input,
+			Result: `{"ok":true}`,
+		})
+	}
+	return nil
+}
+
 // storeValidatedBriefing checks the structural invariants both the
 // Briefer-emitted and Planner-prepared briefings must satisfy and
 // stores the result on the handler. errPrefix flavors the messages so

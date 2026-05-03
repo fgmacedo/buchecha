@@ -71,7 +71,8 @@
             { "type": "null" },
             { "$ref": "#/$defs/preparedBriefing" }
           ]
-        }
+        },
+        "skip_review": { "type": "boolean" }
       }
     },
     "task": {

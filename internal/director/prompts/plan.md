@@ -30,6 +30,8 @@ Each Phase may carry per-role assignments (`briefer_assignment`, `executor_assig
 
 When a phase is mechanical and you already know exactly which tasks the first iteration should ship and what the Executor needs to know, emit `prepared_briefing` directly on the Phase. The loop will use it instead of spawning the Briefer agent for that phase. Save this for phases where a separate briefing pass adds no value: a config field rename, a one-line wiring change, an obvious test that only needs the file path. On retry the loop reuses the prepared briefing and prepends the Reviewer's `prior_feedback` automatically; you do not need to handle retries.
 
+Set `skip_review: true` on a phase when the work is trivial enough that an independent Reviewer pass adds no value: a single-file rename, a literal-string update, a generated-file regeneration whose acceptance is "this exact content". The loop will mark every sub-DAG task done synthetically after the Executor completes the iteration, recording the approval under role "planner" in the audit log. Use this sparingly. Skipping review trades a quality gate for speed; that trade is your call, and the run's final quality is on you. When in doubt, leave it off.
+
 ## Plan shape
 
 ```
@@ -52,7 +54,8 @@ Phase
 ├── briefer_assignment?: RoleAssignment   per-phase model+effort for the Briefer; omit to use the default
 ├── executor_assignment?: RoleAssignment  per-phase model+effort for the Executor; omit to use the default
 ├── reviewer_assignment?: RoleAssignment  per-phase model+effort for the Reviewer; omit to use the default
-└── prepared_briefing?: PreparedBriefing  inline Briefing; when present the loop skips the Briefer agent
+├── prepared_briefing?: PreparedBriefing  inline Briefing; when present the loop skips the Briefer agent
+└── skip_review?: bool                    when true, the loop skips the Reviewer agent and approves the iteration synthetically
 
 RoleAssignment
 ├── model: string                         must be a model listed in "Available models" above
