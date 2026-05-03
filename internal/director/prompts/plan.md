@@ -15,7 +15,7 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 2. Read the spec via the `Read` tool: open `{{.SpecPath}}`. Quote the spec verbatim when it matters; never paraphrase a stop criterion or an acceptance bullet.
 3. **Decide first whether there is anything to do.** Skim the spec's checkboxes, acceptance bullets, and any Execution Journal section. If every item is already checked, every acceptance bullet is satisfied, and the journal records the run as complete, **fail fast**: call `bcc_plan_skip(agent_id, reason)` with a one-sentence `reason` that cites what you observed (e.g. "all 18 acceptance bullets in the Done section are checked off and the Execution Journal entry from 2026-05-01 marks the spec as shipped"), then call `bcc_task_completed(agent_id, "planning", "spec already complete; skipped")` and stop. Do **not** invent residual tasks to keep the run busy. `bcc_plan_skip` and `bcc_plan_emit` are mutually exclusive: pick one.
 4. Otherwise use `Grep`, `Glob`, and `Read` to inspect the surrounding repo as needed. You may run read-only `Bash` commands (`go vet`, `git log`, `ls`) to orient yourself.
-5. Compose the `Plan`: a two-level DAG of phases and tasks.
+5. Compose the `Plan`: a two-level DAG of phases and tasks that covers **every remaining unit of work the spec describes**. This is the full roadmap, not the next slice. If the spec lists nine phases and two are verifiably complete, the Plan contains the seven remaining phases. The Briefer picks the next sub-DAG per iteration; you do not. Under-planning stalls the loop, so when in doubt, include the phase.
 6. Emit it via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection it returns a structured error with the offending ids; read the error, correct the plan, and re-emit. The Plan is replaced atomically when the emit succeeds.
 7. Call `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, root P1 establishes session boundary").
 
@@ -57,6 +57,8 @@ AcceptanceItem
 
 ## Constraints
 
+- **Plan the full remaining roadmap, not the next phase.** Every spec phase that is not verifiably complete must appear as a Phase in the emitted Plan. Emitting a single-phase Plan when the spec still has multiple unfinished phases is a bug: the loop's exit condition is "no pending tasks in the DAG", so a truncated Plan terminates the run early and leaves the spec unfinished.
+- A spec phase counts as "verifiably complete" only when its acceptance bullets are checked off, the corresponding code/tests exist in the repo, and (where present) the Execution Journal records its delivery. Mere mention of progress in prose is not enough; when uncertain, include the phase.
 - The plan must be executable in the order given. Both DAGs (phases, and each phase's tasks) must be acyclic.
 - Cross-phase task dependencies are not representable. If a task in phase B requires work from phase A, encode that as a phase-level `depends_on` and add intra-phase task deps inside B as needed.
 - Do not invent acceptance criteria the spec did not mention. Restate, do not extrapolate.
