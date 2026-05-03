@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
@@ -28,19 +27,23 @@ type riskPanel struct {
 	signalRawVal string // raw "value" from iteration_result for diagnostics
 }
 
-// onBccEvent updates wire-driven counters and the latest signal.
-func (r *riskPanel) onBccEvent(ev agentcontract.BccEvent) {
-	switch ev.Kind {
-	case agentcontract.BccEventTaskStarted:
-		r.tasksStarted++
-	case agentcontract.BccEventTaskCompleted:
-		r.tasksCompleted++
-	case agentcontract.BccEventIterationResult:
-		r.lastSignal = ev.Signal
-		r.signalKnown = true
-		if v, ok := ev.Raw["value"].(string); ok {
-			r.signalRawVal = v
-		}
+// onTaskStarted/Completed track per-iteration task counts derived from
+// loop.TaskStarted/Completed events. The Director loop emits these from
+// the MCP audit translation.
+func (r *riskPanel) onTaskStarted() { r.tasksStarted++ }
+
+func (r *riskPanel) onTaskCompleted() { r.tasksCompleted++ }
+
+// onIterFinished latches the iteration's terminal signal. The Director
+// loop emits IterationFinished after reading the signal from the MCP
+// handler; the panel records the value so the badge line is correct
+// even when the agent reported no signal (SignalUnknown).
+func (r *riskPanel) onIterFinished(sig agentcontract.Signal) {
+	r.lastSignal = sig
+	r.signalKnown = true
+	r.signalRawVal = sig.String()
+	if sig == agentcontract.SignalUnknown {
+		r.signalRawVal = ""
 	}
 }
 
@@ -60,8 +63,8 @@ func (r *riskPanel) onCommitCount(n int) {
 // onAgentEvent watches for write-shaped tool calls so the panel can
 // surface "last edit Ns ago", a useful hint when the working tree is
 // dirty.
-func (r *riskPanel) onAgentEvent(ev loop.AgentEvent) {
-	if ev.Kind != loop.KindToolUse || ev.Tool == nil {
+func (r *riskPanel) onAgentEvent(ev agentcontract.AgentEvent) {
+	if ev.Kind != agentcontract.KindToolUse || ev.Tool == nil {
 		return
 	}
 	switch ev.Tool.Name {

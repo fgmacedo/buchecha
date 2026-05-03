@@ -1,34 +1,33 @@
 package tui
 
 import (
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 func TestNow_onAgentEvent_TracksToolUseAndClearsOnResult(t *testing.T) {
 	n := nowPanel{}
 	at := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 
-	n.onAgentEvent(loop.AgentEvent{
-		Kind: loop.KindToolUse,
+	n.onAgentEvent(agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse,
 		At:   at,
-		Tool: &loop.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "internal/spec/plan.go"}},
+		Tool: &agentcontract.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "internal/spec/plan.go"}},
 	})
 	if n.currentTool == nil || n.currentTool.ID != "t1" {
 		t.Fatalf("currentTool not tracked: %+v", n.currentTool)
 	}
 
 	// Mismatched tool_result: no clear.
-	n.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolResult, Tool: &loop.ToolCallInfo{ID: "other"}})
+	n.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolResult, Tool: &agentcontract.ToolCallInfo{ID: "other"}})
 	if n.currentTool == nil {
 		t.Errorf("mismatched tool_result must not clear current tool")
 	}
 
 	// Matching tool_result: clears.
-	n.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolResult, Tool: &loop.ToolCallInfo{ID: "t1"}})
+	n.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolResult, Tool: &agentcontract.ToolCallInfo{ID: "t1"}})
 	if n.currentTool != nil {
 		t.Errorf("matching tool_result must clear current tool, got %+v", n.currentTool)
 	}
@@ -36,9 +35,9 @@ func TestNow_onAgentEvent_TracksToolUseAndClearsOnResult(t *testing.T) {
 
 func TestNow_onAgentEvent_RecordsLatestAssistantText(t *testing.T) {
 	n := nowPanel{}
-	n.onAgentEvent(loop.AgentEvent{Kind: loop.KindAssistantText, Text: "first"})
-	n.onAgentEvent(loop.AgentEvent{Kind: loop.KindAssistantText, Text: "  "}) // empty after trim, ignored
-	n.onAgentEvent(loop.AgentEvent{Kind: loop.KindAssistantText, Text: "second"})
+	n.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText, Text: "first"})
+	n.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText, Text: "  "}) // empty after trim, ignored
+	n.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText, Text: "second"})
 	if n.lastAssistant != "second" {
 		t.Errorf("lastAssistant = %q, want second", n.lastAssistant)
 	}
@@ -55,7 +54,7 @@ func TestNow_view_IdleWhenNoTool(t *testing.T) {
 func TestNow_view_RendersToolHeadline(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 30, 12, 0, time.UTC)
 	n := newNowPanel()
-	n.currentTool = &loop.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}}
+	n.currentTool = &agentcontract.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}}
 	n.currentToolAt = now.Add(-10 * time.Second)
 	n.lastAssistant = "Adjusting parser"
 	out := n.view(now, 80)
@@ -75,13 +74,13 @@ func TestNow_view_RendersToolHeadline(t *testing.T) {
 
 func TestFormatToolHeadline_KnownTools(t *testing.T) {
 	cases := []struct {
-		tool loop.ToolCallInfo
+		tool agentcontract.ToolCallInfo
 		want string
 	}{
-		{loop.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "ls"}}, "Bash  ls"},
-		{loop.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "a.go"}}, "Edit  a.go"},
-		{loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "b.go"}}, "Read  b.go"},
-		{loop.ToolCallInfo{Name: "Glob", Args: map[string]any{"pattern": "**/*.go"}}, "Glob  **/*.go"},
+		{agentcontract.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "ls"}}, "Bash  ls"},
+		{agentcontract.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "a.go"}}, "Edit  a.go"},
+		{agentcontract.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "b.go"}}, "Read  b.go"},
+		{agentcontract.ToolCallInfo{Name: "Glob", Args: map[string]any{"pattern": "**/*.go"}}, "Glob  **/*.go"},
 	}
 	for _, tc := range cases {
 		got := formatToolHeadline(tc.tool)

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_iteration_finished",
+  "description": "Executor reports the natural end of its invocation with one of review|done|blocked.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "signal"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 },
+    "signal": {
+      "type": "string",
+      "enum": ["review", "done", "blocked"]
+    },
+    "summary": { "type": "string" }
+  }
+}

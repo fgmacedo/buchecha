@@ -1,16 +1,15 @@
 package tui
 
 import (
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"testing"
 	"time"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
-func toolUse(name string, args map[string]any) loop.AgentEvent {
-	return loop.AgentEvent{
-		Kind: loop.KindToolUse,
-		Tool: &loop.ToolCallInfo{Name: name, Args: args},
+func toolUse(name string, args map[string]any) agentcontract.AgentEvent {
+	return agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse,
+		Tool: &agentcontract.ToolCallInfo{Name: name, Args: args},
 	}
 }
 
@@ -132,9 +131,9 @@ func TestLoopSuspect_NonToolEventsIgnored(t *testing.T) {
 	var l loopSuspect
 	// Saturate with non-tool_use events; window should never fill.
 	for i := 0; i < 50; i++ {
-		l.onAgentEvent(loop.AgentEvent{Kind: loop.KindAssistantText, Text: "talking"})
-		l.onAgentEvent(loop.AgentEvent{Kind: loop.KindThinking, Text: "thinking"})
-		l.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolResult, Tool: &loop.ToolCallInfo{}})
+		l.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText, Text: "talking"})
+		l.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindThinking, Text: "thinking"})
+		l.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolResult, Tool: &agentcontract.ToolCallInfo{}})
 	}
 	if l.n != 0 {
 		t.Errorf("n = %d after non-tool_use events; want 0", l.n)

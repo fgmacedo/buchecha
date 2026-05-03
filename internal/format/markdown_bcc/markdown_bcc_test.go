@@ -39,9 +39,9 @@ func TestBuildPrompt_LoopMode_IncludesContractCore(t *testing.T) {
 		"## Implementation Plan",
 		"## Execution Journal",
 		// Shared partials must be included in the rendered output.
-		`"event":"task_started"`,
-		`"event":"task_completed"`,
-		`"event":"iteration_result"`,
+		"bcc_task_started",
+		"bcc_task_completed",
+		"bcc_iteration_finished",
 		"`continue`",
 		"`review`",
 		"`done`",
@@ -124,5 +124,32 @@ func TestBuildPrompt_Extra_OmittedWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(got, "Additional instructions from the invoker") {
 		t.Errorf("empty extra should not render the section header")
+	}
+}
+
+func TestBuildPrompt_DirectorEnabled_AddsReviewSignalGuidance(t *testing.T) {
+	r := New(Config{DirectorEnabled: true})
+	got, err := r.BuildPrompt(context.Background(), loop.BriefingInput{Mode: loop.ModeLoop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Under the Director",
+		"`value=review`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("director-enabled prompt missing %q", want)
+		}
+	}
+}
+
+func TestBuildPrompt_DirectorDisabled_OmitsReviewSignalGuidance(t *testing.T) {
+	r := New(Config{})
+	got, err := r.BuildPrompt(context.Background(), loop.BriefingInput{Mode: loop.ModeLoop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "Under the Director") {
+		t.Errorf("director-disabled prompt should not include director-only guidance")
 	}
 }

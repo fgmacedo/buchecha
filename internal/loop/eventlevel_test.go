@@ -70,27 +70,27 @@ func TestLevelOf(t *testing.T) {
 		{"loop_finished_ok", loop.LoopFinished{ExitCode: 0}, loop.LevelInfo},
 		{"loop_finished_blocked", loop.LoopFinished{ExitCode: 1}, loop.LevelError},
 		{"loop_finished_invalid", loop.LoopFinished{ExitCode: 2}, loop.LevelError},
-		{"agent_init", loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindInit}}, loop.LevelDebug},
-		{"agent_thinking", loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindThinking}}, loop.LevelTrace},
-		{"agent_tool_use", loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindToolUse}}, loop.LevelInfo},
-		{"agent_tool_result_ok", loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindToolResult,
-			Tool: &loop.ToolCallInfo{IsError: false},
+		{"agent_init", loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindInit}}, loop.LevelDebug},
+		{"agent_thinking", loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindThinking}}, loop.LevelTrace},
+		{"agent_tool_use", loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindToolUse}}, loop.LevelInfo},
+		{"agent_tool_result_ok", loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolResult,
+			Tool: &agentcontract.ToolCallInfo{IsError: false},
 		}}, loop.LevelDebug},
-		{"agent_tool_result_err", loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindToolResult,
-			Tool: &loop.ToolCallInfo{IsError: true},
+		{"agent_tool_result_err", loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolResult,
+			Tool: &agentcontract.ToolCallInfo{IsError: true},
 		}}, loop.LevelError},
-		{"agent_assistant_text", loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindAssistantText}}, loop.LevelDebug},
-		{"agent_rate_limit_allowed", loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindRateLimit,
-			Rate: &loop.RateLimitInfo{Status: "allowed"},
+		{"agent_assistant_text", loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText}}, loop.LevelDebug},
+		{"agent_rate_limit_allowed", loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindRateLimit,
+			Rate: &agentcontract.RateLimitInfo{Status: "allowed"},
 		}}, loop.LevelDebug},
-		{"agent_rate_limit_throttled", loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindRateLimit,
-			Rate: &loop.RateLimitInfo{Status: "warning"},
+		{"agent_rate_limit_throttled", loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindRateLimit,
+			Rate: &agentcontract.RateLimitInfo{Status: "warning"},
 		}}, loop.LevelWarn},
-		{"agent_result_summary", loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindResultSummary}}, loop.LevelInfo},
+		{"agent_result_summary", loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary}}, loop.LevelInfo},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,20 +105,19 @@ func TestLevelOf(t *testing.T) {
 // has an explicit non-default Level mapping so future additions cannot
 // silently fall to LevelInfo.
 func TestLevelOf_AllAgentKindsCovered(t *testing.T) {
-	all := []loop.AgentEventKind{
-		loop.KindInit,
-		loop.KindThinking,
-		loop.KindToolUse,
-		loop.KindToolResult,
-		loop.KindAssistantText,
-		loop.KindRateLimit,
-		loop.KindResultSummary,
-		loop.KindBccEvent,
+	all := []agentcontract.AgentEventKind{
+		agentcontract.KindInit,
+		agentcontract.KindThinking,
+		agentcontract.KindToolUse,
+		agentcontract.KindToolResult,
+		agentcontract.KindAssistantText,
+		agentcontract.KindRateLimit,
+		agentcontract.KindResultSummary,
 	}
-	seen := map[loop.AgentEventKind]bool{}
+	seen := map[agentcontract.AgentEventKind]bool{}
 	for _, k := range all {
 		seen[k] = true
-		_ = loop.LevelOf(loop.AgentEventReceived{Event: loop.AgentEvent{Kind: k}})
+		_ = loop.LevelOf(loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: k}})
 	}
 	if len(seen) != len(all) {
 		t.Errorf("expected all kinds covered: %d, got %d", len(all), len(seen))
@@ -130,10 +129,10 @@ func TestFilterEvents(t *testing.T) {
 	out := make(chan loop.Event, 16)
 	loop.FilterEvents(in, out, loop.LevelInfo)
 
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindThinking}}      // trace -> drop
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindToolUse}}       // info -> keep
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindAssistantText}} // debug -> drop
-	in <- loop.LoopFinished{ExitCode: 1}                                                // error -> keep
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindThinking}}      // trace -> drop
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindToolUse}}       // info -> keep
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText}} // debug -> drop
+	in <- loop.LoopFinished{ExitCode: 1}                                                                  // error -> keep
 	close(in)
 
 	var got []loop.Level
@@ -153,9 +152,9 @@ func TestFilterEvents_TraceLetsAllThrough(t *testing.T) {
 	out := make(chan loop.Event, 8)
 	loop.FilterEvents(in, out, loop.LevelTrace)
 
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindThinking}}
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindToolUse}}
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindAssistantText}}
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindThinking}}
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindToolUse}}
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText}}
 	close(in)
 
 	n := 0
@@ -176,9 +175,9 @@ func TestFilterEvents_ErrorOnlyKeepsErrors(t *testing.T) {
 	in <- loop.IterationFinished{Signal: agentcontract.SignalContinue} // info -> drop
 	in <- loop.LoopFinished{ExitCode: 0}                               // info -> drop
 	in <- loop.LoopFinished{ExitCode: 1}                               // error -> keep
-	in <- loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindToolResult,
-		Tool: &loop.ToolCallInfo{IsError: true},
+	in <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolResult,
+		Tool: &agentcontract.ToolCallInfo{IsError: true},
 	}} // error -> keep
 	close(in)
 

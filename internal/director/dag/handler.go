@@ -1,0 +1,1011 @@
+package dag
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/fgmacedo/buchecha/internal/director"
+)
+
+// MCP method names. Each one has a JSON Schema embedded under
+// internal/director/schemas/mcp/ that the handler validates inputs
+// against, plus a per-method handler function attached at construction
+// time.
+const (
+	MethodPlanEmit          = "bcc_plan_emit"
+	MethodBriefingEmit      = "bcc_briefing_emit"
+	MethodGetDAGSnapshot    = "bcc_get_dag_snapshot"
+	MethodGetBriefing       = "bcc_get_briefing"
+	MethodGetPendingTasks   = "bcc_get_pending_tasks"
+	MethodTaskStarted       = "bcc_task_started"
+	MethodTaskCompleted     = "bcc_task_completed"
+	MethodIterationFinished = "bcc_iteration_finished"
+	MethodGetDiff           = "bcc_get_diff"
+	MethodGetJournalDelta   = "bcc_get_journal_delta"
+	MethodTaskApproved      = "bcc_task_approved"
+	MethodTaskNeedsFix      = "bcc_task_needs_fix"
+	MethodReviewFinished    = "bcc_review_finished"
+)
+
+// PlanningTaskID is the well-known task id the Planner uses on the
+// timeline pair (bcc_task_started, bcc_task_completed) so planning
+// shows up alongside work tasks in the TUI without being part of the
+// DAG. The handler treats this id as out-of-DAG: the calls succeed but
+// no DAG mutation happens.
+const PlanningTaskID = "planning"
+
+// methodSpec describes one entry in the dispatch table: which roles may
+// call the method and the function that runs after agent identity and
+// connection-name checks pass.
+type methodSpec struct {
+	allowedRoles map[Role]bool
+	handle       func(*Handler, context.Context, AgentEntry, map[string]any) (string, error)
+}
+
+// briefingState holds per-briefing handler-side context: the Briefing
+// itself (set by bcc_briefing_emit), plus the inputs needed to answer
+// bcc_get_diff and bcc_get_journal_delta. The loop populates the SHA
+// pair and the journal snapshots via the SetBriefing* setters before
+// the Reviewer is registered against the briefing.
+type briefingState struct {
+	briefing      *director.Briefing
+	baseSHA       string
+	headSHA       string
+	journalBefore []byte
+	journalAfter  []byte
+	reviewOutcome string
+	reviewReason  string
+	// iterSignal is the signal the Executor reported via
+	// bcc_iteration_finished. Empty until the Executor exits cleanly;
+	// the loop driver reads it once the Executor.Run returns to decide
+	// whether to advance, retry, or terminate.
+	iterSignal string
+	// agents references the live agents bound to this briefing so the
+	// handler can answer queries scoped per-agent. Today bcc spawns one
+	// Executor and one Reviewer per briefing; the slice future-proofs
+	// the parallel-shard case PRD 3 introduces.
+	agents []AgentID
+}
+
+// Handler implements mcp.Handler against the DAG state and the agent
+// registry. The dispatch table maps method names to per-method handler
+// functions; each function performs schema validation, scope checks,
+// and either mutates state or returns a query response.
+type Handler struct {
+	state    *State
+	registry *AgentRegistry
+	dispatch map[string]methodSpec
+	schemas  map[string]*jsonschema.Schema
+
+	git     GitDiffProvider
+	journal JournalDeltaProvider
+	audit   *AuditLog
+
+	planStore     PlanPersister
+	briefingStore BriefingPersister
+	dagStore      DAGSnapshotPersister
+
+	mu        sync.Mutex
+	plan      *director.Plan
+	briefings map[string]*briefingState
+	now       func() time.Time
+}
+
+// HandlerOptions parameterizes NewHandler. Every field is optional;
+// nil values disable the corresponding feature (no audit log, no
+// persistence, no diff, no journal delta) so tests can construct a
+// handler with only the inputs they need.
+type HandlerOptions struct {
+	Git              GitDiffProvider
+	Journal          JournalDeltaProvider
+	Audit            *AuditLog
+	PlanStore        PlanPersister
+	BriefingStore    BriefingPersister
+	DAGSnapshotStore DAGSnapshotPersister
+	Now              func() time.Time
+}
+
+// NewHandler wires a Handler against a State and an AgentRegistry. The
+// dispatch table and the per-method JSON Schemas are compiled once at
+// construction; a malformed schema fails loudly here rather than on the
+// first agent call.
+func NewHandler(state *State, registry *AgentRegistry) *Handler {
+	return NewHandlerWithOptions(state, registry, HandlerOptions{})
+}
+
+// NewHandlerWithOptions is the full constructor; NewHandler is the
+// convenience wrapper for tests and the legacy non-Director run path.
+func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOptions) *Handler {
+	schemas, err := compileMethodSchemas()
+	if err != nil {
+		// A schema compile failure is a programming error: the schemas
+		// are embedded at build time and validated by tests.
+		panic(err)
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	h := &Handler{
+		state:         state,
+		registry:      registry,
+		schemas:       schemas,
+		git:           opts.Git,
+		journal:       opts.Journal,
+		audit:         opts.Audit,
+		planStore:     opts.PlanStore,
+		briefingStore: opts.BriefingStore,
+		dagStore:      opts.DAGSnapshotStore,
+		briefings:     make(map[string]*briefingState),
+		now:           now,
+	}
+	h.dispatch = map[string]methodSpec{
+		MethodPlanEmit: {
+			allowedRoles: rolesSet(RolePlanner),
+			handle:       (*Handler).handlePlanEmit,
+		},
+		MethodBriefingEmit: {
+			allowedRoles: rolesSet(RoleBriefer),
+			handle:       (*Handler).handleBriefingEmit,
+		},
+		MethodGetDAGSnapshot: {
+			allowedRoles: rolesSet(RoleBriefer, RoleExecutor, RoleReviewer),
+			handle:       (*Handler).handleGetDAGSnapshot,
+		},
+		MethodGetBriefing: {
+			allowedRoles: rolesSet(RoleExecutor, RoleReviewer),
+			handle:       (*Handler).handleGetBriefing,
+		},
+		MethodGetPendingTasks: {
+			allowedRoles: rolesSet(RoleExecutor),
+			handle:       (*Handler).handleGetPendingTasks,
+		},
+		MethodTaskStarted: {
+			allowedRoles: rolesSet(RolePlanner, RoleExecutor),
+			handle:       (*Handler).handleTaskStarted,
+		},
+		MethodTaskCompleted: {
+			allowedRoles: rolesSet(RolePlanner, RoleExecutor),
+			handle:       (*Handler).handleTaskCompleted,
+		},
+		MethodIterationFinished: {
+			allowedRoles: rolesSet(RoleExecutor),
+			handle:       (*Handler).handleIterationFinished,
+		},
+		MethodGetDiff: {
+			allowedRoles: rolesSet(RoleReviewer),
+			handle:       (*Handler).handleGetDiff,
+		},
+		MethodGetJournalDelta: {
+			allowedRoles: rolesSet(RoleReviewer),
+			handle:       (*Handler).handleGetJournalDelta,
+		},
+		MethodTaskApproved: {
+			allowedRoles: rolesSet(RoleReviewer),
+			handle:       (*Handler).handleTaskApproved,
+		},
+		MethodTaskNeedsFix: {
+			allowedRoles: rolesSet(RoleReviewer),
+			handle:       (*Handler).handleTaskNeedsFix,
+		},
+		MethodReviewFinished: {
+			allowedRoles: rolesSet(RoleReviewer),
+			handle:       (*Handler).handleReviewFinished,
+		},
+	}
+	return h
+}
+
+// Registry returns the underlying registry so callers (cmd/cli wiring,
+// loop driver) can register and deregister agents around invocations.
+func (h *Handler) Registry() *AgentRegistry { return h.registry }
+
+// State returns the underlying DAG state. Returns nil before
+// bcc_plan_emit lands the first plan.
+func (h *Handler) State() *State { return h.state }
+
+// SetState replaces the handler's DAG state. The loop calls this when
+// it has built state from a Plan that did not flow through
+// bcc_plan_emit (legacy planner adapters in tests, or a resumed
+// session whose plan is already on disk).
+func (h *Handler) SetState(s *State) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.state = s
+}
+
+// SetPlan stores the most recently confirmed Plan on the handler so
+// later queries (snapshots, briefings) see it. The loop calls this on
+// the resumed-plan path.
+func (h *Handler) SetPlan(p *director.Plan) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.plan = p
+}
+
+// Plan returns the most recently emitted Plan, or nil before the
+// Planner has called bcc_plan_emit successfully.
+func (h *Handler) Plan() *director.Plan {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.plan
+}
+
+// Briefing returns the Briefing emitted under iterationID, or nil if
+// no such briefing has been emitted yet.
+func (h *Handler) Briefing(iterationID string) *director.Briefing {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil {
+		return nil
+	}
+	return bs.briefing
+}
+
+// AttachAudit binds an AuditLog to the handler. Late-binding is the
+// production path: cli boot constructs the handler before the session
+// directory is known, then attaches the audit log once the session is
+// resolved. nil disables auditing.
+func (h *Handler) AttachAudit(audit *AuditLog) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.audit = audit
+}
+
+// AttachStores binds the per-session persistence ports to the handler.
+// Any nil argument leaves the corresponding store untouched. Same
+// late-binding rationale as AttachAudit.
+func (h *Handler) AttachStores(plan PlanPersister, briefing BriefingPersister, dagSnap DAGSnapshotPersister) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if plan != nil {
+		h.planStore = plan
+	}
+	if briefing != nil {
+		h.briefingStore = briefing
+	}
+	if dagSnap != nil {
+		h.dagStore = dagSnap
+	}
+}
+
+// AttachProviders binds git and journal providers. Either argument may
+// be nil to leave the corresponding provider untouched.
+func (h *Handler) AttachProviders(git GitDiffProvider, journal JournalDeltaProvider) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if git != nil {
+		h.git = git
+	}
+	if journal != nil {
+		h.journal = journal
+	}
+}
+
+// SetBriefingDiffRange records the (baseSHA, headSHA) the Reviewer
+// audits for iterationID. The loop calls this between Executor exit
+// and Reviewer registration; the handler then answers bcc_get_diff for
+// the Reviewer agent_id bound to the same briefing.
+func (h *Handler) SetBriefingDiffRange(iterationID, baseSHA, headSHA string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil {
+		bs = &briefingState{}
+		h.briefings[iterationID] = bs
+	}
+	bs.baseSHA = baseSHA
+	bs.headSHA = headSHA
+}
+
+// SetBriefingJournalSnapshots records the spec-content snapshots the
+// handler diffs to compute bcc_get_journal_delta for the audited
+// iterationID. Empty bytes are valid: an unchanged journal yields an
+// empty delta.
+func (h *Handler) SetBriefingJournalSnapshots(iterationID string, before, after []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil {
+		bs = &briefingState{}
+		h.briefings[iterationID] = bs
+	}
+	bs.journalBefore = append([]byte(nil), before...)
+	bs.journalAfter = append([]byte(nil), after...)
+}
+
+// HandleCall implements mcp.Handler. The dispatch is:
+//
+//  1. Every bcc_* method goes through the dispatch table. The agent
+//     identity is read from input["agent_id"]; the registry must know
+//     it, and the registered role must match the connection name.
+//  2. Unknown method names return a structured error.
+//
+// Every successful or rejected dispatch appends one record to the
+// audit log when configured.
+func (h *Handler) HandleCall(ctx context.Context, connectionName, methodName string, input map[string]any) (string, error) {
+	spec, ok := h.dispatch[methodName]
+	if !ok {
+		return "", fmt.Errorf("dag: unknown method %q", methodName)
+	}
+	if !spec.allowedRoles[Role(connectionName)] {
+		err := fmt.Errorf("dag: connection %q not allowed to call %q", connectionName, methodName)
+		h.logCall(connectionName, "", methodName, input, "", err)
+		return "", err
+	}
+	id, _ := input["agent_id"].(string)
+	if id == "" {
+		err := fmt.Errorf("dag: %s: missing agent_id", methodName)
+		h.logCall(connectionName, "", methodName, input, "", err)
+		return "", err
+	}
+	entry, ok := h.registry.Lookup(AgentID(id))
+	if !ok {
+		err := fmt.Errorf("dag: %s: unregistered agent_id %q", methodName, id)
+		h.logCall(connectionName, id, methodName, input, "", err)
+		return "", err
+	}
+	if string(entry.Role) != connectionName {
+		err := fmt.Errorf("dag: %s: agent_id %q registered as %q, called from %q",
+			methodName, id, string(entry.Role), connectionName)
+		h.logCall(connectionName, id, methodName, input, "", err)
+		return "", err
+	}
+	if sch := h.schemas[methodName]; sch != nil {
+		if err := sch.Validate(input); err != nil {
+			wrapped := fmt.Errorf("dag: %s: schema validation: %w", methodName, err)
+			h.logCall(connectionName, id, methodName, input, "", wrapped)
+			return "", wrapped
+		}
+	}
+	result, err := spec.handle(h, ctx, entry, input)
+	h.logCall(connectionName, id, methodName, input, result, err)
+	return result, err
+}
+
+func (h *Handler) logCall(role, agentID, method string, input map[string]any, result string, err error) {
+	if h.audit == nil {
+		return
+	}
+	entry := AuditEntry{
+		At:      h.now(),
+		Role:    role,
+		AgentID: agentID,
+		Method:  method,
+		Input:   input,
+		Result:  result,
+	}
+	if err != nil {
+		entry.Err = err.Error()
+	}
+	_ = h.audit.Append(entry)
+}
+
+func rolesSet(roles ...Role) map[Role]bool {
+	out := make(map[Role]bool, len(roles))
+	for _, r := range roles {
+		out[r] = true
+	}
+	return out
+}
+
+// handlePlanEmit accepts a Plan body, validates it (schema + structural
+// invariants), replaces the in-memory DAG state, and persists the plan.
+// On rejection the prior plan stays in place; the agent reads the
+// structured error and re-emits.
+func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[string]any) (string, error) {
+	planRaw, ok := input["plan"]
+	if !ok {
+		return "", errors.New("dag: bcc_plan_emit: missing plan")
+	}
+	if sch := h.schemas[planSchemaKey]; sch != nil {
+		if err := sch.Validate(planRaw); err != nil {
+			return "", fmt.Errorf("dag: bcc_plan_emit: plan schema: %w", err)
+		}
+	}
+	body, err := json.Marshal(planRaw)
+	if err != nil {
+		return "", fmt.Errorf("dag: bcc_plan_emit: marshal plan: %w", err)
+	}
+	var plan director.Plan
+	if err := json.Unmarshal(body, &plan); err != nil {
+		return "", fmt.Errorf("dag: bcc_plan_emit: parse plan: %w", err)
+	}
+	if err := director.ValidatePlan(&plan); err != nil {
+		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
+	}
+	newState := NewStateFromPlan(&plan)
+
+	h.mu.Lock()
+	h.plan = &plan
+	h.state = newState
+	h.mu.Unlock()
+
+	if h.planStore != nil {
+		if err := h.planStore.WritePlan(&plan); err != nil {
+			return "", fmt.Errorf("dag: bcc_plan_emit: persist plan: %w", err)
+		}
+	}
+	if err := h.persistDAG(newState); err != nil {
+		return "", err
+	}
+	return `{"ok":true}`, nil
+}
+
+// handleBriefingEmit accepts a Briefing body, validates it against the
+// current plan + DAG state, stores it, and returns a confirmation. The
+// emitted briefing is later looked up by Executor and Reviewer agents
+// whose registry entries point at its iteration_id.
+func (h *Handler) handleBriefingEmit(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	briefRaw, ok := input["briefing"]
+	if !ok {
+		return "", errors.New("dag: bcc_briefing_emit: missing briefing")
+	}
+	body, err := json.Marshal(briefRaw)
+	if err != nil {
+		return "", fmt.Errorf("dag: bcc_briefing_emit: marshal briefing: %w", err)
+	}
+	var brief director.Briefing
+	if err := json.Unmarshal(body, &brief); err != nil {
+		return "", fmt.Errorf("dag: bcc_briefing_emit: parse briefing: %w", err)
+	}
+	if brief.IterationID == "" {
+		brief.IterationID = fmt.Sprintf("%s-%d", brief.PhaseID, h.now().UnixNano())
+	}
+
+	h.mu.Lock()
+	state := h.state
+	h.mu.Unlock()
+	if state == nil {
+		return "", errors.New("dag: bcc_briefing_emit: no plan emitted yet")
+	}
+	phase := state.Phase(brief.PhaseID)
+	if phase == nil {
+		return "", fmt.Errorf("dag: bcc_briefing_emit: unknown phase %q", brief.PhaseID)
+	}
+	if !phaseIsEligible(state, brief.PhaseID) {
+		return "", fmt.Errorf("dag: bcc_briefing_emit: phase %q not eligible (deps not done)", brief.PhaseID)
+	}
+	if len(brief.SubDAGTaskIDs) == 0 {
+		return "", errors.New("dag: bcc_briefing_emit: empty sub_dag_task_ids")
+	}
+	subSet := make(map[string]bool, len(brief.SubDAGTaskIDs))
+	for _, tid := range brief.SubDAGTaskIDs {
+		t, ok := phase.Tasks[tid]
+		if !ok {
+			return "", fmt.Errorf("dag: bcc_briefing_emit: task %q not in phase %q", tid, brief.PhaseID)
+		}
+		if t.Status != director.TaskPending && t.Status != director.TaskNeedsFix {
+			return "", fmt.Errorf("dag: bcc_briefing_emit: task %q status %q is not pending/needs_fix",
+				tid, string(t.Status))
+		}
+		subSet[tid] = true
+	}
+	for _, tid := range brief.SubDAGTaskIDs {
+		t := phase.Tasks[tid]
+		for _, dep := range t.DependsOn {
+			if subSet[dep] {
+				continue
+			}
+			depTask := phase.Tasks[dep]
+			if depTask == nil || depTask.Status != director.TaskDone {
+				return "", fmt.Errorf("dag: bcc_briefing_emit: task %q depends on %q which is neither in sub-DAG nor done",
+					tid, dep)
+			}
+		}
+	}
+	_ = entry
+
+	h.mu.Lock()
+	bs := h.briefings[brief.IterationID]
+	if bs == nil {
+		bs = &briefingState{}
+		h.briefings[brief.IterationID] = bs
+	}
+	briefCopy := brief
+	bs.briefing = &briefCopy
+	h.mu.Unlock()
+
+	if h.briefingStore != nil {
+		if err := h.briefingStore.WriteBriefing(&brief); err != nil {
+			return "", fmt.Errorf("dag: bcc_briefing_emit: persist briefing: %w", err)
+		}
+	}
+	out, _ := json.Marshal(map[string]any{
+		"ok":           true,
+		"iteration_id": brief.IterationID,
+	})
+	return string(out), nil
+}
+
+// handleGetDAGSnapshot returns the live DAG state. The Briefer sees
+// the full state; Executor and Reviewer agents see only the phase they
+// are registered against.
+func (h *Handler) handleGetDAGSnapshot(_ context.Context, entry AgentEntry, _ map[string]any) (string, error) {
+	h.mu.Lock()
+	state := h.state
+	h.mu.Unlock()
+	if state == nil {
+		return "", errors.New("dag: bcc_get_dag_snapshot: no plan emitted yet")
+	}
+	if entry.Role == RoleBriefer {
+		body, err := json.Marshal(state)
+		if err != nil {
+			return "", fmt.Errorf("dag: bcc_get_dag_snapshot: marshal: %w", err)
+		}
+		return string(body), nil
+	}
+	if entry.PhaseID == "" {
+		return "", errors.New("dag: bcc_get_dag_snapshot: agent has no phase scope")
+	}
+	phase := state.Phase(entry.PhaseID)
+	if phase == nil {
+		return "", fmt.Errorf("dag: bcc_get_dag_snapshot: phase %q unknown", entry.PhaseID)
+	}
+	body, err := json.Marshal(map[string]any{
+		"phase": phase,
+	})
+	if err != nil {
+		return "", fmt.Errorf("dag: bcc_get_dag_snapshot: marshal phase: %w", err)
+	}
+	return string(body), nil
+}
+
+// handleGetBriefing returns the Briefing the calling agent is bound
+// to, identified by entry.BriefingID assigned at registration time.
+func (h *Handler) handleGetBriefing(_ context.Context, entry AgentEntry, _ map[string]any) (string, error) {
+	if entry.BriefingID == "" {
+		return "", errors.New("dag: bcc_get_briefing: agent has no briefing scope")
+	}
+	h.mu.Lock()
+	bs := h.briefings[entry.BriefingID]
+	h.mu.Unlock()
+	if bs == nil || bs.briefing == nil {
+		return "", fmt.Errorf("dag: bcc_get_briefing: briefing %q not emitted", entry.BriefingID)
+	}
+	body, err := json.Marshal(bs.briefing)
+	if err != nil {
+		return "", fmt.Errorf("dag: bcc_get_briefing: marshal: %w", err)
+	}
+	return string(body), nil
+}
+
+// handleGetPendingTasks returns the calling agent's SubDAG members
+// whose status is still pending or needs_fix.
+func (h *Handler) handleGetPendingTasks(_ context.Context, entry AgentEntry, _ map[string]any) (string, error) {
+	if len(entry.SubDAG) == 0 {
+		return "", errors.New("dag: bcc_get_pending_tasks: agent has no sub-DAG scope")
+	}
+	if entry.PhaseID == "" {
+		return "", errors.New("dag: bcc_get_pending_tasks: agent has no phase scope")
+	}
+	h.mu.Lock()
+	state := h.state
+	h.mu.Unlock()
+	if state == nil {
+		return "", errors.New("dag: bcc_get_pending_tasks: no plan emitted yet")
+	}
+	phase := state.Phase(entry.PhaseID)
+	if phase == nil {
+		return "", fmt.Errorf("dag: bcc_get_pending_tasks: phase %q unknown", entry.PhaseID)
+	}
+	out := make([]TaskID, 0, len(entry.SubDAG))
+	for _, tid := range entry.SubDAG {
+		t := phase.Tasks[tid]
+		if t == nil {
+			continue
+		}
+		if t.Status == director.TaskPending || t.Status == director.TaskNeedsFix {
+			out = append(out, tid)
+		}
+	}
+	body, err := json.Marshal(map[string]any{"pending": out})
+	if err != nil {
+		return "", fmt.Errorf("dag: bcc_get_pending_tasks: marshal: %w", err)
+	}
+	return string(body), nil
+}
+
+// handleTaskStarted marks the requested task as in_progress. The
+// Planner uses the well-known PlanningTaskID and bypasses DAG state.
+func (h *Handler) handleTaskStarted(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	id, _ := input["id"].(string)
+	if entry.Role == RolePlanner {
+		if id != PlanningTaskID {
+			return "", fmt.Errorf("dag: bcc_task_started: planner must use id=%q, got %q", PlanningTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
+	if err := h.assertExecutorScope(entry, id); err != nil {
+		return "", err
+	}
+	if err := h.state.SetTaskStatus(entry.PhaseID, id, director.TaskInProgress); err != nil {
+		return "", fmt.Errorf("dag: bcc_task_started: %w", err)
+	}
+	if err := h.persistDAG(h.state); err != nil {
+		return "", err
+	}
+	return `{"ok":true}`, nil
+}
+
+// handleTaskCompleted marks the requested task as done.
+func (h *Handler) handleTaskCompleted(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	id, _ := input["id"].(string)
+	if entry.Role == RolePlanner {
+		if id != PlanningTaskID {
+			return "", fmt.Errorf("dag: bcc_task_completed: planner must use id=%q, got %q", PlanningTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
+	if err := h.assertExecutorScope(entry, id); err != nil {
+		return "", err
+	}
+	if err := h.state.SetTaskStatus(entry.PhaseID, id, director.TaskDone); err != nil {
+		return "", fmt.Errorf("dag: bcc_task_completed: %w", err)
+	}
+	if err := h.persistDAG(h.state); err != nil {
+		return "", err
+	}
+	return `{"ok":true}`, nil
+}
+
+// handleIterationFinished records the Executor's exit signal under the
+// briefing the agent is scoped to so the loop driver can read it once
+// the Executor.Run subprocess returns. Last-write-wins: a misbehaving
+// Executor that emits more than one terminal signal contributes only
+// the final one.
+func (h *Handler) handleIterationFinished(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	signal, _ := input["signal"].(string)
+	if entry.BriefingID == "" {
+		return "", errors.New("dag: bcc_iteration_finished: agent has no briefing scope")
+	}
+	h.mu.Lock()
+	bs := h.briefings[entry.BriefingID]
+	if bs == nil {
+		bs = &briefingState{}
+		h.briefings[entry.BriefingID] = bs
+	}
+	bs.iterSignal = signal
+	h.mu.Unlock()
+	out, _ := json.Marshal(map[string]any{
+		"ok":     true,
+		"signal": signal,
+	})
+	return string(out), nil
+}
+
+// IterationSignal returns the signal the Executor reported via
+// bcc_iteration_finished for the given briefing, or the empty string
+// when no signal was observed (Executor exited without calling the
+// terminal method, or the briefing is unknown). Callers (the loop
+// driver) treat the empty value as SignalUnknown.
+func (h *Handler) IterationSignal(briefingID string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[briefingID]
+	if bs == nil {
+		return ""
+	}
+	return bs.iterSignal
+}
+
+// handleGetDiff shells out to the configured GitDiffProvider with the
+// SHA range stored for the briefing the Reviewer audits.
+func (h *Handler) handleGetDiff(ctx context.Context, entry AgentEntry, _ map[string]any) (string, error) {
+	if h.git == nil {
+		return "", errors.New("dag: bcc_get_diff: no git provider configured")
+	}
+	if entry.BriefingID == "" {
+		return "", errors.New("dag: bcc_get_diff: agent has no briefing scope")
+	}
+	h.mu.Lock()
+	bs := h.briefings[entry.BriefingID]
+	var base, head string
+	if bs != nil {
+		base, head = bs.baseSHA, bs.headSHA
+	}
+	h.mu.Unlock()
+	if bs == nil || base == "" || head == "" {
+		return "", fmt.Errorf("dag: bcc_get_diff: no diff range recorded for briefing %q", entry.BriefingID)
+	}
+	diff, err := h.git.Diff(ctx, base, head)
+	if err != nil {
+		return "", fmt.Errorf("dag: bcc_get_diff: %w", err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"base_sha": base,
+		"head_sha": head,
+		"diff":     diff,
+	})
+	return string(body), nil
+}
+
+// handleGetJournalDelta computes the per-iteration journal delta via
+// the configured JournalDeltaProvider.
+func (h *Handler) handleGetJournalDelta(_ context.Context, entry AgentEntry, _ map[string]any) (string, error) {
+	if h.journal == nil {
+		return "", errors.New("dag: bcc_get_journal_delta: no journal provider configured")
+	}
+	if entry.BriefingID == "" {
+		return "", errors.New("dag: bcc_get_journal_delta: agent has no briefing scope")
+	}
+	h.mu.Lock()
+	bs := h.briefings[entry.BriefingID]
+	var before, after []byte
+	if bs != nil {
+		before = append([]byte(nil), bs.journalBefore...)
+		after = append([]byte(nil), bs.journalAfter...)
+	}
+	h.mu.Unlock()
+	if bs == nil {
+		return "", fmt.Errorf("dag: bcc_get_journal_delta: no journal snapshots recorded for briefing %q", entry.BriefingID)
+	}
+	delta := h.journal.JournalDelta(before, after)
+	body, _ := json.Marshal(map[string]any{"delta": delta})
+	return string(body), nil
+}
+
+// handleTaskApproved marks the task as done within the Reviewer's
+// audited sub-DAG.
+func (h *Handler) handleTaskApproved(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	id, _ := input["id"].(string)
+	if err := h.assertReviewerScope(entry, id); err != nil {
+		return "", err
+	}
+	if err := h.state.SetTaskStatus(entry.PhaseID, id, director.TaskDone); err != nil {
+		return "", fmt.Errorf("dag: bcc_task_approved: %w", err)
+	}
+	if err := h.persistDAG(h.state); err != nil {
+		return "", err
+	}
+	return `{"ok":true}`, nil
+}
+
+// handleTaskNeedsFix returns the task to needs_fix.
+func (h *Handler) handleTaskNeedsFix(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	id, _ := input["id"].(string)
+	if err := h.assertReviewerScope(entry, id); err != nil {
+		return "", err
+	}
+	if err := h.state.SetTaskStatus(entry.PhaseID, id, director.TaskNeedsFix); err != nil {
+		return "", fmt.Errorf("dag: bcc_task_needs_fix: %w", err)
+	}
+	if err := h.persistDAG(h.state); err != nil {
+		return "", err
+	}
+	return `{"ok":true}`, nil
+}
+
+// handleReviewFinished enforces the cross-method invariants on outcome
+// vs. per-task DAG state and returns a confirmation.
+func (h *Handler) handleReviewFinished(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
+	outcome, _ := input["outcome"].(string)
+	reasoning, _ := input["reasoning"].(string)
+	if entry.BriefingID == "" {
+		return "", errors.New("dag: bcc_review_finished: agent has no briefing scope")
+	}
+	state := h.state
+	if state == nil {
+		return "", errors.New("dag: bcc_review_finished: no DAG state")
+	}
+	phase := state.Phase(entry.PhaseID)
+	if phase == nil {
+		return "", fmt.Errorf("dag: bcc_review_finished: phase %q unknown", entry.PhaseID)
+	}
+	doneAll := true
+	anyNeedsFix := false
+	for _, tid := range entry.SubDAG {
+		t := phase.Tasks[tid]
+		if t == nil {
+			return "", fmt.Errorf("dag: bcc_review_finished: task %q missing from phase", tid)
+		}
+		if t.Status != director.TaskDone {
+			doneAll = false
+		}
+		if t.Status == director.TaskNeedsFix {
+			anyNeedsFix = true
+		}
+	}
+	switch outcome {
+	case "approve":
+		if !doneAll {
+			return "", errors.New("dag: bcc_review_finished: approve requires every sub-DAG task done")
+		}
+	case "revise":
+		if !anyNeedsFix {
+			return "", errors.New("dag: bcc_review_finished: revise requires at least one needs_fix")
+		}
+	case "escalate":
+		if reasoning == "" {
+			return "", errors.New("dag: bcc_review_finished: escalate requires reasoning")
+		}
+	default:
+		return "", fmt.Errorf("dag: bcc_review_finished: invalid outcome %q", outcome)
+	}
+	h.mu.Lock()
+	bs := h.briefings[entry.BriefingID]
+	if bs == nil {
+		bs = &briefingState{}
+		h.briefings[entry.BriefingID] = bs
+	}
+	bs.reviewOutcome = outcome
+	bs.reviewReason = reasoning
+	h.mu.Unlock()
+	body, _ := json.Marshal(map[string]any{
+		"ok":      true,
+		"outcome": outcome,
+	})
+	return string(body), nil
+}
+
+// ForceApprovePending marks every still-pending or needs_fix task in
+// the sub-DAG bound to iterationID as done, persists the snapshot, and
+// appends a synthetic audit entry recording the user's force-approve
+// decision. The audit role is "user" and the method name is
+// "bcc_force_approve" so the entry is distinguishable from agent-driven
+// task approvals. Returns an error if the briefing is unknown or the
+// phase the briefing targets is missing from state.
+func (h *Handler) ForceApprovePending(iterationID, hint string) error {
+	if iterationID == "" {
+		return errors.New("dag: ForceApprovePending: empty iteration_id")
+	}
+	h.mu.Lock()
+	bs := h.briefings[iterationID]
+	state := h.state
+	h.mu.Unlock()
+	if bs == nil || bs.briefing == nil {
+		return fmt.Errorf("dag: ForceApprovePending: unknown iteration %q", iterationID)
+	}
+	if state == nil {
+		return errors.New("dag: ForceApprovePending: no DAG state")
+	}
+	phaseID := PhaseID(bs.briefing.PhaseID)
+	phase := state.Phase(phaseID)
+	if phase == nil {
+		return fmt.Errorf("dag: ForceApprovePending: phase %q unknown", phaseID)
+	}
+	approved := make([]string, 0, len(bs.briefing.SubDAGTaskIDs))
+	for _, tid := range bs.briefing.SubDAGTaskIDs {
+		t, ok := phase.Tasks[tid]
+		if !ok {
+			return fmt.Errorf("dag: ForceApprovePending: task %q not in phase %q", tid, phaseID)
+		}
+		if t.Status == director.TaskDone {
+			continue
+		}
+		if err := state.SetTaskStatus(phaseID, tid, director.TaskDone); err != nil {
+			return fmt.Errorf("dag: ForceApprovePending: %w", err)
+		}
+		approved = append(approved, string(tid))
+	}
+	if err := h.persistDAG(state); err != nil {
+		return err
+	}
+	if h.audit != nil {
+		input := map[string]any{
+			"iteration_id": iterationID,
+		}
+		if hint != "" {
+			input["hint"] = hint
+		}
+		if len(approved) > 0 {
+			ids := make([]any, len(approved))
+			for i, id := range approved {
+				ids[i] = id
+			}
+			input["approved_task_ids"] = ids
+		}
+		_ = h.audit.Append(AuditEntry{
+			At:     h.now(),
+			Role:   "user",
+			Method: "bcc_force_approve",
+			Input:  input,
+			Result: `{"ok":true}`,
+		})
+	}
+	return nil
+}
+
+// LastReviewOutcome returns the outcome string the Reviewer reported on
+// bcc_review_finished for iterationID, or "" when no review has landed.
+func (h *Handler) LastReviewOutcome(iterationID string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil {
+		return ""
+	}
+	return bs.reviewOutcome
+}
+
+// LastReviewReasoning mirrors LastReviewOutcome for the prose reasoning
+// the Reviewer attached to bcc_review_finished.
+func (h *Handler) LastReviewReasoning(iterationID string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil {
+		return ""
+	}
+	return bs.reviewReason
+}
+
+// assertExecutorScope rejects task ids outside the Executor's
+// registered SubDAG. PhaseID must agree.
+func (h *Handler) assertExecutorScope(entry AgentEntry, taskID string) error {
+	if entry.PhaseID == "" {
+		return errors.New("dag: agent has no phase scope")
+	}
+	if !contains(entry.SubDAG, taskID) {
+		return fmt.Errorf("dag: task %q not in agent's sub-DAG", taskID)
+	}
+	if h.state == nil {
+		return errors.New("dag: no DAG state")
+	}
+	return nil
+}
+
+// assertReviewerScope mirrors assertExecutorScope. Reviewer agents are
+// scoped to the same SubDAG as the Executor they audit.
+func (h *Handler) assertReviewerScope(entry AgentEntry, taskID string) error {
+	if entry.PhaseID == "" {
+		return errors.New("dag: reviewer has no phase scope")
+	}
+	if !contains(entry.SubDAG, taskID) {
+		return fmt.Errorf("dag: task %q not in reviewer's sub-DAG", taskID)
+	}
+	if h.state == nil {
+		return errors.New("dag: no DAG state")
+	}
+	return nil
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// persistDAG writes the current state snapshot via the configured
+// DAGSnapshotPersister, if any. nil persister keeps state in-memory
+// only and returns nil so tests need not wire one up.
+func (h *Handler) persistDAG(s *State) error {
+	if h.dagStore == nil || s == nil {
+		return nil
+	}
+	if err := h.dagStore.WriteDAGSnapshot(s); err != nil {
+		return fmt.Errorf("dag: persist snapshot: %w", err)
+	}
+	return nil
+}
+
+// phaseIsEligible mirrors State.EligiblePhases for one phase id. A
+// phase is eligible when each phase-level dependency is fully done.
+func phaseIsEligible(s *State, id PhaseID) bool {
+	ps := s.Phase(id)
+	if ps == nil {
+		return false
+	}
+	for _, dep := range ps.DependsOn {
+		dp := s.Phase(dep)
+		if dp == nil {
+			return false
+		}
+		for _, t := range dp.Tasks {
+			if t.Status != director.TaskDone {
+				return false
+			}
+		}
+	}
+	return true
+}

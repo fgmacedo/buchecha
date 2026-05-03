@@ -250,6 +250,22 @@ func WriteConfigTOML(path string, in initInput) error {
 	sb.WriteString(fmt.Sprintf("branch_prefix = %q\n", in.BranchPrefix))
 	sb.WriteString("require_commit_per_iteration = true\n\n")
 
+	sb.WriteString("# Director: plan/brief/review loop on top of the Executor.\n")
+	sb.WriteString("# Default ON; set enabled = false (or pass --no-director) to fall back\n")
+	sb.WriteString("# to the legacy single-agent loop. The retry budget applies per phase;\n")
+	sb.WriteString("# phase-level overrides live in the generated plan.\n")
+	sb.WriteString("[director]\n")
+	sb.WriteString("enabled = true\n")
+	sb.WriteString("retry_budget = 2\n\n")
+
+	sb.WriteString("# max_budget_usd > 0 caps the cost of each Director call (--max-budget-usd);\n")
+	sb.WriteString("# 0 disables the cap. The Director adapter is fail-closed when exceeded.\n")
+	sb.WriteString("[director.claude]\n")
+	sb.WriteString("binary = \"claude\"\n")
+	sb.WriteString("# model = \"claude-opus-4-7\"\n")
+	sb.WriteString("extra_args = []\n")
+	sb.WriteString("max_budget_usd = 0\n\n")
+
 	sb.WriteString("[env]\n")
 	sb.WriteString("files = [")
 	for i, f := range in.EnvFiles {

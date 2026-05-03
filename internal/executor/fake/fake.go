@@ -9,6 +9,7 @@ package fake
 import (
 	"context"
 	"fmt"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 )
@@ -21,7 +22,7 @@ type Step struct {
 	// Events are pushed onto the events channel in order, one by one.
 	// Real adapters translate native agent events into AgentEvents;
 	// the fake skips the translation and lets tests script the result.
-	Events []loop.AgentEvent
+	Events []agentcontract.AgentEvent
 
 	// ExitCode is the value returned in ExecResult.
 	ExitCode int
@@ -47,7 +48,7 @@ func New(steps ...Step) *Executor {
 // Step.Err. If called more times than there are steps, returns an error
 // indicating the test exhausted the script (catches off-by-one in loop
 // tests).
-func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
+func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
 	if e.called >= len(e.steps) {
 		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("fake: out of scripted steps (called %d, have %d)", e.called+1, len(e.steps))
 	}

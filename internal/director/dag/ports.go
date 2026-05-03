@@ -1,0 +1,45 @@
+package dag
+
+import (
+	"context"
+
+	"github.com/fgmacedo/buchecha/internal/director"
+)
+
+// GitDiffProvider is the read-only git probe the handler consults to
+// answer bcc_get_diff. The loop's GitProbe satisfies it structurally;
+// the handler depends on this narrow port so the dag package needs no
+// import of internal/loop.
+type GitDiffProvider interface {
+	Diff(ctx context.Context, baseSHA, headSHA string) (string, error)
+}
+
+// JournalDeltaProvider is the format-adapter port the handler consults
+// to answer bcc_get_journal_delta. The markdown_bcc adapter implements
+// it on top of director.GatherJournalDelta; future format adapters
+// supply their own implementation here.
+type JournalDeltaProvider interface {
+	JournalDelta(before, after []byte) string
+}
+
+// PlanPersister is the call-through the handler uses after a successful
+// bcc_plan_emit to hand the validated Plan back to the run-wide store.
+// The handler owns DAG state in memory; persistence beyond the in-memory
+// state is the cli/loop's responsibility, so the port is narrow.
+type PlanPersister interface {
+	WritePlan(p *director.Plan) error
+}
+
+// BriefingPersister is the call-through the handler uses after
+// bcc_briefing_emit to hand the validated Briefing back to the
+// per-session store. Same shape and rationale as PlanPersister.
+type BriefingPersister interface {
+	WriteBriefing(b *director.Briefing) error
+}
+
+// DAGSnapshotPersister is the call-through the handler uses after every
+// task-status mutation to atomically rewrite dag.json on disk. nil keeps
+// state in-memory only, useful for tests.
+type DAGSnapshotPersister interface {
+	WriteDAGSnapshot(s *State) error
+}

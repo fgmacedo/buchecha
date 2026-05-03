@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_task_approved",
+  "description": "Reviewer marks one task done after audit. Scope-checked against the audited SubDAG.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "id"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "note": { "type": "string" }
+  }
+}

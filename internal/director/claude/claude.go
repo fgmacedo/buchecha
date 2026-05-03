@@ -1,0 +1,337 @@
+// Package claude implements the Director's Planner, Briefer, and
+// Reviewer ports against the claude CLI.
+//
+// Each role is invoked as an interactive agent with a fixed read-only
+// tool envelope:
+//
+//	claude -p --output-format stream-json --verbose
+//	  --allowed-tools Read,Bash,Grep,Glob
+//	  --dangerously-skip-permissions
+//	  --mcp-config <per-spawn-tempfile> --strict-mcp-config
+//	  [--model <m>] [--max-budget-usd <n>]
+//	  <prompt>
+//
+// The prompt is the role's system prompt (plan.md / brief.md / review.md
+// in internal/director/prompts), composed with the agentcontract
+// partials and the per-role view data (AgentID, SpecPath, iteration
+// metadata). Structured output never crosses stdout: the agent emits
+// the Plan, Briefing, and per-task verdicts via MCP method calls, and
+// bcc reads them from the run-wide handler. The adapter only watches
+// the stream-json `result` event for cost stats and budget enforcement.
+package claude
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os/exec"
+	"slices"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/fgmacedo/buchecha/internal/director"
+	"github.com/fgmacedo/buchecha/internal/director/dag"
+	"github.com/fgmacedo/buchecha/internal/executor/claude/streamjson"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+)
+
+// Compile-time checks that *Adapter satisfies the three Director ports.
+var (
+	_ director.Planner  = (*Adapter)(nil)
+	_ director.Briefer  = (*Adapter)(nil)
+	_ director.Reviewer = (*Adapter)(nil)
+)
+
+// ErrBudgetExceeded is returned when claude reports a per-call cost
+// above MaxBudgetUSD. The loop treats this as a fail-closed signal: the
+// affected role escalates rather than the run silently overspending.
+var ErrBudgetExceeded = errors.New("director/claude: per-call budget exceeded")
+
+// ErrMissingAgentID is returned when a Director call arrives without an
+// AgentID populated on the input. The CLI/loop is expected to register
+// the agent with the run-wide registry before invoking the adapter and
+// pass the assigned id back in.
+var ErrMissingAgentID = errors.New("director/claude: missing agent_id on input")
+
+// Config configures the Director Claude adapter.
+type Config struct {
+	// Binary is the path or PATH name of the claude binary.
+	Binary string
+
+	// Model is passed via --model. Empty omits the flag.
+	Model string
+
+	// ExtraArgs are appended to the command line after the protocol
+	// flags and --max-budget-usd, before the prompt positional argument.
+	ExtraArgs []string
+
+	// MaxBudgetUSD, when > 0, is passed to claude as --max-budget-usd
+	// and also enforced on the bcc side: a result event reporting cost
+	// above this cap aborts the call with ErrBudgetExceeded. Zero (the
+	// default) disables both behaviors.
+	MaxBudgetUSD float64
+
+	// Stderr, when non-nil, receives the subprocess stderr verbatim.
+	// Default (nil) discards stderr.
+	Stderr io.Writer
+
+	// CancelGrace is how long to wait after sending SIGINT before
+	// forcing SIGKILL. Defaults to 5 seconds when zero.
+	CancelGrace time.Duration
+
+	// MaxLineBytes caps a single stream-json line. Defaults to 8 MiB
+	// when zero.
+	MaxLineBytes int
+
+	// MCPURL is the http://127.0.0.1:port/mcp endpoint of the run-wide
+	// MCP server. The adapter writes a per-spawn mcp-config pointing at
+	// it with the role's connection name carried in the X-BCC-Role
+	// header. Empty disables the --mcp-config wiring; useful for tests
+	// against fake-claude scripts that do not connect.
+	MCPURL string
+
+	// MCPToken is the bearer token the agent presents in Authorization
+	// for every MCP request. Required when MCPURL is set.
+	MCPToken string
+
+	// now, when non-nil, replaces time.Now in tests for deterministic
+	// stats timing. Always nil in production.
+	now func() time.Time
+}
+
+// Adapter is the Director Claude adapter. A zero-value Adapter is
+// invalid; use New.
+type Adapter struct {
+	cfg Config
+}
+
+// New returns an Adapter with the given config.
+func New(cfg Config) *Adapter {
+	if cfg.CancelGrace == 0 {
+		cfg.CancelGrace = 5 * time.Second
+	}
+	if cfg.MaxLineBytes == 0 {
+		cfg.MaxLineBytes = 8 * 1024 * 1024
+	}
+	if cfg.Binary == "" {
+		cfg.Binary = "claude"
+	}
+	return &Adapter{cfg: cfg}
+}
+
+// planView, briefView, and reviewView are the per-role data the prompt
+// templates render against. They are kept narrow so a future template
+// edit cannot accidentally surface fields the role should not see.
+type planView struct {
+	AgentID  string
+	SpecPath string
+}
+
+type briefView struct {
+	AgentID     string
+	SpecPath    string
+	IterationID string
+	PhaseID     string
+	Attempt     int
+}
+
+type reviewView struct {
+	AgentID  string
+	SpecPath string
+}
+
+// Plan implements director.Planner. It renders the planner prompt, runs
+// claude with the planner connection name, and returns once the agent
+// exits cleanly. The adapter never returns the Plan itself: the agent
+// emits it via bcc_plan_emit, and the run-wide handler stores it.
+// Callers read the Plan from the dag handler/store after Plan returns.
+//
+// events, when non-nil, receives the planner's stream telemetry
+// (thinking, tool calls, assistant text, rate-limit, result summary).
+// The adapter never closes events; the caller owns it.
+func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+	if in.AgentID == "" {
+		return nil, nil, ErrMissingAgentID
+	}
+	prompt, err := composePrompt(director.PlanPromptTemplate(), planView{
+		AgentID:  in.AgentID,
+		SpecPath: in.SpecPath,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("director/claude: compose plan prompt: %w", err)
+	}
+	stats, err := a.runRole(ctx, dag.RolePlanner, prompt, events)
+	return nil, stats, err
+}
+
+// Brief implements director.Briefer. Same shape as Plan: render, run,
+// return. The Briefing lands in the dag handler via bcc_briefing_emit.
+func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+	if in.AgentID == "" {
+		return nil, ErrMissingAgentID
+	}
+	prompt, err := composePrompt(director.BriefPromptTemplate(), briefView{
+		AgentID:     in.AgentID,
+		SpecPath:    in.SpecPath,
+		IterationID: in.IterationID,
+		PhaseID:     in.PhaseID,
+		Attempt:     in.Attempt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)
+	}
+	return a.runRole(ctx, dag.RoleBriefer, prompt, events)
+}
+
+// Review implements director.Reviewer. The Reviewer's work is recorded
+// as DAG mutations (bcc_task_approved / bcc_task_needs_fix) plus a
+// final bcc_review_finished outcome; the handler is the source of
+// truth for the resulting state.
+func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+	if in.AgentID == "" {
+		return nil, ErrMissingAgentID
+	}
+	prompt, err := composePrompt(director.ReviewPromptTemplate(), reviewView{
+		AgentID:  in.AgentID,
+		SpecPath: "",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)
+	}
+	return a.runRole(ctx, dag.RoleReviewer, prompt, events)
+}
+
+// composePrompt expands a role's prompt template with the agentcontract
+// partials and the per-role view data. Pure text; no I/O.
+func composePrompt(promptTpl string, view any) (string, error) {
+	t := agentcontract.Partials()
+	if _, err := t.New("role").Parse(promptTpl); err != nil {
+		return "", fmt.Errorf("parse template: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "role", view); err != nil {
+		return "", fmt.Errorf("render template: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// runRole spawns claude with the Director envelope for the given role
+// and waits for it to exit. The agent emits structured output via MCP;
+// the adapter parses stream-json into agentcontract.AgentEvents,
+// forwards them to events when non-nil, and derives DirectorCallStats
+// from the terminal KindResultSummary so the cost panel and budget
+// check share a single source of truth.
+func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--allowed-tools", "Read,Bash,Grep,Glob",
+		"--dangerously-skip-permissions",
+	}
+
+	if a.cfg.MCPURL != "" {
+		path, cleanup, err := writeMCPConfig(a.cfg.MCPURL, a.cfg.MCPToken, string(role))
+		if err != nil {
+			return nil, fmt.Errorf("director/claude: write mcp-config: %w", err)
+		}
+		defer cleanup()
+		args = append(args, "--mcp-config", path, "--strict-mcp-config")
+	}
+
+	if a.cfg.Model != "" {
+		args = append(args, "--model", a.cfg.Model)
+	}
+	if a.cfg.MaxBudgetUSD > 0 {
+		args = append(args, "--max-budget-usd", strconv.FormatFloat(a.cfg.MaxBudgetUSD, 'f', -1, 64))
+	}
+	args = append(args, a.cfg.ExtraArgs...)
+	args = append(args, prompt)
+
+	cmd := exec.CommandContext(ctx, a.cfg.Binary, args...)
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("director/claude: stdout pipe: %w", err)
+	}
+	if a.cfg.Stderr != nil {
+		cmd.Stderr = a.cfg.Stderr
+	}
+	cmd.Cancel = func() error {
+		return cmd.Process.Signal(syscall.SIGINT)
+	}
+	cmd.WaitDelay = a.cfg.CancelGrace
+
+	start := a.timeNow()
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("director/claude: run %s: %w", a.cfg.Binary, err)
+	}
+
+	var (
+		mu     sync.Mutex
+		stats  director.DirectorCallStats
+		latest *agentcontract.ResultSummaryInfo
+	)
+
+	parseDone := make(chan struct{})
+	go func() {
+		defer close(parseDone)
+		sc := bufio.NewScanner(pipe)
+		sc.Buffer(make([]byte, 64*1024), a.cfg.MaxLineBytes)
+		for sc.Scan() {
+			line := slices.Clone(sc.Bytes())
+			for _, ev := range streamjson.ParseLine(line, a.timeNow()) {
+				if ev.Kind == agentcontract.KindResultSummary && ev.Done != nil {
+					mu.Lock()
+					done := *ev.Done
+					latest = &done
+					mu.Unlock()
+				}
+				if events != nil {
+					select {
+					case events <- ev:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	<-parseDone
+	runErr := cmd.Wait()
+	stats.DurationMS = a.timeNow().Sub(start).Milliseconds()
+
+	if latest != nil {
+		stats.CostUSD = latest.TotalCostUSD
+		stats.InputTokens = latest.InputTokens
+		stats.OutputTokens = latest.OutputTokens
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return &stats, ctxErr
+	}
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			return &stats, fmt.Errorf("director/claude: %s exited %d", a.cfg.Binary, ee.ExitCode())
+		}
+		return &stats, fmt.Errorf("director/claude: run %s: %w", a.cfg.Binary, runErr)
+	}
+
+	if a.cfg.MaxBudgetUSD > 0 && stats.CostUSD > a.cfg.MaxBudgetUSD {
+		return &stats, fmt.Errorf("%w: cost=%.4f cap=%.4f", ErrBudgetExceeded, stats.CostUSD, a.cfg.MaxBudgetUSD)
+	}
+	return &stats, nil
+}
+
+func (a *Adapter) timeNow() time.Time {
+	if a.cfg.now != nil {
+		return a.cfg.now()
+	}
+	return time.Now()
+}

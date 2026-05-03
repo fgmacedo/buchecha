@@ -3,87 +3,9 @@ package loop
 import (
 	"time"
 
+	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
-
-// AgentEventKind classifies a normalized agent event. Adapters translate
-// their native formats (e.g., Claude Code's stream-json subtypes) to one
-// of these kinds before sending on the AgentEvent channel.
-type AgentEventKind string
-
-const (
-	KindInit          AgentEventKind = "init"
-	KindThinking      AgentEventKind = "thinking"
-	KindToolUse       AgentEventKind = "tool_use"
-	KindToolResult    AgentEventKind = "tool_result"
-	KindAssistantText AgentEventKind = "assistant_text"
-	KindRateLimit     AgentEventKind = "rate_limit"
-	KindResultSummary AgentEventKind = "result_summary"
-	// KindBccEvent carries a parsed bcc_event sentinel from the agent's
-	// stdout (canonical wire protocol; see internal/loop/agentcontract).
-	KindBccEvent AgentEventKind = "bcc_event"
-)
-
-// AgentEvent is a normalized event emitted by an Executor adapter. Only
-// the field(s) relevant to the Kind are populated; the rest are zero.
-type AgentEvent struct {
-	Kind AgentEventKind
-	At   time.Time
-
-	Init  *InitInfo               // KindInit
-	Tool  *ToolCallInfo           // KindToolUse, KindToolResult
-	Text  string                  // KindThinking, KindAssistantText
-	Usage *UsageInfo              // KindAssistantText only: per-message token usage
-	Rate  *RateLimitInfo          // KindRateLimit
-	Done  *ResultSummaryInfo      // KindResultSummary
-	Bcc   *agentcontract.BccEvent // KindBccEvent
-}
-
-// UsageInfo carries per-message token usage attached to assistant text
-// events. The four fields sum to the total billable tokens for that
-// message. Cache fields are zero when caching was not involved.
-type UsageInfo struct {
-	InputTokens              int64
-	OutputTokens             int64
-	CacheReadInputTokens     int64
-	CacheCreationInputTokens int64
-}
-
-// InitInfo carries data from a session-init event.
-type InitInfo struct {
-	SessionID string
-	Model     string
-	CWD       string
-}
-
-// ToolCallInfo is shared by tool_use and tool_result events. Args is the
-// raw tool input on tool_use; IsError and Summary apply on tool_result.
-type ToolCallInfo struct {
-	ID      string
-	Name    string
-	Args    map[string]any
-	IsError bool
-	Summary string
-}
-
-// RateLimitInfo carries a rate-limit notification from the agent.
-type RateLimitInfo struct {
-	Status  string
-	ResetAt time.Time
-}
-
-// ResultSummaryInfo carries the agent's per-iteration cost and usage
-// totals (last event of an iteration in stream-json). The four token
-// fields sum to the total billable token count for the iteration.
-type ResultSummaryInfo struct {
-	NumTurns                 int
-	TotalCostUSD             float64
-	InputTokens              int64
-	OutputTokens             int64
-	CacheReadInputTokens     int64
-	CacheCreationInputTokens int64
-	DurationMS               int64
-}
 
 // ExecResult is the result of one Executor.Run.
 type ExecResult struct {
@@ -112,7 +34,7 @@ func (IterationStarted) isLoopEvent() {}
 // AgentEventReceived wraps a single AgentEvent forwarded from the
 // executor onto the loop's events channel.
 type AgentEventReceived struct {
-	Event AgentEvent
+	Event agentcontract.AgentEvent
 }
 
 func (AgentEventReceived) isLoopEvent() {}
@@ -129,6 +51,103 @@ type IterationFinished struct {
 }
 
 func (IterationFinished) isLoopEvent() {}
+
+// PhasePlanned is emitted once at the start of a Director-mode run
+// after the Plan has been confirmed by the user. The Plan pointer is
+// shared (read-only) with the consumer; the loop never mutates it.
+type PhasePlanned struct {
+	Plan *director.Plan
+	At   time.Time
+}
+
+func (PhasePlanned) isLoopEvent() {}
+
+// PhaseBriefed is emitted when the Director's Briefer returned a
+// Briefing for (PhaseID, Attempt) and bcc has materialized the prompt
+// to disk. The Executor is about to run.
+type PhaseBriefed struct {
+	PhaseID  string
+	Attempt  int
+	Briefing *director.Briefing
+	At       time.Time
+}
+
+func (PhaseBriefed) isLoopEvent() {}
+
+// PhaseReviewed is emitted after the Director's Reviewer finished an
+// audit. Outcome is the canonical wire value the Reviewer reported via
+// bcc_review_finished ("approve", "revise", "escalate"); Reasoning
+// carries the Reviewer's prose explanation. PhaseReviewed is now an
+// informational summary derived from per-task DAG state plus the
+// review outcome; the canonical per-task transitions are emitted as
+// TaskApproved / TaskNeedsFix events.
+type PhaseReviewed struct {
+	PhaseID   string
+	Attempt   int
+	Outcome   string
+	Reasoning string
+	At        time.Time
+}
+
+func (PhaseReviewed) isLoopEvent() {}
+
+// TaskStarted is emitted when an Executor or Planner reports a task
+// transition to in_progress through bcc_task_started. The "planning"
+// task uses the well-known PlanningTaskID.
+type TaskStarted struct {
+	PhaseID string
+	TaskID  string
+	At      time.Time
+}
+
+func (TaskStarted) isLoopEvent() {}
+
+// TaskCompleted is emitted when the Executor (or Planner for the
+// planning task) reports a task transition to done through
+// bcc_task_completed.
+type TaskCompleted struct {
+	PhaseID string
+	TaskID  string
+	At      time.Time
+}
+
+func (TaskCompleted) isLoopEvent() {}
+
+// TaskApproved is emitted when the Reviewer marks a task done through
+// bcc_task_approved.
+type TaskApproved struct {
+	PhaseID string
+	TaskID  string
+	At      time.Time
+}
+
+func (TaskApproved) isLoopEvent() {}
+
+// TaskNeedsFix is emitted when the Reviewer marks a task needs_fix
+// through bcc_task_needs_fix; Note carries the Reviewer's per-task
+// feedback when supplied.
+type TaskNeedsFix struct {
+	PhaseID string
+	TaskID  string
+	Note    string
+	At      time.Time
+}
+
+func (TaskNeedsFix) isLoopEvent() {}
+
+// DirectorEscalation is emitted when the decider returned Escalate. The
+// loop pauses on the EscalationGate channel waiting for an
+// EscalationReply (Resume / ForceApprove / Skip / Abort). Reasoning
+// carries the Reviewer's explanation so the renderer can surface it to
+// the user.
+type DirectorEscalation struct {
+	PhaseID   string
+	Attempt   int
+	Reasoning string
+	At        time.Time
+}
+
+func (DirectorEscalation) isLoopEvent() {}
 
 // LoopFinished marks the terminal state of the loop. Always the last
 // event before the events channel is closed.

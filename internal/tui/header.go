@@ -38,14 +38,21 @@ func (h *header) onAny(at time.Time) {
 }
 
 // titleText is the string the box wrapper embeds in the header's top
-// border per the dashboard mockup: branch, iter n/N, elapsed.
+// border per the dashboard mockup: branch, iter n/N, elapsed. Before
+// the first iteration starts (iter == 0) the iteration counter is
+// replaced with "planning..." so the user sees activity from t=0 in
+// Director mode rather than a misleading "iter 0/N".
 func (h header) titleText(now time.Time) string {
 	elapsed := "0s"
 	if !h.startedAt.IsZero() {
 		elapsed = formatDuration(now.Sub(h.startedAt))
 	}
-	return fmt.Sprintf("bcc %s  iter %d/%d  %s",
-		trimEmpty(h.branch), h.iter, h.maxIter, elapsed)
+	stage := fmt.Sprintf("iter %d/%d", h.iter, h.maxIter)
+	if h.iter == 0 {
+		stage = "planning..."
+	}
+	return fmt.Sprintf("bcc %s  %s  %s",
+		trimEmpty(h.branch), stage, elapsed)
 }
 
 // view renders the header body line: spec path, alive dot, and the

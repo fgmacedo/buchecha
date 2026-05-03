@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
@@ -19,46 +18,29 @@ func TestRisk_view_BeforeAnyEvent_RendersUnknowns(t *testing.T) {
 	}
 }
 
-func TestRisk_onBccEvent_AccumulatesTaskCounts(t *testing.T) {
+func TestRisk_onTaskCounts_AccumulatesAcrossIters(t *testing.T) {
 	r := riskPanel{}
-	r.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskStarted})
-	r.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskStarted})
-	r.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskCompleted})
+	r.onTaskStarted()
+	r.onTaskStarted()
+	r.onTaskCompleted()
 	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "tasks completed: 1/2") {
 		t.Errorf("expected '1/2' in view: %q", out)
 	}
 }
 
-func TestRisk_onBccEvent_IterationResult(t *testing.T) {
+func TestRisk_onIterFinished_LatchesSignal(t *testing.T) {
 	r := riskPanel{currentIter: 1}
-	r.onBccEvent(agentcontract.BccEvent{
-		Kind:   agentcontract.BccEventIterationResult,
-		Signal: agentcontract.SignalDone,
-		Raw:    map[string]any{"value": "done"},
-	})
+	r.onIterFinished(agentcontract.SignalDone)
 	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "signal: done") {
 		t.Errorf("expected 'signal: done' in view: %q", out)
 	}
 }
 
-func TestRisk_onBccEvent_UnknownSignalSurfacesRaw(t *testing.T) {
-	r := riskPanel{currentIter: 1}
-	r.onBccEvent(agentcontract.BccEvent{
-		Kind:   agentcontract.BccEventIterationResult,
-		Signal: agentcontract.SignalUnknown,
-		Raw:    map[string]any{"value": "weird"},
-	})
-	out := r.view(time.Now(), 80)
-	if !strings.Contains(out, `"weird" (unknown)`) {
-		t.Errorf("expected raw value in view: %q", out)
-	}
-}
-
 func TestRisk_onIterStarted_ClearsSignal(t *testing.T) {
 	r := riskPanel{}
-	r.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventIterationResult, Signal: agentcontract.SignalDone, Raw: map[string]any{"value": "done"}})
+	r.onIterFinished(agentcontract.SignalDone)
 	r.onIterStarted(2)
 	out := r.view(time.Now(), 80)
 	if !strings.Contains(out, "not yet emitted") {
@@ -88,9 +70,9 @@ func TestRisk_onAgentEvent_TracksLastEdit(t *testing.T) {
 	r := riskPanel{}
 	r.onDirtyFileCount(2)
 	when := time.Now()
-	r.onAgentEvent(loop.AgentEvent{
-		Kind: loop.KindToolUse, At: when,
-		Tool: &loop.ToolCallInfo{Name: "Edit"},
+	r.onAgentEvent(agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse, At: when,
+		Tool: &agentcontract.ToolCallInfo{Name: "Edit"},
 	})
 	out := r.view(when.Add(time.Second), 80)
 	if !strings.Contains(out, "last edit") {

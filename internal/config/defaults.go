@@ -63,6 +63,17 @@ func ApplyDefaults(c *Config) {
 	if len(c.Env.Files) == 0 {
 		c.Env.Files = []string{".env"}
 	}
+
+	// Director defaults. RetryBudget=2 matches the spec; the Claude
+	// binary defaults to PATH lookup. Enabled defaults to true: the
+	// Director path is the standard loop. Opt out via TOML
+	// (`enabled = false`) or the --no-director CLI flag.
+	if c.Director.RetryBudget == 0 {
+		c.Director.RetryBudget = 2
+	}
+	if c.Director.Claude.Binary == "" {
+		c.Director.Claude.Binary = "claude"
+	}
 }
 
 func applyDefaultsEn(c *Config) {

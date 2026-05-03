@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_briefing_emit",
+  "description": "Briefer emits the per-iteration Briefing. The handler validates that phase_id is eligible, that every sub_dag_task_ids entry is pending or needs_fix within phase_id, and that intra-phase deps in the sub-DAG are satisfied or also in the slice.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "briefing"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 },
+    "briefing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase_id", "sub_dag_task_ids", "instructions"],
+      "properties": {
+        "iteration_id": { "type": "string" },
+        "phase_id": { "type": "string", "minLength": 1 },
+        "sub_dag_task_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "instructions": { "type": "string" },
+        "spec_path": { "type": "string" },
+        "prior_feedback": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

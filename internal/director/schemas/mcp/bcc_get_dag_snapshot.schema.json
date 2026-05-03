@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_get_dag_snapshot",
+  "description": "Briefer or Reviewer queries the live DAG state. The Briefer sees the full plan; Executors and Reviewers see only the slice scoped to their registered phase.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 }
+  }
+}

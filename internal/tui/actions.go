@@ -1,12 +1,11 @@
 package tui
 
 import (
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/viewport"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 // actionsPanel renders a tail of the most recent tool calls, one line
@@ -31,7 +30,7 @@ const (
 
 type actionEntry struct {
 	at   time.Time
-	tool loop.ToolCallInfo
+	tool agentcontract.ToolCallInfo
 }
 
 // newActionsPanel wires the viewport with mouse wheel scrolling enabled
@@ -69,8 +68,8 @@ func (a *actionsPanel) SetSize(width, height int) {
 // content is newest-first, so after each push the viewport snaps to the
 // top so the freshest action is visible without a scroll; older entries
 // are reachable by scrolling down (mouse wheel or arrow keys).
-func (a *actionsPanel) onAgentEvent(ev loop.AgentEvent) {
-	if ev.Kind != loop.KindToolUse || ev.Tool == nil {
+func (a *actionsPanel) onAgentEvent(ev agentcontract.AgentEvent) {
+	if ev.Kind != agentcontract.KindToolUse || ev.Tool == nil {
 		return
 	}
 	at := ev.At

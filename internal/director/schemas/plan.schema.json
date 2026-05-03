@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/director/plan.schema.json",
+  "title": "Plan",
+  "description": "The Director's planning output: goal, criteria, and the two-level DAG of phases and tasks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal", "success_criteria", "phases", "spec_hash", "planned_at"],
+  "properties": {
+    "goal": { "type": "string", "minLength": 1 },
+    "success_criteria": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/phase" }
+    },
+    "spec_hash": { "type": "string", "minLength": 1 },
+    "planned_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "intent", "tasks"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "minLength": 1 },
+        "intent": { "type": "string", "minLength": 1 },
+        "depends_on": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "parallelizable": { "type": "boolean" },
+        "priority": { "type": "integer" },
+        "scope_in": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "scope_out": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/task" }
+        },
+        "executor_assignment": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/executorAssignment" }
+          ]
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "intent", "acceptance", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "intent": { "type": "string", "minLength": 1 },
+        "depends_on": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        },
+        "priority": { "type": "integer" },
+        "acceptance": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/acceptanceItem" }
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "done", "needs_fix"]
+        },
+        "retry_budget": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "acceptanceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "evidence"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "string",
+          "enum": ["diff", "test", "build", "manual"]
+        }
+      }
+    },
+    "executorAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "family": { "type": "string" },
+        "model": { "type": "string" },
+        "effort": { "type": "string" }
+      }
+    }
+  }
+}

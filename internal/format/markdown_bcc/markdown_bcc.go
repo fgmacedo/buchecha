@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
@@ -67,6 +68,13 @@ type Config struct {
 	// MaxIterations is the loop's iteration cap; rendered into the
 	// contract so the agent can self-check.
 	MaxIterations int
+
+	// DirectorEnabled flips the loop-mode procedure to instruct the
+	// agent to mark end of phase with `value=review` (so the Director's
+	// Reviewer can audit each phase) instead of `value=continue`. The
+	// cli boundary sets this when [director].enabled is on. The flag is
+	// inert in single-shot mode and outside Director runs.
+	DirectorEnabled bool
 }
 
 // Reader is the bcc-markdown format adapter. Construct with New.
@@ -96,15 +104,27 @@ var _ loop.AgentBriefing = (*Reader)(nil)
 // execution time. Keeps the template's field surface stable even if
 // loop.BriefingInput changes.
 type templateData struct {
-	SpecPath       string
-	Iteration      int
-	MaxIterations  int
-	Mode           string
-	Extra          string
-	PlanHeading    string
-	JournalHeading string
-	JournalStore   string
-	JournalPath    string
+	SpecPath        string
+	Iteration       int
+	MaxIterations   int
+	Mode            string
+	Extra           string
+	PlanHeading     string
+	JournalHeading  string
+	JournalStore    string
+	JournalPath     string
+	DirectorEnabled bool
+}
+
+// JournalDelta returns the text appended to the spec's Execution
+// Journal section between the before and after spec snapshots. The
+// adapter delegates to director.GatherJournalDelta, the canonical
+// helper that pins the markdown_bcc journal heading. This satisfies
+// dag.JournalDeltaProvider; bcc wires the markdown_bcc adapter into
+// the run-wide MCP handler so bcc_get_journal_delta resolves through
+// the active spec format.
+func (r *Reader) JournalDelta(before, after []byte) string {
+	return director.GatherJournalDelta(before, after)
 }
 
 // BuildPrompt renders the embedded contract.md template (composed with
@@ -115,15 +135,16 @@ func (r *Reader) BuildPrompt(_ context.Context, in loop.BriefingInput) (string, 
 		mode = "single-shot"
 	}
 	data := templateData{
-		SpecPath:       in.SpecPath,
-		Iteration:      in.Iteration,
-		MaxIterations:  r.cfg.MaxIterations,
-		Mode:           mode,
-		Extra:          in.Extra,
-		PlanHeading:    r.cfg.PlanHeading,
-		JournalHeading: r.cfg.JournalHeading,
-		JournalStore:   r.cfg.JournalStore,
-		JournalPath:    r.cfg.JournalPath,
+		SpecPath:        in.SpecPath,
+		Iteration:       in.Iteration,
+		MaxIterations:   r.cfg.MaxIterations,
+		Mode:            mode,
+		Extra:           in.Extra,
+		PlanHeading:     r.cfg.PlanHeading,
+		JournalHeading:  r.cfg.JournalHeading,
+		JournalStore:    r.cfg.JournalStore,
+		JournalPath:     r.cfg.JournalPath,
+		DirectorEnabled: r.cfg.DirectorEnabled,
 	}
 	var buf bytes.Buffer
 	if err := contractT.ExecuteTemplate(&buf, "contract", data); err != nil {

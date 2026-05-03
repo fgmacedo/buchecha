@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"errors"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,10 +31,10 @@ func echoArgsOut(t *testing.T) string {
 	return path
 }
 
-func collectEvents(t *testing.T, e *Executor, prompt string) (loop.ExecResult, []loop.AgentEvent, error) {
+func collectEvents(t *testing.T, e *Executor, prompt string) (loop.ExecResult, []agentcontract.AgentEvent, error) {
 	t.Helper()
-	events := make(chan loop.AgentEvent, 64)
-	var got []loop.AgentEvent
+	events := make(chan agentcontract.AgentEvent, 64)
+	var got []agentcontract.AgentEvent
 	drained := make(chan struct{})
 	go func() {
 		defer close(drained)
@@ -56,10 +57,10 @@ func TestRun_StreamsEvents(t *testing.T) {
 	if res.ExitCode != 0 {
 		t.Errorf("exit code = %d, want 0", res.ExitCode)
 	}
-	wantKinds := []loop.AgentEventKind{
-		loop.KindInit,
-		loop.KindAssistantText,
-		loop.KindResultSummary,
+	wantKinds := []agentcontract.AgentEventKind{
+		agentcontract.KindInit,
+		agentcontract.KindAssistantText,
+		agentcontract.KindResultSummary,
 	}
 	if len(got) != len(wantKinds) {
 		t.Fatalf("event count = %d, want %d:\n got=%+v", len(got), len(wantKinds), got)
@@ -81,14 +82,14 @@ func TestRun_PropagatesNonZeroExit(t *testing.T) {
 		t.Errorf("exit code = %d, want 7", res.ExitCode)
 	}
 	// Partial stdout before exit must still be parsed and forwarded.
-	if len(got) == 0 || got[0].Kind != loop.KindInit {
+	if len(got) == 0 || got[0].Kind != agentcontract.KindInit {
 		t.Errorf("partial stream lost; got=%+v", got)
 	}
 }
 
 func TestRun_BinaryNotFound(t *testing.T) {
 	e := New(Config{Binary: "/nonexistent/binary"})
-	events := make(chan loop.AgentEvent, 4)
+	events := make(chan agentcontract.AgentEvent, 4)
 	_, err := e.Run(context.Background(), "x", events)
 	if err == nil {
 		t.Errorf("expected error for missing binary")
@@ -100,7 +101,7 @@ func TestRun_ContextCancelInterrupts(t *testing.T) {
 		Binary:      fixture(t, "fake-claude-slow.sh"),
 		CancelGrace: 1 * time.Second,
 	})
-	events := make(chan loop.AgentEvent, 4)
+	events := make(chan agentcontract.AgentEvent, 4)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
@@ -116,10 +117,13 @@ func TestRun_ContextCancelInterrupts(t *testing.T) {
 func TestRun_PromptIsLastArg(t *testing.T) {
 	argsPath := echoArgsOut(t)
 	e := New(Config{
-		Binary:          fixture(t, "fake-claude-echo-args.sh"),
-		Model:           "test-model",
-		ExtraArgs:       []string{"--foo", "--bar"},
-		SkipPermissions: true,
+		Binary:            fixture(t, "fake-claude-echo-args.sh"),
+		Model:             "test-model",
+		ExtraArgs:         []string{"--foo", "--bar"},
+		SkipPermissions:   true,
+		MCPURL:            "http://127.0.0.1:1/mcp",
+		MCPToken:          "deadbeef",
+		MCPConnectionName: "bcc-executor",
 	})
 	if _, _, err := collectEvents(t, e, "the prompt"); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -131,6 +135,28 @@ func TestRun_PromptIsLastArg(t *testing.T) {
 	trimmed := strings.TrimRight(string(out), "\n")
 	lines := strings.Split(trimmed, "\n")
 
+	// --mcp-config carries a temp path generated per Run; assert its
+	// presence and shape, then strip it before checking the rest of
+	// the args verbatim.
+	mcpIdx := -1
+	for i, arg := range lines {
+		if arg == "--mcp-config" {
+			mcpIdx = i
+			break
+		}
+	}
+	if mcpIdx < 0 {
+		t.Fatalf("--mcp-config missing from args: %q", lines)
+	}
+	if mcpIdx+1 >= len(lines) || !strings.HasSuffix(lines[mcpIdx+1], "/mcp-config.json") {
+		t.Errorf("arg after --mcp-config = %q, want path ending in /mcp-config.json", lines[mcpIdx+1])
+	}
+	if mcpIdx+2 >= len(lines) || lines[mcpIdx+2] != "--strict-mcp-config" {
+		t.Errorf("--strict-mcp-config should follow --mcp-config <path>, got %q", lines[mcpIdx+2:])
+	}
+	stripped := append([]string{}, lines[:mcpIdx]...)
+	stripped = append(stripped, lines[mcpIdx+3:]...)
+
 	want := []string{
 		"-p", "--output-format", "stream-json", "--verbose",
 		"--dangerously-skip-permissions",
@@ -138,13 +164,73 @@ func TestRun_PromptIsLastArg(t *testing.T) {
 		"--foo", "--bar",
 		"the prompt",
 	}
-	if len(lines) != len(want) {
-		t.Fatalf("got %d args, want %d (output=%q)", len(lines), len(want), out)
+	if len(stripped) != len(want) {
+		t.Fatalf("got %d args (after strip), want %d (output=%q)", len(stripped), len(want), out)
 	}
 	for i := range want {
-		if lines[i] != want[i] {
-			t.Errorf("arg[%d] = %q, want %q", i, lines[i], want[i])
+		if stripped[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, stripped[i], want[i])
 		}
+	}
+}
+
+// TestRun_SystemPromptFile_OmitsPositional pins the Director-mode
+// contract: when Config.SystemPromptFile is set, the adapter passes
+// --system-prompt-file <path> and drops the positional prompt
+// argument entirely (the briefing replaces the inline prompt). The
+// prompt parameter passed to Run is ignored.
+func TestRun_SystemPromptFile_OmitsPositional(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	briefingPath := filepath.Join(t.TempDir(), "briefing.prompt.md")
+	if err := os.WriteFile(briefingPath, []byte("# briefing\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := New(Config{
+		Binary:           fixture(t, "fake-claude-echo-args.sh"),
+		SystemPromptFile: briefingPath,
+	})
+	if _, _, err := collectEvents(t, e, "ignored prompt"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	out, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read argv: %v", err)
+	}
+	args := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	flagIdx := -1
+	for i, a := range args {
+		if a == "--system-prompt-file" {
+			flagIdx = i
+			break
+		}
+	}
+	if flagIdx < 0 {
+		t.Fatalf("--system-prompt-file missing from args: %q", args)
+	}
+	if flagIdx+1 >= len(args) || args[flagIdx+1] != briefingPath {
+		t.Errorf("arg after --system-prompt-file = %q, want %q", args[flagIdx+1], briefingPath)
+	}
+	for _, a := range args {
+		if a == "ignored prompt" {
+			t.Errorf("positional prompt should be omitted when SystemPromptFile is set; got args %q", args)
+		}
+	}
+}
+
+// TestRun_OmitsMCPConfigWhenURLEmpty verifies the test-friendly default:
+// without an MCPURL the adapter omits the --mcp-config flags so fake
+// scripts that do not implement MCP can still drive the executor.
+func TestRun_OmitsMCPConfigWhenURLEmpty(t *testing.T) {
+	argsPath := echoArgsOut(t)
+	e := New(Config{
+		Binary: fixture(t, "fake-claude-echo-args.sh"),
+	})
+	if _, _, err := collectEvents(t, e, "p"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	out, _ := os.ReadFile(argsPath)
+	if strings.Contains(string(out), "--mcp-config") || strings.Contains(string(out), "--strict-mcp-config") {
+		t.Errorf("MCP flags should be absent when MCPURL is empty: %q", out)
 	}
 }
 
@@ -200,16 +286,26 @@ func TestRun_StreamsEventsFromFixture(t *testing.T) {
 		t.Errorf("exit = %d, want 0", res.ExitCode)
 	}
 
-	wantKinds := []loop.AgentEventKind{
-		loop.KindInit,
-		loop.KindRateLimit,
-		loop.KindThinking,
-		loop.KindToolUse,
-		loop.KindToolResult,
-		loop.KindToolUse,
-		loop.KindToolResult,
-		loop.KindAssistantText,
-		loop.KindResultSummary,
+	// Mirrors testdata/full-iter.jsonl: every tool_use envelope (now
+	// uniformly KindToolUse since legacy wire routing is gone) is
+	// followed by its tool_result envelope, plus init / rate_limit /
+	// thinking / assistant_text framing and the terminal result.
+	wantKinds := []agentcontract.AgentEventKind{
+		agentcontract.KindInit,
+		agentcontract.KindRateLimit,
+		agentcontract.KindThinking,
+		agentcontract.KindToolUse,
+		agentcontract.KindToolResult,
+		agentcontract.KindToolUse,
+		agentcontract.KindToolResult,
+		agentcontract.KindToolUse,
+		agentcontract.KindToolResult,
+		agentcontract.KindToolUse,
+		agentcontract.KindToolResult,
+		agentcontract.KindAssistantText,
+		agentcontract.KindToolUse,
+		agentcontract.KindToolResult,
+		agentcontract.KindResultSummary,
 	}
 	if len(got) != len(wantKinds) {
 		t.Fatalf("event count = %d, want %d:\n got=%+v", len(got), len(wantKinds), got)

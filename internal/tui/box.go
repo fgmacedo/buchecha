@@ -34,14 +34,9 @@ func box(title, body string, width int) string {
 		return plainBox(title, body, width)
 	}
 
-	inner := width - 2
-	if inner < 1 {
-		inner = 1
-	}
-
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		Width(inner)
+		Width(width)
 	rendered := style.Render(body)
 
 	if title == "" {

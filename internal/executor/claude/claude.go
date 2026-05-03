@@ -1,23 +1,32 @@
 // Package claude implements loop.Executor for Claude Code (claude CLI in
 // print mode with stream-json output).
 //
-// This is the only adapter today; codex and gemini will be added in
-// Phase 3 as sibling packages under internal/executor.
+// MCP wiring is supplied externally: the run boot starts a single
+// internal/mcp server with the dag.Handler attached, and passes the URL,
+// bearer token, connection name, and per-spawn agent_id to the adapter
+// via Config. The adapter writes a per-spawn mcp-config that points the
+// agent at that server with the role's connection name carried in the
+// X-BCC-Role header.
+//
+// The stream-json `tool_use` parser remains in place so the TUI and
+// loop see agent activity in real time; per the migration spec the
+// MCP handler is the protocol of record from P3 onward.
 package claude
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/fgmacedo/buchecha/internal/executor/claude/streamjson"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
@@ -33,8 +42,9 @@ type Config struct {
 	// Model is passed via --model. Empty omits the flag.
 	Model string
 
-	// ExtraArgs are appended to the command line after --model and before
-	// the prompt positional argument. Reserve for ad-hoc additions.
+	// ExtraArgs are appended to the command line after the protocol
+	// flags, MCP wiring, --model, and before the prompt positional
+	// argument. Reserve for ad-hoc additions.
 	ExtraArgs []string
 
 	// SkipPermissions, when true, adds --dangerously-skip-permissions to
@@ -43,6 +53,15 @@ type Config struct {
 	// When false (explicit user opt-out via .bcc.toml), the loop is
 	// likely to hang on the first tool call; the user accepts that.
 	SkipPermissions bool
+
+	// SystemPromptFile, when non-empty, points to a file whose contents
+	// claude loads as the system prompt via --system-prompt-file. Used by
+	// Director-driven runs where the per-phase Briefing is materialized
+	// to disk and replaces the inline prompt. When set, the positional
+	// prompt argument is omitted from the command line; the prompt
+	// parameter passed to Run is ignored. Default empty preserves the
+	// MVP behavior of passing the prompt inline.
+	SystemPromptFile string
 
 	// Stderr, when non-nil, receives the subprocess stderr verbatim.
 	// Default (nil) discards stderr; callers wanting it should pipe to a
@@ -58,6 +77,29 @@ type Config struct {
 	// the default 64 KiB buffer of bufio.Scanner; oversize lines are
 	// truncated and skipped rather than aborting the iteration.
 	MaxLineBytes int
+
+	// MCPURL is the http://127.0.0.1:port/mcp endpoint of the run-wide
+	// MCP server. When empty, the adapter omits the --mcp-config wiring
+	// entirely; useful for tests against fake-claude scripts that never
+	// connect.
+	MCPURL string
+
+	// MCPToken is the bearer token the agent must present in
+	// Authorization for every MCP request. Required when MCPURL is set.
+	MCPToken string
+
+	// MCPConnectionName names the role the agent is acting as on this
+	// invocation: bcc-executor for ordinary work, bcc-planner for the
+	// planning task, etc. The handler checks this against the
+	// allowed-roles set per method.
+	MCPConnectionName string
+
+	// AgentID is the opaque per-spawn identifier the registry assigned
+	// for this invocation. The adapter does not embed it in the
+	// command line; it is the caller's responsibility to carry it into
+	// the prompt or system prompt so the agent passes it back on every
+	// MCP method call. Recorded here for symmetry with the role.
+	AgentID string
 }
 
 // Executor invokes Claude Code in print mode and streams its stream-json
@@ -79,7 +121,7 @@ func New(cfg Config) *Executor {
 
 // Run invokes the binary with print mode and stream-json output. For
 // each line emitted on stdout the adapter parses it into zero or more
-// loop.AgentEvents and forwards each event on the events channel.
+// agentcontract.AgentEvents and forwards each event on the events channel.
 //
 // On context cancellation the subprocess receives SIGINT first; if it
 // fails to exit within CancelGrace it is killed via SIGKILL (handled by
@@ -90,15 +132,35 @@ func New(cfg Config) *Executor {
 // normal control-flow signal, not a Run failure). Returns (ExecResult,
 // ctx.Err()) on cancellation. Returns (ExecResult{ExitCode: -1}, err)
 // on invocation failure (binary missing, pipe setup error).
-func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.AgentEvent) (loop.ExecResult, error) {
-	// -p, --output-format stream-json, and --verbose are required for
-	// the loop to function (line-by-line JSONL events). They are not
-	// configurable.
+func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 	}
+
+	// MCP wiring: when the run boot supplied an MCP URL, write a
+	// per-spawn mcp-config pointing the agent at it with the role's
+	// connection name carried via the X-BCC-Role header. The handler
+	// (internal/director/dag) is the protocol of record; the
+	// stream-json tool_use parser below stays in place for the TUI.
+	if e.cfg.MCPURL != "" {
+		path, cleanup, err := writeMCPConfig(e.cfg.MCPURL, e.cfg.MCPToken, e.cfg.MCPConnectionName)
+		if err != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("mcp-config write: %w", err)
+		}
+		defer cleanup()
+		args = append(args, "--mcp-config", path, "--strict-mcp-config")
+	}
+
+	// --system-prompt-file replaces the inline prompt under the
+	// Director: the briefing renderer materializes the per-phase prompt
+	// to disk and points the executor at it. When set the positional
+	// prompt is omitted; the loop's prompt argument is ignored.
+	if e.cfg.SystemPromptFile != "" {
+		args = append(args, "--system-prompt-file", e.cfg.SystemPromptFile)
+	}
+
 	// --dangerously-skip-permissions is the precondition for autonomous
 	// mode; without it claude prompts on every tool use. Users who set
 	// skip_permissions=false in .bcc.toml accept that the loop will
@@ -110,7 +172,9 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 		args = append(args, "--model", e.cfg.Model)
 	}
 	args = append(args, e.cfg.ExtraArgs...)
-	args = append(args, prompt)
+	if e.cfg.SystemPromptFile == "" {
+		args = append(args, prompt)
+	}
 
 	cmd := exec.CommandContext(ctx, e.cfg.Binary, args...)
 	pipe, err := cmd.StdoutPipe()
@@ -131,13 +195,13 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 	}
 
 	// Drain the stdout pipe in a goroutine. The pipe EOFs naturally when
-	// the subprocess exits; on cancel, the streamLines loop exits early
-	// via ctx.Done so a slow consumer never blocks the cmd.Wait below.
+	// the subprocess exits; on cancel, streamjson.Stream exits early via
+	// ctx.Done so a slow consumer never blocks the cmd.Wait below.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamLines(ctx, pipe, events, e.cfg.MaxLineBytes)
+		streamjson.Stream(ctx, pipe, events, e.cfg.MaxLineBytes)
 	}()
 
 	// Per Cmd.StdoutPipe doc: callers must finish reading before Wait.
@@ -165,288 +229,41 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- loop.Ag
 	return loop.ExecResult{ExitCode: -1}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
 }
 
-// streamLines reads stream-json from r line by line, parses each line
-// into zero or more AgentEvents, and forwards each event on the events
-// channel. Returns when r EOFs or ctx is done.
-func streamLines(ctx context.Context, r io.Reader, events chan<- loop.AgentEvent, maxLine int) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), maxLine)
-	for sc.Scan() {
-		// Scanner.Bytes is reused across Scan calls; copy before forwarding.
-		raw := append([]byte(nil), sc.Bytes()...)
-		for _, ev := range parseLine(raw, time.Now()) {
-			select {
-			case events <- ev:
-			case <-ctx.Done():
-				return
-			}
-		}
+// writeMCPConfig persists a one-off mcp-config JSON pointing at the
+// run-wide MCP server. The bearer token authenticates the connection;
+// X-BCC-Role declares the role the agent is acting as so the handler's
+// per-method allow-list can authorize each call. The file is created
+// mode 0o600 in os.MkdirTemp; cleanup removes the directory.
+func writeMCPConfig(url, token, connectionName string) (path string, cleanup func(), err error) {
+	if connectionName == "" {
+		return "", nil, errors.New("mcp-config: empty connection name")
 	}
-}
-
-// parseLine turns one stream-json line into zero or more normalized
-// AgentEvents. Unknown top-level types are silently dropped: the wire
-// format evolves and unknown events do not block iteration.
-//
-// `at` is stamped onto every produced event; callers pass time.Now()
-// when reading off the live pipe and a fixed time in tests.
-func parseLine(raw []byte, at time.Time) []loop.AgentEvent {
-	var head struct {
-		Type string `json:"type"`
+	dir, err := os.MkdirTemp("", "bcc-mcp-")
+	if err != nil {
+		return "", nil, err
 	}
-	if err := json.Unmarshal(raw, &head); err != nil {
-		return nil
-	}
-	switch head.Type {
-	case "system":
-		return parseSystem(raw, at)
-	case "assistant":
-		return parseAssistant(raw, at)
-	case "user":
-		return parseUser(raw, at)
-	case "rate_limit_event":
-		return parseRateLimit(raw, at)
-	case "result":
-		return parseResult(raw, at)
-	case "bcc_event":
-		return parseBccEvent(raw, at)
-	default:
-		return nil
-	}
-}
-
-// parseBccEvent recognizes the canonical bcc wire-protocol sentinel and
-// forwards a normalized BccEvent on the loop's event channel. The wire
-// protocol is format-agnostic, so the parsing lives in agentcontract;
-// this function is just the executor-side hook.
-func parseBccEvent(raw []byte, at time.Time) []loop.AgentEvent {
-	bcc, ok := agentcontract.ParseLine(raw)
-	if !ok {
-		return nil
-	}
-	return []loop.AgentEvent{{
-		Kind: loop.KindBccEvent,
-		At:   at,
-		Bcc:  &bcc,
-	}}
-}
-
-func parseSystem(raw []byte, at time.Time) []loop.AgentEvent {
-	var v struct {
-		Subtype   string `json:"subtype"`
-		SessionID string `json:"session_id"`
-		Model     string `json:"model"`
-		CWD       string `json:"cwd"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil || v.Subtype != "init" {
-		return nil
-	}
-	return []loop.AgentEvent{{
-		Kind: loop.KindInit,
-		At:   at,
-		Init: &loop.InitInfo{SessionID: v.SessionID, Model: v.Model, CWD: v.CWD},
-	}}
-}
-
-// assistantContent matches each item of message.content on assistant
-// events. Fields not relevant to a given subtype stay at zero.
-type assistantContent struct {
-	Type     string         `json:"type"`
-	Text     string         `json:"text"`
-	Thinking string         `json:"thinking"`
-	ID       string         `json:"id"`
-	Name     string         `json:"name"`
-	Input    map[string]any `json:"input"`
-}
-
-func parseAssistant(raw []byte, at time.Time) []loop.AgentEvent {
-	var v struct {
-		Message struct {
-			Content []assistantContent `json:"content"`
-			Usage   struct {
-				InputTokens              int64 `json:"input_tokens"`
-				OutputTokens             int64 `json:"output_tokens"`
-				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-			} `json:"usage"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil
-	}
-	out := make([]loop.AgentEvent, 0, len(v.Message.Content))
-	for _, c := range v.Message.Content {
-		switch c.Type {
-		case "text":
-			if strings.TrimSpace(c.Text) == "" {
-				continue
-			}
-			out = append(out, loop.AgentEvent{
-				Kind: loop.KindAssistantText,
-				At:   at,
-				Text: c.Text,
-			})
-		case "thinking":
-			// Empty `thinking` strings appear when the assistant omits
-			// reasoning but keeps the encrypted signature; skip them.
-			if strings.TrimSpace(c.Thinking) == "" {
-				continue
-			}
-			out = append(out, loop.AgentEvent{
-				Kind: loop.KindThinking,
-				At:   at,
-				Text: c.Thinking,
-			})
-		case "tool_use":
-			out = append(out, loop.AgentEvent{
-				Kind: loop.KindToolUse,
-				At:   at,
-				Tool: &loop.ToolCallInfo{ID: c.ID, Name: c.Name, Args: c.Input},
-			})
-		}
-	}
-	// Attach the per-message usage to the first KindAssistantText event.
-	// The usage block covers the whole message; attaching it to the text
-	// event (the natural carrier) lets the health panel accumulate tokens
-	// incrementally without waiting for the terminal result event.
-	// Messages that produce no text event (tool-only turns) contribute
-	// tokens only at iteration end via KindResultSummary reconciliation.
-	u := v.Message.Usage
-	if u.InputTokens+u.OutputTokens+u.CacheReadInputTokens+u.CacheCreationInputTokens > 0 {
-		for i := range out {
-			if out[i].Kind == loop.KindAssistantText {
-				out[i].Usage = &loop.UsageInfo{
-					InputTokens:              u.InputTokens,
-					OutputTokens:             u.OutputTokens,
-					CacheReadInputTokens:     u.CacheReadInputTokens,
-					CacheCreationInputTokens: u.CacheCreationInputTokens,
-				}
-				break
-			}
-		}
-	}
-	return out
-}
-
-func parseUser(raw []byte, at time.Time) []loop.AgentEvent {
-	// user.message.content is either a plain string (the agent's own
-	// follow-up text, which the adapter ignores) or an array carrying
-	// tool_result blocks; only the array form contributes events.
-	var v struct {
-		Message struct {
-			Content json.RawMessage `json:"content"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil
-	}
-	var items []json.RawMessage
-	if err := json.Unmarshal(v.Message.Content, &items); err != nil {
-		return nil
-	}
-	var out []loop.AgentEvent
-	for _, item := range items {
-		var tr struct {
-			Type      string          `json:"type"`
-			ToolUseID string          `json:"tool_use_id"`
-			IsError   bool            `json:"is_error"`
-			Content   json.RawMessage `json:"content"`
-		}
-		if err := json.Unmarshal(item, &tr); err != nil || tr.Type != "tool_result" {
-			continue
-		}
-		out = append(out, loop.AgentEvent{
-			Kind: loop.KindToolResult,
-			At:   at,
-			Tool: &loop.ToolCallInfo{
-				ID:      tr.ToolUseID,
-				IsError: tr.IsError,
-				Summary: summarizeToolResult(tr.Content),
+	path = filepath.Join(dir, "mcp-config.json")
+	cfg := map[string]any{
+		"mcpServers": map[string]any{
+			"bcc": map[string]any{
+				"type": "http",
+				"url":  url,
+				"headers": map[string]string{
+					"Authorization": "Bearer " + token,
+					"X-BCC-Role":    connectionName,
+				},
 			},
-		})
-	}
-	return out
-}
-
-// summarizeToolResult flattens the heterogeneous content shape of a
-// tool_result block into a plain string. Claude emits either a string
-// (most tools) or an array of {type:"text", text:"..."} parts (some
-// MCP-backed tools); other shapes degrade to an empty string.
-func summarizeToolResult(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(raw, &parts); err == nil {
-		var b strings.Builder
-		for _, p := range parts {
-			if p.Type != "text" {
-				continue
-			}
-			if b.Len() > 0 {
-				b.WriteByte('\n')
-			}
-			b.WriteString(p.Text)
-		}
-		return b.String()
-	}
-	return ""
-}
-
-func parseRateLimit(raw []byte, at time.Time) []loop.AgentEvent {
-	var v struct {
-		Info struct {
-			Status   string `json:"status"`
-			ResetsAt int64  `json:"resetsAt"`
-		} `json:"rate_limit_info"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil
-	}
-	var resetAt time.Time
-	if v.Info.ResetsAt > 0 {
-		resetAt = time.Unix(v.Info.ResetsAt, 0)
-	}
-	return []loop.AgentEvent{{
-		Kind: loop.KindRateLimit,
-		At:   at,
-		Rate: &loop.RateLimitInfo{Status: v.Info.Status, ResetAt: resetAt},
-	}}
-}
-
-func parseResult(raw []byte, at time.Time) []loop.AgentEvent {
-	var v struct {
-		NumTurns     int     `json:"num_turns"`
-		TotalCostUSD float64 `json:"total_cost_usd"`
-		DurationMS   int64   `json:"duration_ms"`
-		Usage        struct {
-			InputTokens              int64 `json:"input_tokens"`
-			OutputTokens             int64 `json:"output_tokens"`
-			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return nil
-	}
-	return []loop.AgentEvent{{
-		Kind: loop.KindResultSummary,
-		At:   at,
-		Done: &loop.ResultSummaryInfo{
-			NumTurns:                 v.NumTurns,
-			TotalCostUSD:             v.TotalCostUSD,
-			DurationMS:               v.DurationMS,
-			InputTokens:              v.Usage.InputTokens,
-			OutputTokens:             v.Usage.OutputTokens,
-			CacheReadInputTokens:     v.Usage.CacheReadInputTokens,
-			CacheCreationInputTokens: v.Usage.CacheCreationInputTokens,
 		},
-	}}
+	}
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	return path, cleanup, nil
 }

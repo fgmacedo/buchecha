@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_task_started",
+  "description": "Marks a task as in_progress. Planner uses id=\"planning\" for the planning task; Executor uses a task id within its registered SubDAG.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "id"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "minLength": 1 }
+  }
+}

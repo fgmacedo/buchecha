@@ -1,6 +1,8 @@
 package tui
 
-import "github.com/fgmacedo/buchecha/internal/loop"
+import (
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+)
 
 // loopSuspectWindow is the size of the rolling window the loop-suspect
 // detector keeps. Spec: "last 10 KindToolUse events".
@@ -33,8 +35,8 @@ type loopSuspect struct {
 // kinds are ignored; the heuristic measures repetitive tool calls only.
 // Tool calls with no primary arg still produce a key (with arg=""), so
 // repeated no-arg calls to the same tool count as a loop too.
-func (l *loopSuspect) onAgentEvent(ev loop.AgentEvent) {
-	if ev.Kind != loop.KindToolUse || ev.Tool == nil {
+func (l *loopSuspect) onAgentEvent(ev agentcontract.AgentEvent) {
+	if ev.Kind != agentcontract.KindToolUse || ev.Tool == nil {
 		return
 	}
 	l.ring[l.head] = loopSuspectKey{

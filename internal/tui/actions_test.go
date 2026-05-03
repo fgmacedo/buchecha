@@ -1,11 +1,10 @@
 package tui
 
 import (
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 func TestActions_view_EmptyState(t *testing.T) {
@@ -22,10 +21,10 @@ func TestActions_onAgentEvent_KeepsHistoryNewestFirstInVisibleWindow(t *testing.
 	a.SetSize(80, actionsViewportHeight)
 	at := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 	for i := 0; i < 7; i++ {
-		a.onAgentEvent(loop.AgentEvent{
-			Kind: loop.KindToolUse,
+		a.onAgentEvent(agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse,
 			At:   at.Add(time.Duration(i) * time.Second),
-			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "f" + string(rune('0'+i)) + ".go"}},
+			Tool: &agentcontract.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "f" + string(rune('0'+i)) + ".go"}},
 		})
 	}
 	if len(a.entries) != 7 {
@@ -45,8 +44,8 @@ func TestActions_onAgentEvent_KeepsHistoryNewestFirstInVisibleWindow(t *testing.
 func TestActions_onAgentEvent_IgnoresNonToolUseEvents(t *testing.T) {
 	a := newActionsPanel()
 	a.SetSize(80, actionsViewportHeight)
-	a.onAgentEvent(loop.AgentEvent{Kind: loop.KindAssistantText, Text: "hi"})
-	a.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolResult, Tool: &loop.ToolCallInfo{ID: "x"}})
+	a.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText, Text: "hi"})
+	a.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolResult, Tool: &agentcontract.ToolCallInfo{ID: "x"}})
 	if len(a.entries) != 0 {
 		t.Errorf("non-tool_use events should not enter the ring, got %d entries", len(a.entries))
 	}
@@ -56,9 +55,9 @@ func TestActions_view_RendersTimestamp(t *testing.T) {
 	a := newActionsPanel()
 	a.SetSize(80, actionsViewportHeight)
 	at := time.Date(2026, 4, 29, 14, 30, 5, 0, time.UTC)
-	a.onAgentEvent(loop.AgentEvent{
-		Kind: loop.KindToolUse, At: at,
-		Tool: &loop.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}},
+	a.onAgentEvent(agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse, At: at,
+		Tool: &agentcontract.ToolCallInfo{Name: "Bash", Args: map[string]any{"command": "go test ./..."}},
 	})
 	out := a.view(80)
 	if !strings.Contains(out, "14:30:05") {
@@ -79,10 +78,10 @@ func TestActions_ScrollsBeyondVisibleWindow(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 	const n = 20
 	for i := 0; i < n; i++ {
-		a.onAgentEvent(loop.AgentEvent{
-			Kind: loop.KindToolUse,
+		a.onAgentEvent(agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse,
 			At:   at.Add(time.Duration(i) * time.Second),
-			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "f" + string(rune('A'+i)) + ".go"}},
+			Tool: &agentcontract.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "f" + string(rune('A'+i)) + ".go"}},
 		})
 	}
 	if len(a.entries) != n {

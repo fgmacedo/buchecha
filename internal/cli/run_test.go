@@ -34,3 +34,18 @@ func TestRunCmd_DefaultVerbosityIsInfo(t *testing.T) {
 		t.Errorf("--verbosity default = %q, want %q", got, loop.LevelInfo.String())
 	}
 }
+
+// TestRunCmd_DirectorFlagDefaultsOff locks the contract that the
+// Director path is opt-in: a user running plain `bcc run` keeps MVP
+// behaviour, and only `--director` (or `[director].enabled = true` in
+// .bcc.toml) routes through the new pipeline. Flipping this default
+// would re-route every existing run into a not-yet-wired branch.
+func TestRunCmd_DirectorFlagDefaultsOff(t *testing.T) {
+	flag := runCmd.Flags().Lookup("director")
+	if flag == nil {
+		t.Fatal("runCmd has no --director flag")
+	}
+	if got := flag.DefValue; got != "false" {
+		t.Errorf("--director default = %q, want false", got)
+	}
+}

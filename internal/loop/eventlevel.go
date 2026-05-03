@@ -3,6 +3,8 @@ package loop
 import (
 	"fmt"
 	"strings"
+
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // Level is the event severity used by the verbosity filter.
@@ -74,34 +76,40 @@ func LevelOf(ev Event) Level {
 		return LevelInfo
 	case AgentEventReceived:
 		return levelOfAgentEvent(e.Event)
+	case PhasePlanned:
+		return LevelInfo
+	case PhaseBriefed:
+		return LevelInfo
+	case PhaseReviewed:
+		return LevelInfo
+	case DirectorEscalation:
+		return LevelWarn
 	default:
 		return LevelInfo
 	}
 }
 
-func levelOfAgentEvent(ae AgentEvent) Level {
+func levelOfAgentEvent(ae agentcontract.AgentEvent) Level {
 	switch ae.Kind {
-	case KindInit:
+	case agentcontract.KindInit:
 		return LevelDebug
-	case KindThinking:
+	case agentcontract.KindThinking:
 		return LevelTrace
-	case KindToolUse:
+	case agentcontract.KindToolUse:
 		return LevelInfo
-	case KindToolResult:
+	case agentcontract.KindToolResult:
 		if ae.Tool != nil && ae.Tool.IsError {
 			return LevelError
 		}
 		return LevelDebug
-	case KindAssistantText:
+	case agentcontract.KindAssistantText:
 		return LevelDebug
-	case KindRateLimit:
+	case agentcontract.KindRateLimit:
 		if ae.Rate != nil && ae.Rate.Status != "" && ae.Rate.Status != "allowed" {
 			return LevelWarn
 		}
 		return LevelDebug
-	case KindResultSummary:
-		return LevelInfo
-	case KindBccEvent:
+	case agentcontract.KindResultSummary:
 		return LevelInfo
 	default:
 		return LevelInfo

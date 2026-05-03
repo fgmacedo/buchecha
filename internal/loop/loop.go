@@ -44,6 +44,14 @@ type Loop struct {
 	// paused the run. nil disables gating entirely (text/json modes).
 	PauseGate <-chan struct{}
 
+	// Director, when non-nil, switches Loop into Director mode. The
+	// legacy SpecPath/Executor/Briefing path is bypassed; the loop
+	// iterates the Plan's phases, briefing each, running the Executor
+	// produced by Director.NewExecutor, and reviewing the result.
+	// Director.Plan must be confirmed (validated and persisted) before
+	// Run is called.
+	Director *DirectorPorts
+
 	// Logger receives milestone messages. Defaults to slog.Default().
 	Logger *slog.Logger
 }
@@ -76,6 +84,12 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 	cfg := l.Config
 	if cfg == nil {
 		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Config is nil")
+	}
+	if l.Director != nil {
+		if l.Git == nil {
+			return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Git is required in Director mode")
+		}
+		return l.runDirector(ctx, events, logger)
 	}
 	if l.Executor == nil || l.Git == nil || l.Briefing == nil {
 		return l.terminate(events, "fatal", ExitInvalid), errors.New("loop: Executor, Git, and Briefing are required")
@@ -150,20 +164,18 @@ func (l *Loop) Run(ctx context.Context, events chan<- Event) (int, error) {
 			os.Setenv("BCC_BRANCH", branch)
 		}
 
-		// Track the latest iteration_result the agent emits over the
-		// wire protocol. Last-write-wins: if the agent (incorrectly)
-		// emits multiple, the final one is the one bcc consumes.
+		// The legacy non-Director path no longer captures a per-iteration
+		// signal: the wire-protocol tools that carried it are gone (the
+		// agent now talks Director MCP methods exclusively). For runs
+		// that still hit this branch, the decider receives SignalUnknown
+		// and treats the iteration as advisory.
 		latestSignal := agentcontract.SignalUnknown
 
-		agentEvents := make(chan AgentEvent, 256)
+		agentEvents := make(chan agentcontract.AgentEvent, 256)
 		pumpDone := make(chan struct{})
 		go func() {
 			defer close(pumpDone)
 			for ae := range agentEvents {
-				if ae.Kind == KindBccEvent && ae.Bcc != nil &&
-					ae.Bcc.Kind == agentcontract.BccEventIterationResult {
-					latestSignal = ae.Bcc.Signal
-				}
 				emit(events, AgentEventReceived{Event: ae})
 			}
 		}()

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/director/briefing.schema.json",
+  "title": "Briefing",
+  "description": "The Briefer's per-iteration instruction set for an Executor: a single eligible phase, a sub-DAG of tasks within it, and the path to the spec on disk.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["iteration_id", "phase_id", "sub_dag_task_ids", "instructions", "spec_path"],
+  "properties": {
+    "iteration_id": { "type": "string", "minLength": 1 },
+    "phase_id": { "type": "string", "minLength": 1 },
+    "sub_dag_task_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "instructions": { "type": "string" },
+    "spec_path": { "type": "string", "minLength": 1 },
+    "prior_feedback": {
+      "type": ["string", "null"]
+    }
+  }
+}

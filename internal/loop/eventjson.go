@@ -54,6 +54,51 @@ func jsonPayload(ev Event) map[string]any {
 		}
 	case AgentEventReceived:
 		return agentEventJSON(e.Event, level)
+	case PhasePlanned:
+		out := map[string]any{
+			"type":  "phase_planned",
+			"at":    formatAt(e.At),
+			"level": level,
+		}
+		if e.Plan != nil {
+			out["spec_hash"] = e.Plan.SpecHash
+			out["goal"] = e.Plan.Goal
+			out["phases"] = len(e.Plan.Phases)
+		}
+		return out
+	case PhaseBriefed:
+		out := map[string]any{
+			"type":     "phase_briefed",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"phase_id": e.PhaseID,
+			"attempt":  e.Attempt,
+		}
+		return out
+	case PhaseReviewed:
+		out := map[string]any{
+			"type":     "phase_reviewed",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"phase_id": e.PhaseID,
+			"attempt":  e.Attempt,
+		}
+		if e.Outcome != "" {
+			out["outcome"] = e.Outcome
+		}
+		if e.Reasoning != "" {
+			out["reasoning"] = e.Reasoning
+		}
+		return out
+	case DirectorEscalation:
+		return map[string]any{
+			"type":      "director_escalation",
+			"at":        formatAt(e.At),
+			"level":     level,
+			"phase_id":  e.PhaseID,
+			"attempt":   e.Attempt,
+			"reasoning": e.Reasoning,
+		}
 	default:
 		return map[string]any{
 			"type":  "unknown",
@@ -62,7 +107,7 @@ func jsonPayload(ev Event) map[string]any {
 	}
 }
 
-func agentEventJSON(ae AgentEvent, level string) map[string]any {
+func agentEventJSON(ae agentcontract.AgentEvent, level string) map[string]any {
 	out := map[string]any{
 		"type":  "agent_event",
 		"at":    formatAt(ae.At),
@@ -70,7 +115,7 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 		"kind":  string(ae.Kind),
 	}
 	switch ae.Kind {
-	case KindInit:
+	case agentcontract.KindInit:
 		if ae.Init != nil {
 			out["init"] = map[string]any{
 				"session_id": ae.Init.SessionID,
@@ -78,9 +123,9 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 				"cwd":        ae.Init.CWD,
 			}
 		}
-	case KindThinking, KindAssistantText:
+	case agentcontract.KindThinking, agentcontract.KindAssistantText:
 		out["text"] = ae.Text
-		if ae.Kind == KindAssistantText && ae.Usage != nil {
+		if ae.Kind == agentcontract.KindAssistantText && ae.Usage != nil {
 			out["usage"] = map[string]any{
 				"input_tokens":                ae.Usage.InputTokens,
 				"output_tokens":               ae.Usage.OutputTokens,
@@ -88,7 +133,7 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 				"cache_creation_input_tokens": ae.Usage.CacheCreationInputTokens,
 			}
 		}
-	case KindToolUse:
+	case agentcontract.KindToolUse:
 		if ae.Tool != nil {
 			tool := map[string]any{
 				"id":   ae.Tool.ID,
@@ -99,7 +144,7 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 			}
 			out["tool"] = tool
 		}
-	case KindToolResult:
+	case agentcontract.KindToolResult:
 		if ae.Tool != nil {
 			out["tool"] = map[string]any{
 				"id":       ae.Tool.ID,
@@ -107,7 +152,7 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 				"summary":  ae.Tool.Summary,
 			}
 		}
-	case KindRateLimit:
+	case agentcontract.KindRateLimit:
 		if ae.Rate != nil {
 			rate := map[string]any{
 				"status": ae.Rate.Status,
@@ -117,7 +162,7 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 			}
 			out["rate"] = rate
 		}
-	case KindResultSummary:
+	case agentcontract.KindResultSummary:
 		if ae.Done != nil {
 			out["done"] = map[string]any{
 				"num_turns":                   ae.Done.NumTurns,
@@ -129,39 +174,8 @@ func agentEventJSON(ae AgentEvent, level string) map[string]any {
 				"duration_ms":                 ae.Done.DurationMS,
 			}
 		}
-	case KindBccEvent:
-		if ae.Bcc != nil {
-			bcc := map[string]any{
-				"event_kind": bccEventKindString(ae.Bcc.Kind),
-			}
-			if ae.Bcc.ID != "" {
-				bcc["id"] = ae.Bcc.ID
-			}
-			if ae.Bcc.Summary != "" {
-				bcc["summary"] = ae.Bcc.Summary
-			}
-			if ae.Bcc.Signal != 0 {
-				bcc["signal"] = ae.Bcc.Signal.String()
-			}
-			out["bcc"] = bcc
-		}
 	}
 	return out
-}
-
-func bccEventKindString(k agentcontract.BccEventKind) string {
-	switch k {
-	case agentcontract.BccEventTaskStarted:
-		return "task_started"
-	case agentcontract.BccEventTaskCompleted:
-		return "task_completed"
-	case agentcontract.BccEventIterationResult:
-		return "iteration_result"
-	case agentcontract.BccEventProgressTick:
-		return "progress_tick"
-	default:
-		return "unknown"
-	}
 }
 
 func formatAt(t time.Time) string {

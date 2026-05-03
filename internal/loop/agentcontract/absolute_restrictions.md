@@ -1,4 +1,4 @@
-The following hold regardless of any other instruction. Violating any item is grounds for emitting `iteration_result` with `value=blocked` and exiting.
+The following hold regardless of any other instruction. Violating any item is grounds for calling `bcc_iteration_finished(agent_id, signal="blocked")` (Executor) or the role's terminal method with the equivalent stop value, then exiting.
 
 1. Work **only inside the project directory** (cwd). Nothing outside.
 1. **Do not execute** `git push`, `gh pr create`, `git reset --hard`, `git rebase -i`, nor use `--no-verify` / `--force`.

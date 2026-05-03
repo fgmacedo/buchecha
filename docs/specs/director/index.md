@@ -72,7 +72,7 @@ graph TD
     DIR --> PLAN["Validated plan<br/>(typed phases DAG)"]
     PLAN --> BCC
     BCC --> EXEC[Executor session]
-    EXEC --> EVT[bcc_event stream]
+    EXEC --> EVT["wire-tool calls<br/>(mcp__bcc__*)"]
     EVT --> BCC
     BCC --> REV[Director review]
     REV --> VERDICT["approve / revise / escalate"]
@@ -113,7 +113,7 @@ The Director communicates with bcc through a **structured tool surface** owned b
 - `propose_review(phase_id, verdict, feedback, next_assignment?)`
 - `request_user_input(question, options)` (escalation only)
 
-The Director does not free-form. Every meaningful output is a typed payload bcc can validate, render, and persist. This mirrors the existing `bcc_event` discipline on the Executor side and gives the TUI exactly what it needs to display Director state.
+The Director does not free-form. Every meaningful output is a typed payload bcc can validate, render, and persist. This mirrors the existing wire-tool discipline on the Executor side (the agent reports progress and signal by calling `mcp__bcc__*` tools served by bcc's in-process MCP server) and gives the TUI exactly what it needs to display Director state.
 
 ### Capability registry on the Executor side
 
@@ -124,15 +124,17 @@ Each Executor adapter (claude, codex, gemini, future) publishes a typed **capabi
 ```mermaid
 graph LR
     INIT["index.md<br/>(this doc)"] --> P1["PRD 1<br/>Validation gate"]
-    INIT --> P2["PRD 2<br/>Reviewed execution"]
+    INIT --> P2["PRD 2<br/>Reviewed execution<br/>(superseded by PRD 5)"]
     INIT --> P3["PRD 3<br/>Parallel execution"]
     INIT --> P4["PRD 4<br/>Capability-aware execution"]
-    P1 --> P2
-    P2 --> P3
-    P2 --> P4
+    INIT --> P5["PRD 5<br/>Executable plan as DAG, MCP protocol"]
+    P1 --> P5
+    P2 -.superseded.-> P5
+    P5 --> P3
+    P5 --> P4
 ```
 
-PRDs are ordered by ambition and dependency. PRD 1 ships value alone (no execution-time changes). PRD 2 introduces the steered loop. PRD 3 and PRD 4 are siblings building on PRD 2: parallelism on the time axis, capability assignment on the resource axis. Either can ship first.
+PRDs are ordered by ambition and dependency. PRD 1 ships value alone (no execution-time changes). PRD 5 introduces the steered loop with a DAG executable plan and MCP-mediated communication, superseding the phase-only / parser-based design originally proposed in PRD 2. PRD 3 and PRD 4 are siblings building on PRD 5: parallelism on the time axis, capability assignment on the resource axis. Either can ship first.
 
 ## Documents in this initiative
 
@@ -140,21 +142,24 @@ PRDs are ordered by ambition and dependency. PRD 1 ships value alone (no executi
 |---|---|---|---|
 | [index.md](./index.md) | initiative | draft | This vision document |
 | [2026-04-30-spec-validation-gate.md](./2026-04-30-spec-validation-gate.md) | prd | draft | Pre-flight Director pass that scores a spec for executability and proposes patches |
-| [2026-04-30-reviewed-execution.md](./2026-04-30-reviewed-execution.md) | prd | draft | The full Director loop: planning, briefed execution, per-phase review, escalation |
+| [2026-04-30-reviewed-execution.md](./2026-04-30-reviewed-execution.md) | prd | superseded | The original Director loop proposal (phase-only granularity, parser-based wire protocol). Superseded by PRD 5. |
 | [2026-04-30-parallel-phase-execution.md](./2026-04-30-parallel-phase-execution.md) | prd | draft | Independent phases run in parallel worktrees with a Director-driven reconciliation |
 | [2026-04-30-capability-aware-execution.md](./2026-04-30-capability-aware-execution.md) | prd | draft | Executor adapters publish capability registries; Director assigns per-phase model and effort |
 | [2026-04-30-research-claude-integration-surfaces.md](./2026-04-30-research-claude-integration-surfaces.md) | reference | draft | Claude Code integration surfaces (hooks, plugins, channels, tools, CLI) mapped to PRD opportunities |
+| [2026-05-02-reviewed-execution-implementation.md](./2026-05-02-reviewed-execution-implementation.md) | spec | superseded | The original implementation spec executed against PRD 2. Superseded by the corrections spec below. |
+| [2026-05-02-executable-plan-dag.md](./2026-05-02-executable-plan-dag.md) | prd | draft | PRD 5: plan is a DAG of phases and tasks; all communication flows through a real MCP handler; loop is DAG-driven |
+| [2026-05-02-reviewed-execution-corrections.md](./2026-05-02-reviewed-execution-corrections.md) | spec | draft | Migration spec from the current implementation to PRD 5: sessions, DAG types, run-wide MCP, all-roles tools, MCP method surface, DAG-driven loop, four-option escalation, wire-protocol partial rewrite |
 
 ## Cross-cutting decisions
 
-1. **Default: off.** The Director loop is opt-in via `[director].enabled` in `.bcc.toml` or `--director` on the command line. The MVP loop remains the default until the Director earns trust on real specs.
-1. **Per-component opt-in.** Validation, review, parallelism, and capability assignment are independently toggleable. A user can enable validation without review, or capability assignment without parallelism.
+1. **Default: on.** Under PRD 5 the Director loop is the default behavior of `bcc run`. The MVP one-shot loop is no longer reachable from the CLI; the Director plans, briefs, executes, and reviews on every invocation.
+1. **Per-component opt-in.** Validation (PRD 1), parallelism (PRD 3), and capability assignment (PRD 4) are independently toggleable. The reviewed-execution loop itself (PRD 5) is always on.
 1. **Vendor agnostic.** The Director runs against any bcc adapter (claude, codex, gemini). Director prompt and tool surface live in `internal/director/`, not in any executor adapter.
 1. **Director model is configurable separately from Executor.** Common deployments will pair a stronger Director with a cheaper Executor, but the framework does not assume that pairing.
 1. **Capability registry as adapter contract.** Every Executor adapter publishes a typed registry of its available models and capabilities. The Director reasons in framework-owned abstractions (tier, effort, capability flags); the adapter translates to vendor-native flags. Adding a new model is a one-file change in the adapter.
 1. **No silent overrides.** When the Director changes scope (e.g., re-orders the plan after a review) or escalates the executor assignment on retry, bcc records the change in the journal and surfaces it in the TUI. The user can always trace why a phase ran and on which model.
-1. **Plan persistence.** The canonical plan, including per-phase executor assignments, is persisted to `.bcc/plan.json` so `--resume` recovers state without re-planning. The plan is regenerated when the spec changes.
-1. **Spec is normative, plan is derived.** If the user edits the spec mid-run, the Director re-validates and re-plans on the next loop tick. The plan never silently diverges from the spec.
+1. **Plan persistence.** The canonical plan plus the in-memory DAG state are persisted under `.bcc/sessions/<session-id>/` (`plan.json` and `dag.json`) so `--resume <session-id>` recovers state without re-planning. Each `bcc run` is a discrete session.
+1. **Spec is normative, plan is derived.** When the user wants to replan against an edited spec, they end the current run and start a fresh one (or resume with `--resume`, which detects spec-hash divergence and triggers the replan flow). bcc does not watch the spec mid-run.
 1. **User overrides win.** Per-spec directives (MVP Phase 4) and CLI flags trump the Director's executor assignment. The Director is the smart default, not the boss.
 1. **Director never relaxes [absolute_restrictions](../../../internal/loop/agentcontract/absolute_restrictions.md).** No `git push`, no force operations, no credential access. The Director cannot grant the Executor permissions the framework forbids, regardless of which model it assigns.
 

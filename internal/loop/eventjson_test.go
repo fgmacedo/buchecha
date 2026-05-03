@@ -85,10 +85,10 @@ func TestMarshalJSONEvent_LoopFinishedNonZeroIsError(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentToolUse(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 5, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindToolUse,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse,
 		At:   at,
-		Tool: &loop.ToolCallInfo{
+		Tool: &agentcontract.ToolCallInfo{
 			ID:   "toolu_01",
 			Name: "Edit",
 			Args: map[string]any{"file_path": "internal/spec/plan.go"},
@@ -106,10 +106,10 @@ func TestMarshalJSONEvent_AgentToolUse(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentToolResult(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 6, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindToolResult,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolResult,
 		At:   at,
-		Tool: &loop.ToolCallInfo{ID: "toolu_01", IsError: false, Summary: "file edited"},
+		Tool: &agentcontract.ToolCallInfo{ID: "toolu_01", IsError: false, Summary: "file edited"},
 	}}
 	got, err := loop.MarshalJSONEvent(ev)
 	if err != nil {
@@ -123,10 +123,10 @@ func TestMarshalJSONEvent_AgentToolResult(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentResultSummary(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindResultSummary,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindResultSummary,
 		At:   at,
-		Done: &loop.ResultSummaryInfo{
+		Done: &agentcontract.ResultSummaryInfo{
 			NumTurns:     12,
 			TotalCostUSD: 0.34,
 			InputTokens:  12000,
@@ -147,10 +147,10 @@ func TestMarshalJSONEvent_AgentResultSummary(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentResultSummaryWithCacheTokens(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 35, 0, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindResultSummary,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindResultSummary,
 		At:   at,
-		Done: &loop.ResultSummaryInfo{
+		Done: &agentcontract.ResultSummaryInfo{
 			NumTurns:                 4,
 			TotalCostUSD:             0.10,
 			InputTokens:              5000,
@@ -172,11 +172,11 @@ func TestMarshalJSONEvent_AgentResultSummaryWithCacheTokens(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentAssistantTextWithUsage(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 10, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindAssistantText,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindAssistantText,
 		At:   at,
 		Text: "Adjusting parser for edge case.",
-		Usage: &loop.UsageInfo{
+		Usage: &agentcontract.UsageInfo{
 			InputTokens:              1200,
 			OutputTokens:             300,
 			CacheReadInputTokens:     500,
@@ -196,8 +196,8 @@ func TestMarshalJSONEvent_AgentAssistantTextWithUsage(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentAssistantTextWithoutUsage(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 11, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindAssistantText,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindAssistantText,
 		At:   at,
 		Text: "Plain message body.",
 	}}
@@ -218,8 +218,8 @@ func TestMarshalJSONEvent_AgentAssistantTextWithoutUsage(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentThinkingIsTrace(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindThinking,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindThinking,
 		At:   at,
 		Text: "Adjusting parser...",
 	}}
@@ -236,10 +236,10 @@ func TestMarshalJSONEvent_AgentThinkingIsTrace(t *testing.T) {
 func TestMarshalJSONEvent_AgentRateLimitWarn(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
 	reset := time.Date(2026, 4, 29, 15, 0, 0, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindRateLimit,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindRateLimit,
 		At:   at,
-		Rate: &loop.RateLimitInfo{Status: "warning", ResetAt: reset},
+		Rate: &agentcontract.RateLimitInfo{Status: "warning", ResetAt: reset},
 	}}
 	got, err := loop.MarshalJSONEvent(ev)
 	if err != nil {
@@ -253,10 +253,10 @@ func TestMarshalJSONEvent_AgentRateLimitWarn(t *testing.T) {
 
 func TestMarshalJSONEvent_AgentInit(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
-	ev := loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindInit,
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindInit,
 		At:   at,
-		Init: &loop.InitInfo{SessionID: "s1", Model: "claude-sonnet-4", CWD: "/tmp"},
+		Init: &agentcontract.InitInfo{SessionID: "s1", Model: "claude-sonnet-4", CWD: "/tmp"},
 	}}
 	got, err := loop.MarshalJSONEvent(ev)
 	if err != nil {

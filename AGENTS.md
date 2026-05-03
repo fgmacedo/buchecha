@@ -34,9 +34,12 @@ internal/tui/                 (bubbletea Model/Update/View; Phase 2)
 internal/loop/                (orchestration, decision table, defines
                               Executor / GitProbe / AgentBriefing ports)
 internal/loop/agentcontract/  (canonical wire protocol: Signal, BccEvent,
-                              ParseLine, plus shared markdown blocks
+                              FromToolCall, plus shared markdown blocks
                               every format adapter composes)
 internal/config/              (Config types, defaults, env precedence)
+internal/mcp/                 (in-process MCP HTTP server; the executor
+                              adapter spawns one per Run so the agent has
+                              the wire-protocol tools available)
         ↑
 internal/executor/<adapter>/  (e.g. claude/) implements loop.Executor
 internal/git/<adapter>/       (e.g. cli/) implements loop.GitProbe
@@ -50,7 +53,8 @@ Rules:
 
 1. `internal/loop/agentcontract` and `internal/config` import **no adapters** and depend only on stdlib. They are pure value objects + pure parsers.
 1. `internal/loop` imports `agentcontract` and `config`, and defines its own ports (`ports.go`) for what it consumes. It does not import any adapter.
-1. `internal/executor/claude/` (and future siblings) import `loop` to satisfy `loop.Executor`. It knows about subprocess, JSONL, env. The loop does not.
+1. `internal/executor/claude/` (and future siblings) import `loop` to satisfy `loop.Executor`. It knows about subprocess, stream-json, env, and the MCP server it embeds via `internal/mcp/`. The loop does not.
+1. `internal/mcp/` is a stdlib-only HTTP MCP server reusable by any executor adapter that needs to register wire tools with the agent. It depends on nothing else in the project.
 1. `internal/git/cli/` shells out to `git` via `os/exec`. Anything else that needs git later goes through the same port.
 1. `internal/format/markdown_bcc/` (and future siblings) implements `loop.AgentBriefing`, owns the per-format `contract.md` template, and composes the shared markdown partials from `internal/loop/agentcontract/`.
 1. `internal/tui/` imports `loop` types and `agentcontract` types. Never the reverse.
@@ -58,7 +62,7 @@ Rules:
 
 Sign of trouble: a feature that touches 4+ packages probably crossed a layer wrongly. Stop and revisit.
 
-bcc never reads the user's spec or journal at runtime; the agent reads the spec and reports state on the wire (`bcc_event` JSONL sentinels). The loop and the TUI consume `BccEvent` from the wire stream; nothing format-shaped crosses into them.
+bcc never reads the user's spec or journal at runtime; the agent reads the spec and reports state on the wire (calls to `mcp__bcc__*` tools served by the in-process MCP server). The loop and the TUI consume `BccEvent` from the wire stream; nothing format-shaped crosses into them.
 
 ### Framework and user-space boundary
 
@@ -78,7 +82,7 @@ The domain is small. We use the parts of DDD that pay off and skip the rest.
 - **Domain services** (behavior that does not belong on a single entity): `LoopDecider` (pure function on `(Signal, HEADAdvanced) → Action`), `Heuristic` (loop-suspect detector).
 - **Ports**: `Executor`, `GitProbe`, `AgentBriefing`, `ConfigLoader`. Interfaces in the consumer package.
 - **Adapters**: concrete implementations of ports, each in its own package.
-- **Ubiquitous language** (use these names everywhere: code, comments, docs, prompts): spec, plan, phase, item, iteration, signal, bcc_event, contract, executor, briefing.
+- **Ubiquitous language** (use these names everywhere: code, comments, docs, prompts): spec, plan, phase, item, iteration, signal, BccEvent, wire tool, contract, executor, briefing.
 
 We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory/repository ceremonies. Too much for the size of this domain.
 
@@ -88,7 +92,7 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 
 - **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `loop` changes when iteration semantics change. `agentcontract` changes when the wire protocol changes. `format/<adapter>` changes when the format-specific contract changes. Mixed concerns are a smell.
 - **OCP**: adding an agent is a new package under `executor/`, not edits to existing ones. Adding a heuristic is a new file in `loop/heuristics/`, not edits to the decider.
-- **LSP**: any `Executor` implementation must honor the contract (cancellable via context, exit code propagated, JSONL written line-by-line). Tests use a fake executor that proves the contract.
+- **LSP**: any `Executor` implementation must honor the contract (cancellable via context, exit code propagated, agent events streamed line-by-line). Tests use a fake executor that proves the contract.
 - **ISP**: small interfaces. `Executor` has one method (`Run`). `GitProbe` has the few methods loop actually calls (`HeadSHA`, `IsClean`). No god interfaces.
 - **DIP**: `loop` does not import `executor/claude`. It depends on the `loop.Executor` port. Adapters wire up at the cmd boundary.
 
@@ -172,7 +176,7 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 
 We work in **TDD where it pays** and **retroactive coverage where it does not**. The areas where TDD pays in this codebase:
 
-- Wire-protocol parser (`internal/loop/agentcontract/`): given a JSONL line, produce the expected `BccEvent`. Format adapters (`internal/format/<adapter>/`) get golden-output tests on the rendered prompt template.
+- Wire-protocol parser (`internal/loop/agentcontract/`): given an MCP tool call (name + input map), produce the expected `BccEvent`. Format adapters (`internal/format/<adapter>/`) get golden-output tests on the rendered prompt template.
 - Loop decider (`internal/loop/`): given inputs, produce expected action and exit code.
 - Config loader (`internal/config/`): given TOML + env, produce expected resolved Config.
 
@@ -188,20 +192,20 @@ internal/<package>/
     └── <fixture-name>.md
 ```
 
-Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sample JSONL streams).
+Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sample stream-json streams).
 
 ### Style
 
 - **Table-driven** is the default. Each row is a named case with inputs and expected output. `t.Run(tt.name, ...)`.
-- Use **fakes**, not mocks. A fake `Executor` reads a scripted JSONL fixture and replays it. Mocking frameworks add ceremony without payoff at this scale.
+- Use **fakes**, not mocks. A fake `Executor` reads a scripted stream-json fixture and replays it. Mocking frameworks add ceremony without payoff at this scale.
 - `go test -race ./...` always passes. Race conditions in TUI/watcher code are the #1 risk; the race detector catches most.
 - No flaky tests. If a test depends on time, inject a `Clock` interface; if on filesystem, use `t.TempDir()`.
 - Coverage is not a target. We do not chase percentages. We cover what would hurt us if it broke.
 
 ### Fixtures
 
-- Wire-protocol fixtures in `internal/loop/agentcontract/`: small JSONL strings inline in tests; round-trip through `ParseLine`.
-- JSONL fixtures in `internal/executor/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content.
+- Wire-protocol fixtures in `internal/loop/agentcontract/`: tool-name + input-map cases inline in tests; round-trip through `FromToolCall`.
+- Stream-json fixtures in `internal/executor/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content. The fixture covers wire-protocol `tool_use` envelopes (`mcp__bcc__*`) alongside ordinary built-in tools so the parser path is exercised end to end.
 - End-to-end fixtures in `testdata/specs/`: sample specs in English and pt-BR to validate localization.
 
 ### Self-hosting test loop (Phase 3+)

@@ -49,6 +49,16 @@ max_iterations = 10
 branch_prefix = "feat"
 require_commit_per_iteration = true
 
+[director]
+enabled = true
+retry_budget = 4
+
+[director.claude]
+binary = "/usr/local/bin/claude"
+model = "claude-opus-4-7"
+extra_args = ["--verbose"]
+max_budget_usd = 2.5
+
 [env]
 files = [".env"]
 
@@ -93,6 +103,24 @@ FOO = "bar"
 	}
 	if !c.Git.RequireCommitPerIteration {
 		t.Errorf("Git.RequireCommitPerIteration = false")
+	}
+	if !c.Director.IsEnabled() {
+		t.Errorf("Director.IsEnabled() = false, want true (TOML had enabled = true)")
+	}
+	if c.Director.RetryBudget != 4 {
+		t.Errorf("Director.RetryBudget = %d, want 4", c.Director.RetryBudget)
+	}
+	if c.Director.Claude.Binary != "/usr/local/bin/claude" {
+		t.Errorf("Director.Claude.Binary = %q", c.Director.Claude.Binary)
+	}
+	if c.Director.Claude.Model != "claude-opus-4-7" {
+		t.Errorf("Director.Claude.Model = %q", c.Director.Claude.Model)
+	}
+	if len(c.Director.Claude.ExtraArgs) != 1 || c.Director.Claude.ExtraArgs[0] != "--verbose" {
+		t.Errorf("Director.Claude.ExtraArgs = %v", c.Director.Claude.ExtraArgs)
+	}
+	if c.Director.Claude.MaxBudgetUSD != 2.5 {
+		t.Errorf("Director.Claude.MaxBudgetUSD = %v, want 2.5", c.Director.Claude.MaxBudgetUSD)
 	}
 }
 

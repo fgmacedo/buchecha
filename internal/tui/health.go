@@ -2,10 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"time"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 // healthPanel surfaces the run-level vital signs: heartbeat, throughput
@@ -18,7 +17,7 @@ type healthPanel struct {
 	totalTools   int
 	totalErrors  int
 	totalCostUSD float64
-	rate         loop.RateLimitInfo
+	rate         agentcontract.RateLimitInfo
 
 	// totalTokens accumulates the authoritative token sum from completed
 	// iterations (reconciled from KindResultSummary at each iteration end).
@@ -69,7 +68,7 @@ func (h *healthPanel) onIterStarted() {
 // onAgentEvent folds an agent event into the panel's counters. It
 // trims the timestamp rings on every push so the slice never grows
 // past healthRingCap.
-func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
+func (h *healthPanel) onAgentEvent(ev agentcontract.AgentEvent) {
 	at := ev.At
 	if at.IsZero() {
 		at = time.Now()
@@ -77,20 +76,20 @@ func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
 	h.onAny(at)
 
 	switch ev.Kind {
-	case loop.KindToolUse:
+	case agentcontract.KindToolUse:
 		h.totalTools++
 		h.toolStamps = pushStamp(h.toolStamps, at)
 		h.suspect.onAgentEvent(ev)
-	case loop.KindToolResult:
+	case agentcontract.KindToolResult:
 		if ev.Tool != nil && ev.Tool.IsError {
 			h.totalErrors++
 			h.errorStamps = pushStamp(h.errorStamps, at)
 		}
-	case loop.KindRateLimit:
+	case agentcontract.KindRateLimit:
 		if ev.Rate != nil {
 			h.rate = *ev.Rate
 		}
-	case loop.KindAssistantText:
+	case agentcontract.KindAssistantText:
 		// Accumulate per-message token usage incrementally so the health
 		// panel shows a live count during the iteration. The terminal
 		// KindResultSummary reconciles to the authoritative total.
@@ -98,7 +97,7 @@ func (h *healthPanel) onAgentEvent(ev loop.AgentEvent) {
 			h.iterTokens += ev.Usage.InputTokens + ev.Usage.OutputTokens +
 				ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
 		}
-	case loop.KindResultSummary:
+	case agentcontract.KindResultSummary:
 		if ev.Done != nil {
 			// Reconcile: replace the live per-message estimate with the
 			// authoritative four-field total from the terminal result event.

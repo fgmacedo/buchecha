@@ -6,19 +6,18 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/progress"
-
-	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // progressBarWidth is the cell count for the bubbles/v2 progress bar.
 const progressBarWidth = 32
 
-// progressPanel renders cumulative task progress derived from the wire
-// protocol. bcc never parses the user's spec, so the panel cannot show
-// a "X/Y items" ratio; it shows what the agent has reported (started
-// vs completed task counts) plus a rolling iteration ETA. When the
-// agent does not emit task_started / task_completed events, the panel
-// stays at zero counts.
+// progressPanel renders this iteration's task progress derived from
+// the wire protocol. bcc never parses the user's spec, so the panel
+// cannot show a "X/Y items" ratio against the plan; it shows what the
+// agent has reported in the current iteration (started vs completed
+// task counts) plus a rolling iteration ETA. Counters reset on every
+// IterationStarted so the bar reflects "this phase's progress", not
+// run-cumulative totals.
 type progressPanel struct {
 	tasksStarted   int
 	tasksCompleted int
@@ -40,21 +39,42 @@ func newProgressBar() progress.Model {
 	)
 }
 
-// onBccEvent updates the panel from a wire-protocol event. Task counts
-// are cumulative across the entire run; the bar tracks the
-// completed-over-started ratio.
-func (p *progressPanel) onBccEvent(ev agentcontract.BccEvent) {
-	switch ev.Kind {
-	case agentcontract.BccEventTaskStarted:
-		p.tasksStarted++
-	case agentcontract.BccEventTaskCompleted:
-		p.tasksCompleted++
+// onTaskStarted increments the started counter and refreshes the bar.
+// The wire contract pairs bcc_task_started with bcc_task_completed by
+// id; the panel does not assume IDs and just counts the events.
+func (p *progressPanel) onTaskStarted() {
+	p.tasksStarted++
+	p.refreshBar()
+}
+
+// onTaskCompleted increments the completed counter and refreshes the
+// bar. Defensive invariant: tasksStarted is held >= tasksCompleted at
+// all times so a misbehaving agent that skips a start cannot render
+// nonsense (e.g. "5/1 tasks").
+func (p *progressPanel) onTaskCompleted() {
+	p.tasksCompleted++
+	if p.tasksCompleted > p.tasksStarted {
+		p.tasksStarted = p.tasksCompleted
 	}
+	p.refreshBar()
+}
+
+func (p *progressPanel) refreshBar() {
 	if p.tasksStarted > 0 {
 		_ = p.bar.SetPercent(float64(p.tasksCompleted) / float64(p.tasksStarted))
 	} else {
 		_ = p.bar.SetPercent(0)
 	}
+}
+
+// onIterStarted resets the per-iteration task counters and the bar.
+// The rolling iteration durations are intentionally preserved across
+// iterations: ETA averages run-wide, but task-progress visualization
+// scopes to the iteration the agent is currently working on.
+func (p *progressPanel) onIterStarted() {
+	p.tasksStarted = 0
+	p.tasksCompleted = 0
+	_ = p.bar.SetPercent(0)
 }
 
 // onIterationFinished records the duration so the ETA can average the

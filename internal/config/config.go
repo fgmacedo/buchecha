@@ -13,13 +13,14 @@ package config
 // kiro, codex, gemini) may exist in the TOML as stubs; they decode into
 // nothing and are written by `bcc init` for forward-compat.
 type Config struct {
-	Project Project `toml:"project"`
-	Spec    Spec    `toml:"spec"`
-	Journal Journal `toml:"journal"`
-	Agent   Agent   `toml:"agent"`
-	Loop    Loop    `toml:"loop"`
-	Git     Git     `toml:"git"`
-	Env     Env     `toml:"env"`
+	Project  Project        `toml:"project"`
+	Spec     Spec           `toml:"spec"`
+	Journal  Journal        `toml:"journal"`
+	Agent    Agent          `toml:"agent"`
+	Loop     Loop           `toml:"loop"`
+	Git      Git            `toml:"git"`
+	Env      Env            `toml:"env"`
+	Director DirectorConfig `toml:"director"`
 }
 
 // Project holds top-level project settings.
@@ -108,4 +109,60 @@ type Git struct {
 type Env struct {
 	Files []string          `toml:"files"`
 	Vars  map[string]string `toml:"vars"`
+}
+
+// DirectorConfig opts in to the Director-driven loop and carries the
+// global retry budget plus per-adapter subtables.
+//
+// The wiring follows the same shape as Spec/Agent: the top-level toggle
+// (Enabled, RetryBudget) lives here; per-adapter knobs sit in their own
+// subtable. There is no adapter selector yet because only the Claude
+// adapter is wired; future adapters add a sibling subtable and the
+// runtime branches on which one is non-zero.
+type DirectorConfig struct {
+	// Enabled toggles the Director-driven loop. Tristate via pointer:
+	// nil means "absent in TOML, use default" (default: true). Setting
+	// `enabled = false` in .bcc.toml is an explicit opt-out, falling
+	// back to the legacy single-agent loop.
+	//
+	// Use IsEnabled() to read; never dereference directly.
+	Enabled     *bool          `toml:"enabled"`
+	RetryBudget int            `toml:"retry_budget"`
+	Claude      DirectorClaude `toml:"claude"`
+
+	// MCPAudit toggles the per-session mcp-log.jsonl handler audit
+	// trail. Tristate via pointer: nil means "absent in TOML, use
+	// default" (default: true). Setting `mcp_audit = false` is an
+	// explicit opt-out, useful for very long runs where the JSONL
+	// becomes inconveniently large.
+	MCPAudit *bool `toml:"mcp_audit"`
+}
+
+// IsMCPAuditEnabled returns the effective value of the MCPAudit
+// tristate, applying the default (true) when absent.
+func (d DirectorConfig) IsMCPAuditEnabled() bool {
+	if d.MCPAudit == nil {
+		return true
+	}
+	return *d.MCPAudit
+}
+
+// IsEnabled returns the effective value of the Enabled tristate,
+// applying the default (true) when absent.
+func (d DirectorConfig) IsEnabled() bool {
+	if d.Enabled == nil {
+		return true
+	}
+	return *d.Enabled
+}
+
+// DirectorClaude configures the Director's Claude adapter (P3+).
+//
+// MaxBudgetUSD == 0 disables the cost cap; > 0 maps to the binary's
+// --max-budget-usd flag and the call fails fail-closed if exceeded.
+type DirectorClaude struct {
+	Binary       string   `toml:"binary"`
+	Model        string   `toml:"model"`
+	ExtraArgs    []string `toml:"extra_args"`
+	MaxBudgetUSD float64  `toml:"max_budget_usd"`
 }

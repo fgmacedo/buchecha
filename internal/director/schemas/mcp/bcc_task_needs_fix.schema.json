@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_task_needs_fix",
+  "description": "Reviewer returns a task to needs_fix with per-task feedback. Scope-checked against the audited SubDAG.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id", "id", "feedback"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "feedback": { "type": "string", "minLength": 1 }
+  }
+}

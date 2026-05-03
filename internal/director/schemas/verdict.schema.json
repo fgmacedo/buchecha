@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/director/verdict.schema.json",
+  "title": "Verdict",
+  "description": "The Director's per-phase, per-attempt judgment of the Executor's output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["phase_id", "attempt", "outcome", "acceptance_results"],
+  "properties": {
+    "phase_id": { "type": "string", "minLength": 1 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "outcome": {
+      "type": "string",
+      "enum": ["approve", "revise", "escalate"]
+    },
+    "acceptance_results": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/acceptanceResult" }
+    },
+    "feedback": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/verdictFeedback" }
+      ]
+    },
+    "reasoning": { "type": "string" }
+  },
+  "$defs": {
+    "acceptanceResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "passed"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "passed": { "type": "boolean" },
+        "note": { "type": "string" }
+      }
+    },
+    "verdictFeedback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required_changes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/requiredChange" }
+        },
+        "out_of_scope": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/outOfScopeNote" }
+        }
+      }
+    },
+    "requiredChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["what", "why"],
+      "properties": {
+        "acceptance_id": { "type": "string" },
+        "what": { "type": "string", "minLength": 1 },
+        "why": { "type": "string", "minLength": 1 }
+      }
+    },
+    "outOfScopeNote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "note"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "note": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

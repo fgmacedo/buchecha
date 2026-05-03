@@ -1,24 +1,23 @@
 package tui
 
 import (
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 func TestHealth_onAgentEvent_AccumulatesCounters(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 	h := healthPanel{startedAt: now.Add(-time.Minute)}
 
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolUse, At: now.Add(-30 * time.Second), Tool: &loop.ToolCallInfo{}})
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolUse, At: now.Add(-20 * time.Second), Tool: &loop.ToolCallInfo{}})
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolResult, At: now.Add(-15 * time.Second), Tool: &loop.ToolCallInfo{IsError: true}})
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindResultSummary, At: now, Done: &loop.ResultSummaryInfo{
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolUse, At: now.Add(-30 * time.Second), Tool: &agentcontract.ToolCallInfo{}})
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolUse, At: now.Add(-20 * time.Second), Tool: &agentcontract.ToolCallInfo{}})
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolResult, At: now.Add(-15 * time.Second), Tool: &agentcontract.ToolCallInfo{IsError: true}})
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary, At: now, Done: &agentcontract.ResultSummaryInfo{
 		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
 	}})
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindRateLimit, At: now, Rate: &loop.RateLimitInfo{Status: "warning"}})
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindRateLimit, At: now, Rate: &agentcontract.RateLimitInfo{Status: "warning"}})
 
 	if h.totalTools != 2 {
 		t.Errorf("totalTools = %d, want 2", h.totalTools)
@@ -43,18 +42,18 @@ func TestHealth_AssistantTextUsageAccumulatesAndReconciles(t *testing.T) {
 
 	// Two assistant messages with per-message Usage. The four-field sum
 	// should accumulate into iterTokens (the live, in-flight counter).
-	h.onAgentEvent(loop.AgentEvent{
-		Kind: loop.KindAssistantText, At: now.Add(-30 * time.Second),
+	h.onAgentEvent(agentcontract.AgentEvent{
+		Kind: agentcontract.KindAssistantText, At: now.Add(-30 * time.Second),
 		Text: "first turn",
-		Usage: &loop.UsageInfo{
+		Usage: &agentcontract.UsageInfo{
 			InputTokens: 100, OutputTokens: 20,
 			CacheReadInputTokens: 10, CacheCreationInputTokens: 5,
 		},
 	})
-	h.onAgentEvent(loop.AgentEvent{
-		Kind: loop.KindAssistantText, At: now.Add(-15 * time.Second),
+	h.onAgentEvent(agentcontract.AgentEvent{
+		Kind: agentcontract.KindAssistantText, At: now.Add(-15 * time.Second),
 		Text: "second turn",
-		Usage: &loop.UsageInfo{
+		Usage: &agentcontract.UsageInfo{
 			InputTokens: 200, OutputTokens: 40,
 			CacheReadInputTokens: 0, CacheCreationInputTokens: 0,
 		},
@@ -73,7 +72,7 @@ func TestHealth_AssistantTextUsageAccumulatesAndReconciles(t *testing.T) {
 	// Terminal result event reconciles to the authoritative four-field
 	// total and resets the per-iteration counter. The authoritative value
 	// can differ slightly from the per-message sum (ok by design).
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindResultSummary, At: now, Done: &loop.ResultSummaryInfo{
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary, At: now, Done: &agentcontract.ResultSummaryInfo{
 		InputTokens: 320, OutputTokens: 64,
 		CacheReadInputTokens: 12, CacheCreationInputTokens: 5,
 		TotalCostUSD: 0.10,
@@ -89,8 +88,8 @@ func TestHealth_AssistantTextUsageAccumulatesAndReconciles(t *testing.T) {
 func TestHealth_view_RendersAllRows(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 	h := healthPanel{startedAt: now.Add(-time.Minute)}
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindToolUse, At: now.Add(-10 * time.Second), Tool: &loop.ToolCallInfo{}})
-	h.onAgentEvent(loop.AgentEvent{Kind: loop.KindResultSummary, At: now, Done: &loop.ResultSummaryInfo{
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolUse, At: now.Add(-10 * time.Second), Tool: &agentcontract.ToolCallInfo{}})
+	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary, At: now, Done: &agentcontract.ResultSummaryInfo{
 		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
 	}})
 
@@ -147,15 +146,15 @@ func TestHealth_view_LoopSuspectRowAppearsWhenTriggered(t *testing.T) {
 
 	// Below threshold: no row.
 	for i := 0; i < loopSuspectThreshold-1; i++ {
-		h.onAgentEvent(loop.AgentEvent{
-			Kind: loop.KindToolUse, At: now,
-			Tool: &loop.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "plan.go"}},
+		h.onAgentEvent(agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse, At: now,
+			Tool: &agentcontract.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "plan.go"}},
 		})
 	}
 	for i := 0; i < loopSuspectWindow-(loopSuspectThreshold-1); i++ {
-		h.onAgentEvent(loop.AgentEvent{
-			Kind: loop.KindToolUse, At: now,
-			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
+		h.onAgentEvent(agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse, At: now,
+			Tool: &agentcontract.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
 		})
 	}
 	if got := h.view(now, 40); strings.Contains(got, "loop-suspect") {
@@ -165,15 +164,15 @@ func TestHealth_view_LoopSuspectRowAppearsWhenTriggered(t *testing.T) {
 	// Bump one Read → Edit so the dominant key reaches threshold.
 	h.suspect = loopSuspect{}
 	for i := 0; i < loopSuspectThreshold; i++ {
-		h.onAgentEvent(loop.AgentEvent{
-			Kind: loop.KindToolUse, At: now,
-			Tool: &loop.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "plan.go"}},
+		h.onAgentEvent(agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse, At: now,
+			Tool: &agentcontract.ToolCallInfo{Name: "Edit", Args: map[string]any{"file_path": "plan.go"}},
 		})
 	}
 	for i := 0; i < loopSuspectWindow-loopSuspectThreshold; i++ {
-		h.onAgentEvent(loop.AgentEvent{
-			Kind: loop.KindToolUse, At: now,
-			Tool: &loop.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
+		h.onAgentEvent(agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse, At: now,
+			Tool: &agentcontract.ToolCallInfo{Name: "Read", Args: map[string]any{"file_path": "other.go"}},
 		})
 	}
 	out := h.view(now, 40)

@@ -92,3 +92,57 @@ func TestApplyDefaults_SkipPermissionsExplicitTrueRespected(t *testing.T) {
 		t.Errorf("explicit true should remain true")
 	}
 }
+
+func TestApplyDefaults_DirectorDefaults(t *testing.T) {
+	var c Config
+	ApplyDefaults(&c)
+	if !c.Director.IsEnabled() {
+		t.Errorf("Director.IsEnabled() = false, want true (default-on)")
+	}
+	if c.Director.Enabled != nil {
+		t.Errorf("Director.Enabled should remain nil after defaults; got %v", *c.Director.Enabled)
+	}
+	if c.Director.RetryBudget != 2 {
+		t.Errorf("Director.RetryBudget = %d, want 2", c.Director.RetryBudget)
+	}
+	if c.Director.Claude.Binary != "claude" {
+		t.Errorf("Director.Claude.Binary = %q, want claude", c.Director.Claude.Binary)
+	}
+	if c.Director.Claude.MaxBudgetUSD != 0 {
+		t.Errorf("Director.Claude.MaxBudgetUSD = %v, want 0", c.Director.Claude.MaxBudgetUSD)
+	}
+}
+
+func TestApplyDefaults_DirectorExplicitFalseRespected(t *testing.T) {
+	disabled := false
+	c := Config{Director: DirectorConfig{Enabled: &disabled}}
+	ApplyDefaults(&c)
+	if c.Director.IsEnabled() {
+		t.Errorf("explicit Enabled=false should be preserved across defaults")
+	}
+}
+
+func TestApplyDefaults_DirectorDoesNotOverwriteExplicit(t *testing.T) {
+	enabled := true
+	c := Config{Director: DirectorConfig{
+		Enabled:     &enabled,
+		RetryBudget: 5,
+		Claude: DirectorClaude{
+			Binary:       "/opt/claude",
+			MaxBudgetUSD: 1.5,
+		},
+	}}
+	ApplyDefaults(&c)
+	if !c.Director.IsEnabled() {
+		t.Errorf("explicit Enabled=true should be preserved")
+	}
+	if c.Director.RetryBudget != 5 {
+		t.Errorf("explicit RetryBudget should not be overwritten, got %d", c.Director.RetryBudget)
+	}
+	if c.Director.Claude.Binary != "/opt/claude" {
+		t.Errorf("explicit Director.Claude.Binary should not be overwritten, got %q", c.Director.Claude.Binary)
+	}
+	if c.Director.Claude.MaxBudgetUSD != 1.5 {
+		t.Errorf("explicit MaxBudgetUSD should not be overwritten, got %v", c.Director.Claude.MaxBudgetUSD)
+	}
+}

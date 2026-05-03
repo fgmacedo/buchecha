@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_get_pending_tasks",
+  "description": "Executor queries which sub-DAG tasks remain pending or needs_fix. Filtered to the calling agent's registered SubDAG.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 }
+  }
+}

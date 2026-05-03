@@ -17,7 +17,7 @@ You implement **one pending work unit** per invocation, then exit. The unit is t
 1. Inspect the items of the unit before deciding to implement. If any item is a placeholder waiting on the observer (text like "(placeholder; observer fills...)" or items inside a unit explicitly marked observer-driven), emit `iteration_result` with `value=review` and a short summary explaining what you need from the observer; exit. Do **not** invent content for placeholders.
 1. Implement the unit end to end: code, tests, lint, small commits, mark `[x]` in the same commit that delivers each item.
 1. Append a journal entry per [Journal contract](#journal-contract) **if** the iteration carries decision-bearing content.
-1. Emit `iteration_result` exactly once on stdout, immediately before exit, per [Wire protocol](#wire-protocol).
+1. Emit `iteration_result` exactly once on stdout, immediately before exit, per [Wire protocol](#wire-protocol). {{if .DirectorEnabled}}**Under the Director**, mark end of phase with `value=review` so the Reviewer audits the attempt and decides whether to advance; do not emit `value=continue` and do not emit `value=done` (only the Director declares the spec complete). Use `value=blocked` for unrecoverable failure as usual.{{end}}
 1. Exit. Do **not** advance to the next unit within this invocation.
 
 {{- else }}

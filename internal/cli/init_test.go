@@ -163,6 +163,58 @@ func TestWriteConfigTOML_JournalFileWritesPath(t *testing.T) {
 	}
 }
 
+// TestWriteConfigTOML_WritesDirectorSubtables verifies that `bcc init`
+// emits the [director] and [director.claude] sections so a user
+// promoting to the Director path can flip enabled = true without
+// editing the schema by hand. The defaults stay opt-in (enabled =
+// false) and round-trip through Load + ApplyDefaults.
+func TestWriteConfigTOML_WritesDirectorSubtables(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	in := initInput{
+		Language:        "en",
+		SpecFormat:      "markdown_bcc",
+		JournalStore:    "markdown_inspec",
+		AgentName:       "claude",
+		Binary:          "/usr/bin/claude",
+		SpecsDir:        "docs/specs",
+		Mode:            "phase",
+		MaxIter:         10,
+		BranchPrefix:    "feat",
+		EnvFiles:        []string{".env"},
+		SkipPermissions: true,
+	}
+	if err := WriteConfigTOML(path, in); err != nil {
+		t.Fatalf("WriteConfigTOML: %v", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"[director]", "enabled = true", "retry_budget = 2", "[director.claude]", "max_budget_usd = 0"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("init output missing %q:\n%s", want, string(b))
+		}
+	}
+
+	cfg, err := configloader.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Director.IsEnabled() {
+		t.Errorf("Director.IsEnabled() = false, want true (default-on; init writes enabled = true)")
+	}
+	if cfg.Director.RetryBudget != 2 {
+		t.Errorf("Director.RetryBudget = %d, want 2", cfg.Director.RetryBudget)
+	}
+	if cfg.Director.Claude.Binary != "claude" {
+		t.Errorf("Director.Claude.Binary = %q, want claude", cfg.Director.Claude.Binary)
+	}
+	if cfg.Director.Claude.MaxBudgetUSD != 0 {
+		t.Errorf("Director.Claude.MaxBudgetUSD = %v, want 0", cfg.Director.Claude.MaxBudgetUSD)
+	}
+}
+
 func TestSplitTrim(t *testing.T) {
 	cases := []struct {
 		in   string

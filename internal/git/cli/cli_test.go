@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -211,6 +212,64 @@ func TestProbe_CommitsSince_EmptySHARejected(t *testing.T) {
 	p := New(dir)
 	if _, err := p.CommitsSince(context.Background(), ""); err == nil {
 		t.Errorf("expected error for empty baseline sha")
+	}
+}
+
+func TestProbe_Diff_EqualSHAsReturnsEmpty(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+
+	p := New(dir)
+	sha, err := p.HeadSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := p.Diff(context.Background(), sha, sha)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if out != "" {
+		t.Errorf("Diff(equal SHAs) = %q, want empty", out)
+	}
+}
+
+func TestProbe_Diff_CapturesUnifiedDiff(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "first content\n", "first")
+	p := New(dir)
+	base, err := p.HeadSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAndCommit(t, dir, "a.txt", "second content\n", "second")
+	head, err := p.HeadSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := p.Diff(context.Background(), base, head)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	for _, want := range []string{
+		"diff --git a/a.txt b/a.txt",
+		"-first content",
+		"+second content",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Diff missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestProbe_Diff_RejectsEmptySHAs(t *testing.T) {
+	dir := initRepo(t)
+	writeAndCommit(t, dir, "a.txt", "hello", "first")
+	p := New(dir)
+	if _, err := p.Diff(context.Background(), "", "abc"); err == nil {
+		t.Errorf("expected error for empty base sha")
+	}
+	if _, err := p.Diff(context.Background(), "abc", ""); err == nil {
+		t.Errorf("expected error for empty head sha")
 	}
 }
 

@@ -23,6 +23,10 @@ func keyPress(k string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	case "space", " ":
 		return tea.KeyPressMsg{Code: ' ', Text: " "}
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	default:
 		runes := []rune(k)
 		if len(runes) == 1 {
@@ -393,9 +397,9 @@ func TestView_PausedTagAppearsInHeader(t *testing.T) {
 func TestUpdate_AgentEventRoutesToPanels(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	at := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
-	got, _ := m.Update(eventMsg{ev: loop.AgentEventReceived{Event: loop.AgentEvent{
-		Kind: loop.KindToolUse, At: at,
-		Tool: &loop.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "x.go"}},
+	got, _ := m.Update(eventMsg{ev: loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindToolUse, At: at,
+		Tool: &agentcontract.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "x.go"}},
 	}}})
 	mm := got.(Model)
 	if mm.now.currentTool == nil || mm.now.currentTool.Name != "Edit" {
@@ -456,17 +460,11 @@ func TestUpdate_FirstIterationStartedCapturesBaselineSHA(t *testing.T) {
 	}
 }
 
-func TestUpdate_BccEventFeedsProgressAndRisk(t *testing.T) {
+func TestUpdate_IterationFinishedFeedsRisk(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
-	bccEvent := loop.AgentEvent{
-		Kind: loop.KindBccEvent,
-		Bcc: &agentcontract.BccEvent{
-			Kind:   agentcontract.BccEventIterationResult,
-			Signal: agentcontract.SignalContinue,
-			Raw:    map[string]any{"value": "continue"},
-		},
-	}
-	got, _ := m.Update(eventMsg{ev: loop.AgentEventReceived{Event: bccEvent}})
+	got, _ := m.Update(eventMsg{ev: loop.IterationFinished{
+		Index: 1, Signal: agentcontract.SignalContinue, At: time.Now(),
+	}})
 	mm := got.(Model)
 	if !mm.risk.signalKnown {
 		t.Errorf("risk panel did not record signal")
@@ -486,7 +484,7 @@ func TestUpdate_ScheduledReadCmdReturnsEventMsg(t *testing.T) {
 		t.Fatalf("no follow-up cmd")
 	}
 
-	want := loop.AgentEventReceived{Event: loop.AgentEvent{Kind: loop.KindToolUse}}
+	want := loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindToolUse}}
 	events <- want
 	done := make(chan tea.Msg, 1)
 	go func() { done <- cmd() }()

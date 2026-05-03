@@ -25,76 +25,6 @@ func TestSignal_String(t *testing.T) {
 	}
 }
 
-func TestParseLine_TaskStarted(t *testing.T) {
-	in := []byte(`{"type":"bcc_event","event":"task_started","id":"P1.2","summary":"start it"}`)
-	got, ok := ParseLine(in)
-	if !ok {
-		t.Fatalf("ok = false, want true")
-	}
-	if got.Kind != BccEventTaskStarted {
-		t.Errorf("Kind = %v", got.Kind)
-	}
-	if got.ID != "P1.2" {
-		t.Errorf("ID = %q", got.ID)
-	}
-	if got.Summary != "start it" {
-		t.Errorf("Summary = %q", got.Summary)
-	}
-}
-
-func TestParseLine_TaskCompleted(t *testing.T) {
-	got, ok := ParseLine([]byte(`{"type":"bcc_event","event":"task_completed","id":"P1.2"}`))
-	if !ok {
-		t.Fatal("ok = false")
-	}
-	if got.Kind != BccEventTaskCompleted || got.ID != "P1.2" {
-		t.Errorf("got %+v", got)
-	}
-}
-
-func TestParseLine_IterationResult_MapsValuesToSignal(t *testing.T) {
-	cases := []struct {
-		value string
-		want  Signal
-	}{
-		{"continue", SignalContinue},
-		{"review", SignalReview},
-		{"done", SignalDone},
-		{"blocked", SignalBlocked},
-		{"weird", SignalUnknown},
-	}
-	for _, tc := range cases {
-		t.Run(tc.value, func(t *testing.T) {
-			line := []byte(`{"type":"bcc_event","event":"iteration_result","value":"` + tc.value + `","summary":"x"}`)
-			got, ok := ParseLine(line)
-			if !ok {
-				t.Fatalf("ok = false")
-			}
-			if got.Kind != BccEventIterationResult {
-				t.Errorf("Kind = %v", got.Kind)
-			}
-			if got.Signal != tc.want {
-				t.Errorf("Signal = %v, want %v", got.Signal, tc.want)
-			}
-		})
-	}
-}
-
-func TestParseLine_RejectsForeignLines(t *testing.T) {
-	cases := [][]byte{
-		[]byte(`not json`),
-		[]byte(`{"type":"system"}`),
-		[]byte(`{"type":"assistant","content":"hi"}`),
-		[]byte(`{"type":"bcc_event","event":"unknown_kind"}`),
-	}
-	for i, line := range cases {
-		_, ok := ParseLine(line)
-		if ok {
-			t.Errorf("case %d: ok=true, want false (line=%s)", i, line)
-		}
-	}
-}
-
 func TestPartials_DefinesAllThreeBlocks(t *testing.T) {
 	p := Partials()
 	for _, name := range []string{"wire_protocol", "absolute_restrictions", "working_tree"} {
@@ -104,7 +34,7 @@ func TestPartials_DefinesAllThreeBlocks(t *testing.T) {
 	}
 }
 
-func TestPartials_WireProtocol_DescribesEventValues(t *testing.T) {
+func TestPartials_WireProtocol_DescribesMCPMethods(t *testing.T) {
 	p := Partials()
 	var buf bytes.Buffer
 	if err := p.ExecuteTemplate(&buf, "wire_protocol", nil); err != nil {
@@ -112,13 +42,49 @@ func TestPartials_WireProtocol_DescribesEventValues(t *testing.T) {
 	}
 	body := buf.String()
 	for _, want := range []string{
-		`"event":"task_started"`,
-		`"event":"task_completed"`,
-		`"event":"iteration_result"`,
-		`continue`, `review`, `done`, `blocked`,
+		// Per-role surfaces the Director loop relies on.
+		"Planner", "Briefer", "Executor", "Reviewer",
+		"agent_id",
+		"bcc_plan_emit",
+		"bcc_briefing_emit",
+		"bcc_get_dag_snapshot",
+		"bcc_get_briefing",
+		"bcc_get_pending_tasks",
+		"bcc_get_diff",
+		"bcc_get_journal_delta",
+		"bcc_task_started",
+		"bcc_task_completed",
+		"bcc_task_approved",
+		"bcc_task_needs_fix",
+		"bcc_iteration_finished",
+		"bcc_review_finished",
+		// Wire alphabets stay canonical English regardless of locale.
+		"continue", "review", "done", "blocked",
+		"approve", "revise", "escalate",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("wire_protocol partial missing %q", want)
+		}
+	}
+}
+
+// TestPartials_WireProtocol_NoLegacyEnvelope ensures the rewritten
+// partial does not still describe the demoted stream-json envelope as
+// the protocol of record.
+func TestPartials_WireProtocol_NoLegacyEnvelope(t *testing.T) {
+	p := Partials()
+	var buf bytes.Buffer
+	if err := p.ExecuteTemplate(&buf, "wire_protocol", nil); err != nil {
+		t.Fatalf("execute wire_protocol: %v", err)
+	}
+	body := buf.String()
+	for _, banned := range []string{
+		"mcp__bcc__task_started",
+		"mcp__bcc__task_completed",
+		"mcp__bcc__iteration_result",
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("wire_protocol partial still references legacy envelope %q", banned)
 		}
 	}
 }

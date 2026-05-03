@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_get_briefing",
+  "description": "Executor or Reviewer fetches the Briefing associated with its agent_id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 }
+  }
+}

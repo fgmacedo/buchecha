@@ -3,10 +3,13 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 
+	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
@@ -85,6 +88,45 @@ func drainJSON(in <-chan loop.Event, done chan<- struct{}, w io.Writer) {
 	}
 }
 
+// RenderPlan prints a Director Plan in plain text suitable for the
+// confirmation prompt in non-TUI modes. The TUI variant lands in P8.
+//
+// Output is intentionally simple: a header, the goal, success criteria,
+// and a numbered phase table (id, title, retry_budget, depends_on). It
+// targets a wide terminal and never colorizes; styling is decided by the
+// renderer that wraps this in TUI/text modes.
+func RenderPlan(p *director.Plan, w io.Writer) {
+	if p == nil {
+		fmt.Fprintln(w, "bcc: director plan: <nil>")
+		return
+	}
+	fmt.Fprintln(w, "bcc: Director plan")
+	fmt.Fprintf(w, "  spec_hash: %s\n", shortHash(p.SpecHash))
+	fmt.Fprintf(w, "  goal:      %s\n", p.Goal)
+	if len(p.SuccessCriteria) > 0 {
+		fmt.Fprintln(w, "  success_criteria:")
+		for _, c := range p.SuccessCriteria {
+			fmt.Fprintf(w, "    - %s\n", c)
+		}
+	}
+	fmt.Fprintf(w, "  phases (%d):\n", len(p.Phases))
+	for i, ph := range p.Phases {
+		deps := "-"
+		if len(ph.DependsOn) > 0 {
+			deps = strings.Join(ph.DependsOn, ",")
+		}
+		fmt.Fprintf(w, "    %2d. %s  %s  tasks=%d  deps=%s\n",
+			i+1, ph.ID, ph.Title, len(ph.Tasks), deps)
+	}
+}
+
+func shortHash(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
+}
+
 func slogLevelOf(l loop.Level) slog.Level {
 	switch l {
 	case loop.LevelError:
@@ -126,26 +168,26 @@ func textRenderEvent(ev loop.Event) (string, []slog.Attr) {
 	}
 }
 
-func textRenderAgentEvent(ae loop.AgentEvent) (string, []slog.Attr) {
+func textRenderAgentEvent(ae agentcontract.AgentEvent) (string, []slog.Attr) {
 	attrs := []slog.Attr{slog.String("kind", string(ae.Kind))}
 	switch ae.Kind {
-	case loop.KindInit:
+	case agentcontract.KindInit:
 		if ae.Init != nil {
 			attrs = append(attrs,
 				slog.String("session_id", ae.Init.SessionID),
 				slog.String("model", ae.Init.Model),
 			)
 		}
-	case loop.KindThinking, loop.KindAssistantText:
+	case agentcontract.KindThinking, agentcontract.KindAssistantText:
 		attrs = append(attrs, slog.String("text", ae.Text))
-	case loop.KindToolUse:
+	case agentcontract.KindToolUse:
 		if ae.Tool != nil {
 			attrs = append(attrs,
 				slog.String("tool_id", ae.Tool.ID),
 				slog.String("tool", ae.Tool.Name),
 			)
 		}
-	case loop.KindToolResult:
+	case agentcontract.KindToolResult:
 		if ae.Tool != nil {
 			attrs = append(attrs,
 				slog.String("tool_id", ae.Tool.ID),
@@ -153,14 +195,14 @@ func textRenderAgentEvent(ae loop.AgentEvent) (string, []slog.Attr) {
 				slog.String("summary", ae.Tool.Summary),
 			)
 		}
-	case loop.KindRateLimit:
+	case agentcontract.KindRateLimit:
 		if ae.Rate != nil {
 			attrs = append(attrs, slog.String("status", ae.Rate.Status))
 			if !ae.Rate.ResetAt.IsZero() {
 				attrs = append(attrs, slog.Time("reset_at", ae.Rate.ResetAt))
 			}
 		}
-	case loop.KindResultSummary:
+	case agentcontract.KindResultSummary:
 		if ae.Done != nil {
 			attrs = append(attrs,
 				slog.Int("num_turns", ae.Done.NumTurns),

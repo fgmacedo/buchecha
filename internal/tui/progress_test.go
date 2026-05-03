@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func TestProgress_View_NoEvents(t *testing.T) {
@@ -16,11 +14,11 @@ func TestProgress_View_NoEvents(t *testing.T) {
 	}
 }
 
-func TestProgress_OnBccEvent_TaskCounters(t *testing.T) {
+func TestProgress_TaskCounters(t *testing.T) {
 	p := progressPanel{bar: newProgressBar()}
-	p.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskStarted})
-	p.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskStarted})
-	p.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskCompleted})
+	p.onTaskStarted()
+	p.onTaskStarted()
+	p.onTaskCompleted()
 	if p.tasksStarted != 2 {
 		t.Errorf("tasksStarted = %d, want 2", p.tasksStarted)
 	}
@@ -33,11 +31,40 @@ func TestProgress_OnBccEvent_TaskCounters(t *testing.T) {
 	}
 }
 
-func TestProgress_OnBccEvent_IgnoresOtherKinds(t *testing.T) {
+func TestProgress_BumpsStartedWhenCompletedExceedsIt(t *testing.T) {
+	// The agent emits one task_started for the whole phase and N
+	// task_completed for sub-items: defense bumps started so the panel
+	// never renders "5/1 tasks".
 	p := progressPanel{bar: newProgressBar()}
-	p.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventIterationResult, Signal: agentcontract.SignalDone})
+	p.onTaskStarted()
+	for i := 0; i < 5; i++ {
+		p.onTaskCompleted()
+	}
+	if p.tasksStarted != 5 || p.tasksCompleted != 5 {
+		t.Errorf("started/completed = %d/%d, want 5/5 after defense", p.tasksStarted, p.tasksCompleted)
+	}
+	got := p.view(80)
+	if !strings.Contains(got, "5/5 tasks") {
+		t.Errorf("view should report 5/5 tasks (defense bumped started), got: %q", got)
+	}
+}
+
+func TestProgress_OnIterStarted_ResetsCountersButKeepsDurations(t *testing.T) {
+	p := progressPanel{bar: newProgressBar()}
+	p.onTaskStarted()
+	p.onTaskCompleted()
+	p.onIterationFinished(3 * time.Second)
+	p.onIterStarted()
 	if p.tasksStarted != 0 || p.tasksCompleted != 0 {
-		t.Errorf("iteration_result should not move task counters")
+		t.Errorf("counters not reset: started=%d completed=%d", p.tasksStarted, p.tasksCompleted)
+	}
+	if len(p.durations) != 1 {
+		t.Errorf("durations should persist across iterations, got len=%d", len(p.durations))
+	}
+	p.onTaskStarted()
+	got := p.view(80)
+	if !strings.Contains(got, "0/1 tasks") {
+		t.Errorf("after reset and one new task_started, view should show 0/1 tasks: %q", got)
 	}
 }
 
@@ -56,9 +83,9 @@ func TestProgress_ETA_ScalesWithRemainingTasks(t *testing.T) {
 	p.onIterationFinished(2 * time.Second)
 	p.onIterationFinished(4 * time.Second)
 	for i := 0; i < 5; i++ {
-		p.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskStarted})
+		p.onTaskStarted()
 	}
-	p.onBccEvent(agentcontract.BccEvent{Kind: agentcontract.BccEventTaskCompleted})
+	p.onTaskCompleted()
 	got := p.view(80)
 	if !strings.Contains(got, "ETA ~") {
 		t.Errorf("view should include an ETA, got: %q", got)

@@ -10,6 +10,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -100,6 +101,33 @@ type Model struct {
 	progress progressPanel
 	risk     riskPanel
 	actions  actionsPanel
+	director directorPanel
+
+	// escalationGate is the Director-mode reply channel: when the user
+	// resolves an escalation modal, the Model sends EscalationResume,
+	// EscalationSkip, or EscalationAbort here. The host wires the same
+	// channel into DirectorPorts.Escalation so the loop unblocks. nil in
+	// non-Director or test contexts.
+	escalationGate chan<- loop.EscalationReply
+
+	// planConfirmGate is the channel the Model writes into when the
+	// user resolves the plan-confirmation modal. nil disables the
+	// modal silently; SignalPlanReady becomes a no-op in that case.
+	planConfirmGate chan<- PlanConfirmReply
+
+	// planningPending tracks the "planner is in flight" state. While
+	// true the director panel renders a placeholder. Set via the
+	// PlanningPending option; cleared via ClearPlanningPending().
+	planningPending bool
+
+	// planReady is true once the planner has returned a plan and the
+	// confirm modal is up (when !autoProceed). Latched by
+	// SignalPlanReady → planReadyMsg → Update.
+	planReady bool
+
+	// autoProceed mirrors the Options field; when true the Model
+	// bypasses the plan-confirmation modal entirely.
+	autoProceed bool
 
 	// Live state.
 	width, height  int
@@ -121,9 +149,10 @@ type Model struct {
 	sessionExitMsg string // best-effort hint surfaced after a failed [e] edit
 
 	// Keybindings + help renderer (single source of truth).
-	keys        keyMap
-	sessionKeys sessionKeyMap
-	helpView    help.Model
+	keys         keyMap
+	sessionKeys  sessionKeyMap
+	directorKeys directorKeyMap
+	helpView     help.Model
 
 	// Terminal state.
 	finished  bool // true once the loop emitted LoopFinished or events closed
@@ -153,6 +182,29 @@ type Options struct {
 	// the user presses [r] in the session menu. Nil disables the resume
 	// action.
 	NewEvents func() <-chan loop.Event
+
+	// EscalationGate is the channel the Model writes into when the user
+	// resolves a Director escalation modal. The host wires the same
+	// channel into the loop's DirectorPorts.Escalation. nil disables
+	// the modal's R/S/A actions silently (useful in tests).
+	EscalationGate chan<- loop.EscalationReply
+
+	// PlanConfirmGate is the channel the Model writes into when the
+	// user resolves the plan-confirmation modal (TUI mode). nil
+	// disables the modal silently; the host falls back to auto-proceed
+	// semantics.
+	PlanConfirmGate chan<- PlanConfirmReply
+
+	// PlanningPending, when true, tells the Model that the planner is
+	// still in flight. The director panel renders a "planning..."
+	// placeholder until the host clears the flag (ClearPlanningPending).
+	PlanningPending bool
+
+	// AutoProceed, when true, makes the Model bypass the
+	// plan-confirmation modal: SignalPlanReady transitions straight
+	// through to the loop. When false the Model surfaces a [P]/[A]
+	// modal that gates the loop start.
+	AutoProceed bool
 }
 
 // New returns a Model wired to the given event channel and cancel
@@ -173,14 +225,19 @@ func New(opts Options) Model {
 			maxIter:   opts.MaxIter,
 			startedAt: now,
 		},
-		health:      healthPanel{startedAt: now},
-		progress:    progressPanel{bar: newProgressBar()},
-		actions:     newActionsPanel(),
-		now:         newNowPanel(),
-		keys:        defaultKeyMap(),
-		sessionKeys: defaultSessionKeyMap(),
-		helpView:    help.New(),
-		newEvents:   opts.NewEvents,
+		health:          healthPanel{startedAt: now},
+		progress:        progressPanel{bar: newProgressBar()},
+		actions:         newActionsPanel(),
+		now:             newNowPanel(),
+		keys:            defaultKeyMap(),
+		sessionKeys:     defaultSessionKeyMap(),
+		directorKeys:    defaultDirectorKeyMap(),
+		helpView:        help.New(),
+		newEvents:       opts.NewEvents,
+		escalationGate:  opts.EscalationGate,
+		planConfirmGate: opts.PlanConfirmGate,
+		planningPending: opts.PlanningPending,
+		autoProceed:     opts.AutoProceed,
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
@@ -218,6 +275,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.director.escalation {
+			return m.handleEscalationKey(msg)
+		}
+		if m.planReady {
+			return m.handlePlanConfirmKey(msg)
+		}
 		if m.sessionMode {
 			return m.handleSessionKey(msg)
 		}
@@ -235,6 +298,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m.handleLoopEvent(msg.ev)
+
+	case planReadyMsg:
+		// Planner returned a plan and confirmation is pending. Latch
+		// the plan onto the director panel (mirrors what PhasePlanned
+		// will do once the loop starts) and surface the confirm modal
+		// unless we are running with --auto-proceed.
+		if msg.plan != nil {
+			m.director.onPhasePlanned(msg.plan)
+		}
+		if !m.autoProceed {
+			m.planReady = true
+		}
+		return m, nil
+
+	case clearPlanningPendingMsg:
+		m.planningPending = false
+		m.planReady = false
+		return m, nil
 
 	case restartLoopMsg:
 		// User pressed [r] in the session menu: ask the host's factory
@@ -363,6 +444,7 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 	case loop.IterationStarted:
 		m.header.onIter(e.Index, e.MaxIter)
 		m.now.onIterStarted()
+		m.progress.onIterStarted()
 		m.risk.onIterStarted(e.Index)
 		m.header.onAny(e.At)
 		m.health.onAny(e.At)
@@ -382,9 +464,10 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		}
 	case loop.IterationFinished:
 		m.progress.onIterationFinished(time.Duration(e.DurationMS) * time.Millisecond)
+		m.risk.onIterFinished(e.Signal)
+		m.lastIterSignal = e.Signal
 		m.header.onAny(e.At)
 		m.health.onAny(e.At)
-		m.lastIterSignal = e.Signal
 		// Release the gate (no-op if paused).
 		if m.gate != nil {
 			m.gate.IterDone()
@@ -417,10 +500,31 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.actions.onAgentEvent(e.Event)
 		m.risk.onAgentEvent(e.Event)
 		m.header.onAny(e.Event.At)
-		if e.Event.Kind == loop.KindBccEvent && e.Event.Bcc != nil {
-			m.progress.onBccEvent(*e.Event.Bcc)
-			m.risk.onBccEvent(*e.Event.Bcc)
+		if e.Event.Kind == agentcontract.KindResultSummary && e.Event.Done != nil {
+			m.director.onCost(e.Event.Done.TotalCostUSD)
 		}
+	case loop.PhasePlanned:
+		m.director.onPhasePlanned(e.Plan)
+		m.header.onAny(e.At)
+	case loop.PhaseBriefed:
+		m.director.onPhaseBriefed(e.PhaseID, e.Attempt, e.Briefing)
+		m.header.onAny(e.At)
+	case loop.PhaseReviewed:
+		m.director.onPhaseReviewed(e.PhaseID, e.Attempt, e.Outcome)
+		m.header.onAny(e.At)
+	case loop.DirectorEscalation:
+		m.director.onEscalation(e.PhaseID, e.Attempt, e.Reasoning)
+		m.header.onAny(e.At)
+	case loop.TaskStarted:
+		m.director.onTaskStarted(e.TaskID)
+		m.progress.onTaskStarted()
+		m.risk.onTaskStarted()
+		m.header.onAny(e.At)
+	case loop.TaskCompleted:
+		m.director.onTaskCompleted(e.TaskID)
+		m.progress.onTaskCompleted()
+		m.risk.onTaskCompleted()
+		m.header.onAny(e.At)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -504,7 +608,11 @@ func (m Model) viewDashboard(session bool) string {
 		lay.headerW,
 	)
 	nowBox := box("now", m.now.view(now, lay.nowW), lay.nowW)
-	healthBox := box("health", m.health.view(now, lay.healthW), lay.healthW)
+	healthBody := m.health.view(now, lay.healthW)
+	if m.director.active() {
+		healthBody += fmt.Sprintf("  director cost: $%.2f\n", m.director.cumulativeCost)
+	}
+	healthBox := box("health", healthBody, lay.healthW)
 	nowHealth := lipgloss.JoinHorizontal(lipgloss.Top, nowBox, healthBox)
 	progressBox := box("progress", m.progress.view(lay.progressW), lay.progressW)
 	riskBox := box("if you close now", m.risk.view(now, lay.riskW), lay.riskW)
@@ -514,14 +622,21 @@ func (m Model) viewDashboard(session bool) string {
 		footer = m.helpView.View(m.sessionKeys)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		headerBox,
-		nowHealth,
-		progressBox,
-		riskBox,
-		actionsBox,
-		footer,
-	) + "\n"
+	rows := []string{headerBox, nowHealth, progressBox}
+	if m.director.active() || m.planningPending {
+		rows = append(rows, box("director", m.director.viewWithPlanning(lay.headerW, m.planningPending, m.now.spinner.View(), m.health.iterTokens, m.health.totalCostUSD), lay.headerW))
+	}
+	rows = append(rows, riskBox, actionsBox, footer)
+	dashboard := lipgloss.JoinVertical(lipgloss.Left, rows...) + "\n"
+
+	if m.director.escalation {
+		modal := renderEscalationModal(m.director, m.directorKeys)
+		dashboard += "\n" + modal
+	}
+	if m.planReady {
+		dashboard += "\n" + renderPlanConfirmModal(lay.headerW, m.director.plan)
+	}
+	return dashboard
 }
 
 // activeLayout returns the cached layout when a tea.WindowSizeMsg has

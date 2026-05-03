@@ -18,6 +18,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/config"
 	configloader "github.com/fgmacedo/buchecha/internal/configloader/toml"
+	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/executor/claude"
 	markdown_bcc "github.com/fgmacedo/buchecha/internal/format/markdown_bcc"
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
@@ -26,17 +27,22 @@ import (
 )
 
 var (
-	runSingleShot bool
-	runMaxIter    int
-	runEnvFlags   []string
-	runExtra      string
-	runConfigPath string
-	runAllowDirty bool
-	runOutput     string
-	runVerbosity  string
-	runNoColor    bool
-	runSpecFormat string
-	runAgentName  string
+	runSingleShot     bool
+	runMaxIter        int
+	runEnvFlags       []string
+	runExtra          string
+	runConfigPath     string
+	runAllowDirty     bool
+	runOutput         string
+	runVerbosity      string
+	runNoColor        bool
+	runSpecFormat     string
+	runAgentName      string
+	runDirectorFlag   bool
+	runNoDirectorFlag bool
+	runAutoProceed    bool
+	runResume         bool
+	runSessionID      string
 )
 
 var runCmd = &cobra.Command{
@@ -63,6 +69,11 @@ func init() {
 	runCmd.Flags().BoolVar(&runNoColor, "no-color", false, "disable color output (lipgloss styles render as plain text)")
 	runCmd.Flags().StringVar(&runSpecFormat, "spec-format", "", "active spec-format adapter (overrides [spec].format for this run)")
 	runCmd.Flags().StringVar(&runAgentName, "agent", "", "active agent adapter (overrides [agent].name for this run)")
+	runCmd.Flags().BoolVar(&runDirectorFlag, "director", false, "force the Director-driven loop on; overrides [director].enabled=false in .bcc.toml")
+	runCmd.Flags().BoolVar(&runNoDirectorFlag, "no-director", false, "force the Director-driven loop off; overrides the default and [director].enabled=true")
+	runCmd.Flags().BoolVar(&runAutoProceed, "auto-proceed", false, "skip the post-plan confirmation prompt (Director mode only)")
+	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan with a diff prompt when the spec hash diverges (Director mode only)")
+	runCmd.Flags().StringVar(&runSessionID, "session", "", "resume the named session id (combine with --resume to resolve; without --resume, fails if the session does not exist)")
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -106,6 +117,21 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	if runAgentName != "" {
 		cfg.Agent.Name = runAgentName
 	}
+	// CLI flags override the TOML/default tristate. --director and
+	// --no-director are mutually exclusive; if both are set, abort
+	// rather than silently picking one.
+	if runDirectorFlag && runNoDirectorFlag {
+		ExitCode = loop.ExitInvalid
+		return errors.New("--director and --no-director are mutually exclusive")
+	}
+	switch {
+	case runDirectorFlag:
+		v := true
+		cfg.Director.Enabled = &v
+	case runNoDirectorFlag:
+		v := false
+		cfg.Director.Enabled = &v
+	}
 
 	if err := cfg.ApplyEnv(runEnvFlags); err != nil {
 		ExitCode = loop.ExitInvalid
@@ -116,6 +142,10 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=%s\n", specPath, foundCfg)
 	} else {
 		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=<defaults; no .bcc.toml found>\n", specPath)
+	}
+
+	if cfg.Director.IsEnabled() {
+		return runDirector(ctx, cancel, specPath, cfg)
 	}
 
 	if cfg.Spec.Format != "markdown_bcc" {
@@ -179,12 +209,29 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 		cfg.Loop.MaxIterations, specPath, branchHint,
 	)
 
+	boot, err := startMCPBoot(nil)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+	defer boot.Close()
+	mcpCfg, releaseAgent, err := boot.executorMCPConfig(dag.RoleExecutor, dag.RegisterArgs{})
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return fmt.Errorf("register executor agent: %w", err)
+	}
+	defer releaseAgent()
+
 	executor := claude.New(claude.Config{
-		Binary:          cfg.Agent.Claude.Binary,
-		Model:           cfg.Agent.Claude.Model,
-		ExtraArgs:       cfg.Agent.Claude.ExtraArgs,
-		SkipPermissions: skip,
-		Stderr:          os.Stderr,
+		Binary:            cfg.Agent.Claude.Binary,
+		Model:             cfg.Agent.Claude.Model,
+		ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
+		SkipPermissions:   skip,
+		Stderr:            os.Stderr,
+		MCPURL:            mcpCfg.MCPURL,
+		MCPToken:          mcpCfg.MCPToken,
+		MCPConnectionName: mcpCfg.MCPConnectionName,
+		AgentID:           mcpCfg.AgentID,
 	})
 
 	briefing := markdown_bcc.New(markdown_bcc.Config{

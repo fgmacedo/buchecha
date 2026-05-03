@@ -2,12 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
-
-	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 // nowSpinnerStyle is the spinner frame set the now panel uses. Dot is
@@ -21,7 +20,7 @@ var nowSpinnerStyle = spinner.Dot
 // text. The active tool is cleared when its matching tool_result
 // arrives, so a stalled tool keeps showing while real work hangs.
 type nowPanel struct {
-	currentTool   *loop.ToolCallInfo
+	currentTool   *agentcontract.ToolCallInfo
 	currentToolAt time.Time
 	lastAssistant string
 	spinner       spinner.Model
@@ -36,9 +35,9 @@ func newNowPanel() nowPanel {
 }
 
 // onAgentEvent folds a single agent event into the panel state.
-func (n *nowPanel) onAgentEvent(ev loop.AgentEvent) {
+func (n *nowPanel) onAgentEvent(ev agentcontract.AgentEvent) {
 	switch ev.Kind {
-	case loop.KindToolUse:
+	case agentcontract.KindToolUse:
 		if ev.Tool != nil {
 			tool := *ev.Tool
 			n.currentTool = &tool
@@ -47,11 +46,16 @@ func (n *nowPanel) onAgentEvent(ev loop.AgentEvent) {
 				n.currentToolAt = time.Now()
 			}
 		}
-	case loop.KindToolResult:
+	case agentcontract.KindToolResult:
 		if ev.Tool != nil && n.currentTool != nil && n.currentTool.ID == ev.Tool.ID {
 			n.currentTool = nil
 		}
-	case loop.KindAssistantText:
+	case agentcontract.KindAssistantText:
+		text := strings.TrimSpace(ev.Text)
+		if text != "" {
+			n.lastAssistant = text
+		}
+	case agentcontract.KindThinking:
 		text := strings.TrimSpace(ev.Text)
 		if text != "" {
 			n.lastAssistant = text
@@ -101,11 +105,99 @@ func (n nowPanel) view(now time.Time, width int) string {
 		if room <= 0 {
 			room = 1
 		}
-		b.WriteString("  ")
-		b.WriteString(theme.subtle.Render("» " + truncate(n.lastAssistant, room)))
-		b.WriteByte('\n')
+		// Word-wrap up to assistantMaxLines so the user can see longer
+		// thinking blocks (planner reasoning, blocked-with-rationale
+		// summaries) instead of a single elided line. The prefix "» " is
+		// rendered on the first line; continuation lines indent flush
+		// with the text.
+		wrapped := wrapText(n.lastAssistant, room, assistantMaxLines)
+		for i, line := range wrapped {
+			b.WriteString("  ")
+			if i == 0 {
+				b.WriteString(theme.subtle.Render("» " + line))
+			} else {
+				b.WriteString(theme.subtle.Render("  " + line))
+			}
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
+}
+
+// assistantMaxLines caps the wrapped assistant text shown in the now
+// panel. Beyond this the tail is truncated with an ellipsis on the
+// last line; the full text remains in the recent-actions / agent log.
+const assistantMaxLines = 4
+
+// wrapText breaks s at word boundaries into at most maxLines lines of
+// width-or-less rune length. The last line is suffixed with "..." when
+// the input does not fit. Words longer than width are hard-cut. Empty
+// strings yield no lines.
+func wrapText(s string, width, maxLines int) []string {
+	if width <= 0 || maxLines <= 0 {
+		return nil
+	}
+	words := strings.Fields(s)
+	var lines []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			lines = append(lines, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, w := range words {
+		if len([]rune(w)) > width {
+			flush()
+			runes := []rune(w)
+			for len(runes) > 0 {
+				take := width
+				if take > len(runes) {
+					take = len(runes)
+				}
+				lines = append(lines, string(runes[:take]))
+				runes = runes[take:]
+				if len(lines) >= maxLines {
+					break
+				}
+			}
+			if len(lines) >= maxLines {
+				break
+			}
+			continue
+		}
+		next := w
+		if cur.Len() > 0 {
+			next = " " + w
+		}
+		if cur.Len()+len([]rune(next)) > width {
+			flush()
+			cur.WriteString(w)
+			if len(lines) >= maxLines {
+				break
+			}
+			continue
+		}
+		cur.WriteString(next)
+	}
+	flush()
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	if len(lines) == maxLines {
+		// Mark truncation on the last line if more text remained.
+		full := strings.Join(lines, " ")
+		if len([]rune(full)) < len([]rune(strings.TrimSpace(s))) {
+			last := lines[maxLines-1]
+			runes := []rune(last)
+			ell := "..."
+			if len(runes) > width-len(ell) && width > len(ell) {
+				runes = runes[:width-len(ell)]
+			}
+			lines[maxLines-1] = string(runes) + ell
+		}
+	}
+	return lines
 }
 
 // bodyMax returns the maximum visible width a single body line may
@@ -125,7 +217,7 @@ func bodyMax(width int) int {
 // formatToolHeadline renders a one-line label for a tool call. The
 // representation is tool-specific so the user reads "Edit foo.go"
 // instead of a generic "Edit (id=toolu_01)".
-func formatToolHeadline(t loop.ToolCallInfo) string {
+func formatToolHeadline(t agentcontract.ToolCallInfo) string {
 	switch t.Name {
 	case "Bash":
 		return "Bash  " + truncate(stringArg(t.Args, "command"), 60)

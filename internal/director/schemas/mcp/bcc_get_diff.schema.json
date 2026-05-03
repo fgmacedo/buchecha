@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bcc_get_diff",
+  "description": "Reviewer reads the unified diff produced by the audited Executor invocation. The handler resolves the SHAs from the briefing the Reviewer is registered to.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent_id"],
+  "properties": {
+    "agent_id": { "type": "string", "minLength": 1 }
+  }
+}

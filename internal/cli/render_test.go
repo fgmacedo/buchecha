@@ -16,28 +16,28 @@ func scriptedTranscript() []loop.Event {
 	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
 	return []loop.Event{
 		loop.IterationStarted{Index: 1, MaxIter: 5, At: at}, // info
-		loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindThinking, At: at, Text: "thinking...",
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindThinking, At: at, Text: "thinking...",
 		}}, // trace
-		loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindToolUse, At: at,
-			Tool: &loop.ToolCallInfo{ID: "t1", Name: "Bash", Args: map[string]any{"cmd": "ls"}},
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolUse, At: at,
+			Tool: &agentcontract.ToolCallInfo{ID: "t1", Name: "Bash", Args: map[string]any{"cmd": "ls"}},
 		}}, // info
-		loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindToolResult, At: at,
-			Tool: &loop.ToolCallInfo{ID: "t1", IsError: false, Summary: "ok"},
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolResult, At: at,
+			Tool: &agentcontract.ToolCallInfo{ID: "t1", IsError: false, Summary: "ok"},
 		}}, // debug
-		loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindToolResult, At: at,
-			Tool: &loop.ToolCallInfo{ID: "t2", IsError: true, Summary: "boom"},
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindToolResult, At: at,
+			Tool: &agentcontract.ToolCallInfo{ID: "t2", IsError: true, Summary: "boom"},
 		}}, // error
-		loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindRateLimit, At: at,
-			Rate: &loop.RateLimitInfo{Status: "warning"},
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindRateLimit, At: at,
+			Rate: &agentcontract.RateLimitInfo{Status: "warning"},
 		}}, // warn
-		loop.AgentEventReceived{Event: loop.AgentEvent{
-			Kind: loop.KindResultSummary, At: at,
-			Done: &loop.ResultSummaryInfo{NumTurns: 1, TotalCostUSD: 0.5},
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+			Kind: agentcontract.KindResultSummary, At: at,
+			Done: &agentcontract.ResultSummaryInfo{NumTurns: 1, TotalCostUSD: 0.5},
 		}}, // info
 		loop.IterationFinished{Index: 1, Signal: agentcontract.SignalDone, HEADAdvanced: true, At: at}, // info
 		loop.LoopFinished{Reason: "spec done", ExitCode: 0, At: at},                                    // info
