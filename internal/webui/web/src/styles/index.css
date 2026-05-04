@@ -10,6 +10,17 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
+/* Pin the content scan to the SPA source tree so the utility set is
+   stable across cold and warm builds. Tailwind's automatic
+   discovery otherwise picks up strings inside the previous build's
+   dist/assets/*.js bundle when it lingers between runs, padding the
+   utility list with classes never used in source. Excluding dist
+   keeps the bundle deterministic; @source on src and index.html
+   declares the only inputs. */
+@source not "../../dist";
+@source "../**/*.{ts,tsx,html}";
+@source "../../index.html";
+
 /* Promote the design tokens to Tailwind v4's @theme layer so utility
    classes resolve names like bg-background, text-foreground, and
    bg-status-done without a config file. The values reference the
