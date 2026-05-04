@@ -1,0 +1,8 @@
+/* Stub stylesheet for the bcc dashboard SPA bundle. The real
+   asset, content-hashed by Vite, is generated in P6. This file
+   exists so internal/webui/handler_test.go has a known
+   /assets/<path> to fetch and so go:embed has at least one
+   embeddable file under web/dist/assets/. */
+:root {
+  color-scheme: dark;
+}
