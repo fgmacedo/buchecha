@@ -89,15 +89,19 @@ type directorIO struct {
 // persistence, and user confirmation; the brief/execute/review pipeline
 // lands in P5-P7.
 func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string, cfg *config.Config) error {
-	boot, err := newMCPBoot(nil)
+	listener, err := startRunListener(ctx, nil, nil, nil, runListenerBind())
 	if err != nil {
 		ExitCode = loop.ExitInvalid
 		return err
 	}
-	defer boot.Close()
+	defer func() {
+		if cerr := listener.Stop(); cerr != nil {
+			slog.Warn("cli: run listener stop", "err", cerr)
+		}
+	}()
 
-	deps := defaultDirectorDeps(cfg, boot)
-	deps.boot = boot
+	deps := defaultDirectorDeps(cfg, listener.boot)
+	deps.boot = listener.boot
 	dio := directorIO{
 		stdin:   os.Stdin,
 		stderr:  os.Stderr,
@@ -105,6 +109,14 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		session: runSessionID,
 	}
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
+}
+
+// runListenerBind returns the bind address used by startRunListener.
+// The default is loopback with an OS-assigned port. P4 keeps the
+// surface minimal; an explicit `--bind` flag lands once webui/api
+// configuration grows in P5+.
+func runListenerBind() string {
+	return "127.0.0.1:0"
 }
 
 func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {

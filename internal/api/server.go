@@ -197,6 +197,19 @@ func (s *Server) OpenAPI() *huma.OpenAPI {
 // Listen does not start any goroutine that outlives the call: when
 // it returns, the listener is fully closed.
 func (s *Server) Listen(ctx context.Context, bind string) error {
+	return s.ListenAndNotify(ctx, bind, nil)
+}
+
+// ListenAndNotify is Listen with a callback that fires once the
+// listener has bound but before the serve loop accepts a connection.
+// The callback receives the resolved address (host:port) so the
+// composition root can publish it to dependencies that need a live
+// URL (the MCP boot's MCPURL, the stderr banner, the smoke test).
+// Pass nil for ready to fall back to Listen's behavior.
+//
+// ListenAndNotify does not start any goroutine that outlives the
+// call: when it returns, the listener is fully closed.
+func (s *Server) ListenAndNotify(ctx context.Context, bind string, ready func(addr string)) error {
 	ln, err := net.Listen("tcp", bind)
 	if err != nil {
 		return fmt.Errorf("api: listen %s: %w", bind, err)
@@ -205,6 +218,10 @@ func (s *Server) Listen(ctx context.Context, bind string) error {
 	srv := &http.Server{
 		Handler:           s.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if ready != nil {
+		ready(ln.Addr().String())
 	}
 
 	serveErrCh := make(chan error, 1)
