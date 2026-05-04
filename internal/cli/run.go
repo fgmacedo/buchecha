@@ -27,6 +27,8 @@ var (
 	runSessionID       string
 	runDebugLogs       bool
 	runDebugLogsStdout bool
+	runAPI             bool
+	runWebUI           bool
 )
 
 var runCmd = &cobra.Command{
@@ -53,6 +55,8 @@ func init() {
 	runCmd.Flags().StringVar(&runSessionID, "session", "", "resume the named session id (combine with --resume to resolve; without --resume, fails if the session does not exist)")
 	runCmd.Flags().BoolVar(&runDebugLogs, "debug-logs", false, "capture per-spawn stderr of every Director role under .bcc/sessions/<id>/runs/ (overrides [debug].capture_subprocess_logs)")
 	runCmd.Flags().BoolVar(&runDebugLogsStdout, "debug-logs-stdout", false, "also capture per-spawn stream-json stdout (heavier; implies --debug-logs; overrides [debug].capture_subprocess_stdout)")
+	runCmd.Flags().BoolVar(&runAPI, "api", false, "advertise the bcc HTTP API on stderr at startup (the listener always binds for MCP; this flag only controls the banner)")
+	runCmd.Flags().BoolVar(&runWebUI, "webui", false, "advertise the embedded web dashboard on stderr at startup; takes precedence over --api when both are set")
 	rootCmd.AddCommand(runCmd)
 }
 

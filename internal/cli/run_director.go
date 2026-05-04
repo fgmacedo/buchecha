@@ -100,6 +100,8 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		}
 	}()
 
+	printRunBanner(os.Stderr, listener.addr, listener.sessionToken, runAPI, runWebUI)
+
 	deps := defaultDirectorDeps(cfg, listener.boot)
 	deps.boot = listener.boot
 	dio := directorIO{
