@@ -52,8 +52,9 @@ type Mounts struct {
 // this iteration registers no operation that consumes it, so callers
 // may pass nil while the foundation is being assembled.
 type Server struct {
-	svc    *services.Services
-	mounts Mounts
+	svc     *services.Services
+	mounts  Mounts
+	humaAPI huma.API
 }
 
 // New builds a Server bound to svc. svc may be nil during the
@@ -78,12 +79,13 @@ func (s *Server) WithMounts(m Mounts) *Server {
 // non-nil.
 func (s *Server) Routes() http.Handler {
 	root := chi.NewRouter()
+	root.Use(RequestContext)
 
 	// /api/v1 subtree backed by the huma adapter. We mount a
 	// dedicated sub-router so the huma routes live below /api/v1
 	// without leaking onto the root.
 	apiRouter := chi.NewRouter()
-	humachi.New(apiRouter, huma.DefaultConfig("bcc", APIVersion))
+	s.humaAPI = humachi.New(apiRouter, huma.DefaultConfig("bcc", APIVersion))
 	root.Mount("/api/"+APIVersion, apiRouter)
 
 	if s.mounts.MCP != nil {
@@ -94,6 +96,26 @@ func (s *Server) Routes() http.Handler {
 	}
 
 	return root
+}
+
+// HumaAPI returns the huma.API constructed by the most recent
+// Routes() call. It is nil before the first call. Tests use it to
+// register probe operations against the same registry that production
+// handlers will share in P3.
+func (s *Server) HumaAPI() huma.API {
+	return s.humaAPI
+}
+
+// OpenAPI returns the OpenAPI 3.1 document built by the huma adapter.
+// It is the source of truth for the generator command (T2.6) and any
+// future tooling that walks the schema. The first call materializes
+// the router and adapter via Routes() so the document reflects the
+// configured Server.
+func (s *Server) OpenAPI() *huma.OpenAPI {
+	if s.humaAPI == nil {
+		_ = s.Routes()
+	}
+	return s.humaAPI.OpenAPI()
 }
 
 // Listen binds a TCP listener at bind and serves Routes() until ctx
