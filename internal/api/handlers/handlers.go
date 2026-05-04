@@ -9,6 +9,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,22 @@ type Deps struct {
 	// canonical envelope with the mapped HTTP status. Non-huma
 	// handlers (openapi, schemas, sse) use WriteError instead.
 	HumaError func(err error) huma.StatusError
+	// NewSSEEmitter builds the SSE framing helper bound to w. The
+	// api package supplies a writer that calls http.Flusher after
+	// every record so reverse proxies do not buffer the chunked
+	// body. nil from the constructor means w cannot stream and the
+	// handler must surface a 500.
+	NewSSEEmitter func(w http.ResponseWriter) SSEEmitter
+	// SetSSEHeaders applies the canonical event-stream response
+	// headers (Content-Type, Cache-Control, Connection,
+	// X-Accel-Buffering). Provided by the api package so the SSE
+	// handler stays out of HTTP-detail land.
+	SetSSEHeaders func(http.Header)
+	// HeartbeatInterval overrides the SSE handler's :heartbeat
+	// cadence. Zero falls back to the production default; tests use
+	// a small interval to assert heartbeat behaviour without long
+	// waits.
+	HeartbeatInterval time.Duration
 }
 
 // Register installs every V1 read-only operation against api and,
@@ -63,4 +80,5 @@ func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps
 	registerDAG(api, svc, deps)
 	registerBriefings(api, svc, deps)
 	registerPrompts(api, svc, deps)
+	registerEvents(router, svc, deps)
 }

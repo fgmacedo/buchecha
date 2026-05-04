@@ -26,6 +26,37 @@ type SeqEvent struct {
 	Event loop.Event `json:"event"`
 }
 
+// MarshalEvent returns the canonical JSON form of the SeqEvent's
+// Event field plus the wire-level kind discriminator. Protocol
+// adapters above services consume SeqEvent (it is part of the V1
+// service contract) but the loop package owns the closed Event
+// family and the matching wire schema, so adapters reach back here
+// instead of importing loop directly. The kind is the same string
+// the schemas/event.schema.json enum lists for the embedded "type"
+// field, suitable as the SSE event-kind.
+func MarshalEvent(se SeqEvent) ([]byte, string, error) {
+	body, err := loop.MarshalJSONEvent(se.Event)
+	if err != nil {
+		return nil, "", err
+	}
+	var head struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(body, &head); err != nil {
+		return body, "", err
+	}
+	return body, head.Type, nil
+}
+
+// IsFinalEvent reports whether se is the terminal LoopFinished
+// event, the signal SSE handlers use to flush and close the
+// response. Adapters cannot type-assert against loop.LoopFinished
+// directly because they sit above services in the layer graph.
+func IsFinalEvent(se SeqEvent) bool {
+	_, ok := se.Event.(loop.LoopFinished)
+	return ok
+}
+
 // ringSize is the in-memory ring buffer capacity per live session.
 // Subscribers requesting a seq older than the oldest still in the
 // ring receive ErrSeqGone and are expected to refresh state via

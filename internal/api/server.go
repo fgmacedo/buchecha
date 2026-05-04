@@ -53,11 +53,12 @@ type Mounts struct {
 // this iteration registers no operation that consumes it, so callers
 // may pass nil while the foundation is being assembled.
 type Server struct {
-	svc       *services.Services
-	mounts    Mounts
-	authToken string
-	humaAPI   huma.API
-	apiRouter chi.Router
+	svc          *services.Services
+	mounts       Mounts
+	authToken    string
+	humaAPI      huma.API
+	apiRouter    chi.Router
+	sseHeartbeat time.Duration
 }
 
 // New builds a Server bound to svc. svc may be nil during the
@@ -82,6 +83,15 @@ func (s *Server) WithMounts(m Mounts) *Server {
 // does not touch them.
 func (s *Server) WithAuth(token string) *Server {
 	s.authToken = token
+	return s
+}
+
+// WithSSEHeartbeat overrides the SSE handler's :heartbeat cadence.
+// The production default is 15 seconds; tests use a small interval
+// to assert heartbeat behaviour without long waits. Zero or negative
+// values revert to the production default.
+func (s *Server) WithSSEHeartbeat(d time.Duration) *Server {
+	s.sseHeartbeat = d
 	return s
 }
 
@@ -119,6 +129,15 @@ func (s *Server) Routes() http.Handler {
 		LoadSchema:    LoadSchema,
 		WriteError:    WriteError,
 		HumaError:     HumaServiceError,
+		NewSSEEmitter: func(w http.ResponseWriter) handlers.SSEEmitter {
+			ew, err := NewSSEWriter(w)
+			if err != nil {
+				return nil
+			}
+			return ew
+		},
+		SetSSEHeaders:     SetSSEHeaders,
+		HeartbeatInterval: s.sseHeartbeat,
 	})
 	root.Mount("/api/"+APIVersion, apiRouter)
 
