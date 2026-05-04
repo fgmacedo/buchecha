@@ -60,4 +60,5 @@ func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps
 	registerSchemas(router, deps)
 	registerSessions(api, svc, deps)
 	registerSnapshot(api, svc, deps)
+	registerDAG(api, svc, deps)
 }
