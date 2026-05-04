@@ -62,4 +62,5 @@ func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps
 	registerSnapshot(api, svc, deps)
 	registerDAG(api, svc, deps)
 	registerBriefings(api, svc, deps)
+	registerPrompts(api, svc, deps)
 }
