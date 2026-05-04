@@ -40,6 +40,7 @@ func TestStartRunListener_MountsMCPAtMcpPrefix(t *testing.T) {
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+listener.boot.token())
 	req.Header.Set(mcp.RoleHeader, string(dag.RolePlanner))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -200,10 +201,11 @@ func TestStartRunListener_RoutesShareSinglePort(t *testing.T) {
 		t.Errorf("api status = %d, want 200", resp1.StatusCode)
 	}
 
-	// /mcp/ with role header.
+	// /mcp/ with bearer + role header.
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
 	req2, _ := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, body)
 	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+listener.boot.token())
 	req2.Header.Set(mcp.RoleHeader, string(dag.RolePlanner))
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
@@ -276,3 +278,49 @@ func TestStartRunListener_MountsWebUIAtRoot(t *testing.T) {
 // Compile-time check that runListener exposes the api.Server we
 // constructed; this guards the field rename if it ever happens.
 var _ = (*api.Server)(nil)
+
+// TestStartRunListener_PathScopedAuthIsolation confirms the two
+// surfaces sit behind different tokens on the same listener: a
+// session bearer rejects on /mcp/, an agent bearer rejects on
+// /api/v1/. T4.6 enforces this by mounting MCPAuth on the /mcp/*
+// subtree and SessionAuth on /api/v1/* and /.
+func TestStartRunListener_PathScopedAuthIsolation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	listener, err := startRunListener(ctx, nil, nil, nil, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("startRunListener: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Stop() })
+
+	apiURL := "http://" + listener.addr + "/api/v1/sessions"
+	mcpURL := listener.boot.MCPURL()
+
+	// session token on /mcp/ -> 401.
+	req1, _ := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, strings.NewReader("{}"))
+	req1.Header.Set("Authorization", "Bearer "+listener.sessionToken)
+	req1.Header.Set(mcp.RoleHeader, string(dag.RolePlanner))
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatalf("mcp do: %v", err)
+	}
+	_ = resp1.Body.Close()
+	if resp1.StatusCode != http.StatusUnauthorized {
+		t.Errorf("/mcp/ with session token: got %d, want 401", resp1.StatusCode)
+	}
+
+	// agent (mcp) token on /api/v1/sessions -> 401.
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	req2.Header.Set("Authorization", "Bearer "+listener.boot.token())
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("api do: %v", err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("/api/v1/sessions with agent token: got %d, want 401", resp2.StatusCode)
+	}
+}

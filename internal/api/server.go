@@ -31,11 +31,17 @@ import (
 const shutdownGracePeriod = 5 * time.Second
 
 // Mounts collects the optional sub-handlers a Server can host
-// alongside the /api/v1 subtree. Both fields are nil-safe; a nil
-// handler means the corresponding mount point is not registered.
+// alongside the /api/v1 subtree. Both handler fields are nil-safe; a
+// nil handler means the corresponding mount point is not registered.
 type Mounts struct {
 	// MCP is the MCP HTTP handler mounted at /mcp/ when non-nil.
 	MCP http.Handler
+	// MCPAuth, when non-nil, wraps MCP with a path-scoped auth
+	// middleware. The composition root supplies it so the api package
+	// does not import internal/director/dag or internal/mcp; see
+	// MCPAuth in this package for the canonical implementation. nil
+	// leaves /mcp/* unauthenticated.
+	MCPAuth func(http.Handler) http.Handler
 	// WebUI is the embedded WebUI handler mounted at / when non-nil.
 	WebUI http.Handler
 }
@@ -142,7 +148,11 @@ func (s *Server) Routes() http.Handler {
 	root.Mount("/api/"+APIVersion, apiRouter)
 
 	if s.mounts.MCP != nil {
-		root.Mount("/mcp", s.mounts.MCP)
+		mcpHandler := s.mounts.MCP
+		if s.mounts.MCPAuth != nil {
+			mcpHandler = s.mounts.MCPAuth(mcpHandler)
+		}
+		root.Mount("/mcp", mcpHandler)
 	}
 	if s.mounts.WebUI != nil {
 		root.Mount("/", s.mounts.WebUI)

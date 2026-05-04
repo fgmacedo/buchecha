@@ -55,8 +55,9 @@ func startRunListener(
 	sessionToken := api.NewSessionToken()
 	apiServer := api.New(svc).
 		WithMounts(api.Mounts{
-			MCP:   boot.server.Routes(),
-			WebUI: webuiHandler,
+			MCP:     boot.server.Routes(),
+			MCPAuth: api.MCPAuth(boot.token(), boot.server.ConnectionNames()),
+			WebUI:   webuiHandler,
 		}).
 		WithAuth(sessionToken)
 
