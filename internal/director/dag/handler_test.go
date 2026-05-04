@@ -877,6 +877,81 @@ func TestForceApprovePending_RejectsUnknownIteration(t *testing.T) {
 	}
 }
 
+type capturingObserver struct {
+	calls []observerCall
+}
+
+type observerCall struct {
+	method  string
+	agentID string
+	role    Role
+}
+
+func (c *capturingObserver) OnCall(method, agentID string, role Role, _ map[string]any) {
+	c.calls = append(c.calls, observerCall{method: method, agentID: agentID, role: role})
+}
+
+func TestHandler_AttachObserver(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	exec, _ := h.Registry().Register(RoleExecutor, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
+	})
+
+	obs := &capturingObserver{}
+	h.AttachObserver(obs)
+
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t1",
+	}); err != nil {
+		t.Fatalf("started: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskCompleted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t1",
+	}); err != nil {
+		t.Fatalf("completed: %v", err)
+	}
+	// Out-of-scope id: handler rejects, observer must not fire.
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t2",
+	}); err == nil {
+		t.Fatal("expected rejection on out-of-scope id")
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodGetPendingTasks, map[string]any{
+		"agent_id": string(exec),
+	}); err != nil {
+		t.Fatalf("pending: %v", err)
+	}
+
+	if len(obs.calls) != 3 {
+		t.Fatalf("observer calls = %d, want 3 (rejection must not fire)", len(obs.calls))
+	}
+	want := []observerCall{
+		{method: MethodTaskStarted, agentID: string(exec), role: RoleExecutor},
+		{method: MethodTaskCompleted, agentID: string(exec), role: RoleExecutor},
+		{method: MethodGetPendingTasks, agentID: string(exec), role: RoleExecutor},
+	}
+	for i, c := range obs.calls {
+		if c != want[i] {
+			t.Errorf("call[%d] = %+v, want %+v", i, c, want[i])
+		}
+	}
+
+	// Detach: subsequent calls do not extend the slice.
+	h.AttachObserver(nil)
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodGetPendingTasks, map[string]any{
+		"agent_id": string(exec),
+	}); err != nil {
+		t.Fatalf("post-detach call: %v", err)
+	}
+	if len(obs.calls) != 3 {
+		t.Errorf("observer fired after detach: got %d calls", len(obs.calls))
+	}
+}
+
 // readFile is a small helper that returns the file contents as a string,
 // failing the test on I/O error.
 func readFile(t *testing.T, path string) (string, error) {

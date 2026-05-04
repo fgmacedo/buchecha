@@ -50,6 +50,15 @@ type methodSpec struct {
 	handle       func(*Handler, context.Context, AgentEntry, map[string]any) (string, error)
 }
 
+// HandlerObserver receives a notification after every successful
+// dispatch through HandleCall, post-schema and post-scope checks. The
+// handler invokes OnCall with no mutex held; observers must not block
+// (HandleCall runs on MCP HTTP goroutines) and must not call back into
+// the handler.
+type HandlerObserver interface {
+	OnCall(method string, agentID string, role Role, input map[string]any)
+}
+
 // briefingState holds per-briefing handler-side context: the Briefing
 // itself (set by bcc_briefing_emit), plus the inputs needed to answer
 // bcc_get_diff and bcc_get_journal_delta. The loop populates the SHA
@@ -85,9 +94,10 @@ type Handler struct {
 	dispatch map[string]methodSpec
 	schemas  map[string]*jsonschema.Schema
 
-	git     GitDiffProvider
-	journal JournalDeltaProvider
-	audit   *AuditLog
+	git      GitDiffProvider
+	journal  JournalDeltaProvider
+	audit    *AuditLog
+	observer HandlerObserver
 
 	planStore     PlanPersister
 	briefingStore BriefingPersister
@@ -293,6 +303,16 @@ func (h *Handler) AttachAudit(audit *AuditLog) {
 	h.audit = audit
 }
 
+// AttachObserver binds a HandlerObserver to the handler. Late-binding
+// matches AttachAudit: the loop attaches its translator at the start
+// of runDirector and detaches with nil at exit. Only one observer is
+// active at a time; subsequent calls replace the previous binding.
+func (h *Handler) AttachObserver(o HandlerObserver) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.observer = o
+}
+
 // SetCapabilityRegistry installs the merged capability registry the
 // handler uses to validate per-phase role assignments emitted with
 // bcc_plan_emit. Plans land before the registry on cli boot ordering,
@@ -423,6 +443,14 @@ func (h *Handler) HandleCall(ctx context.Context, connectionName, methodName str
 		}
 	}
 	result, err := spec.handle(h, ctx, entry, input)
+	if err == nil {
+		h.mu.Lock()
+		obs := h.observer
+		h.mu.Unlock()
+		if obs != nil {
+			obs.OnCall(methodName, id, Role(connectionName), input)
+		}
+	}
 	h.logCall(connectionName, id, methodName, input, result, err)
 	return result, err
 }

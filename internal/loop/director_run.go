@@ -47,6 +47,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		d.Handler.SetState(state)
 		d.Handler.SetPlan(d.Plan)
 	}
+	bridge := &taskEventBridge{events: events, reg: d.Handler.Registry()}
+	d.Handler.AttachObserver(bridge)
+	defer d.Handler.AttachObserver(nil)
 	defer func() {
 		if d.Store == nil || d.Store.Session() == nil {
 			return
@@ -531,6 +534,47 @@ func maxRetryBudget(phase *director.Phase, subDAG []string) int {
 		}
 	}
 	return best
+}
+
+// taskEventBridge translates successful bcc_task_* calls observed on
+// the dag.Handler into typed loop events. Other methods are dropped.
+// The send is non-blocking: a stalled TUI consumer must not freeze
+// the MCP HTTP handler that runs inside the Executor's MCP call. A
+// dropped progress event delays the bar by one frame; a stalled
+// handler stalls the entire pipeline.
+type taskEventBridge struct {
+	events chan<- Event
+	reg    *dag.AgentRegistry
+}
+
+func (b *taskEventBridge) OnCall(method, agentID string, _ dag.Role, input map[string]any) {
+	id, _ := input["id"].(string)
+	phase := ""
+	if entry, ok := b.reg.Lookup(dag.AgentID(agentID)); ok {
+		phase = string(entry.PhaseID)
+	}
+	now := time.Now()
+	var ev Event
+	switch method {
+	case dag.MethodTaskStarted:
+		ev = TaskStarted{PhaseID: phase, TaskID: id, At: now}
+	case dag.MethodTaskCompleted:
+		ev = TaskCompleted{PhaseID: phase, TaskID: id, At: now}
+	case dag.MethodTaskApproved:
+		ev = TaskApproved{PhaseID: phase, TaskID: id, At: now}
+	case dag.MethodTaskNeedsFix:
+		feedback, _ := input["feedback"].(string)
+		ev = TaskNeedsFix{PhaseID: phase, TaskID: id, Note: feedback, At: now}
+	default:
+		return
+	}
+	if b.events == nil {
+		return
+	}
+	select {
+	case b.events <- ev:
+	default:
+	}
 }
 
 // awaitEscalation blocks until the escalation channel delivers a reply
