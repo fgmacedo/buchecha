@@ -121,7 +121,7 @@ func TestRun_PromptIsLastArg(t *testing.T) {
 		Model:             "test-model",
 		ExtraArgs:         []string{"--foo", "--bar"},
 		SkipPermissions:   true,
-		MCPURL:            "http://127.0.0.1:1/mcp",
+		MCPURL:            "http://127.0.0.1:1/mcp/",
 		MCPToken:          "deadbeef",
 		MCPConnectionName: "bcc-executor",
 	})

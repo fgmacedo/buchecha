@@ -130,7 +130,7 @@ type Config struct {
 	// truncated and skipped rather than aborting the iteration.
 	MaxLineBytes int
 
-	// MCPURL is the http://127.0.0.1:port/mcp endpoint of the run-wide
+	// MCPURL is the http://127.0.0.1:port/mcp/ endpoint of the run-wide
 	// MCP server. When empty, the adapter omits the --mcp-config wiring
 	// entirely; useful for tests against fake-claude scripts that never
 	// connect.

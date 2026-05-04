@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -129,7 +130,7 @@ func TestArgs_PassedToBinary(t *testing.T) {
 		Model:        "test-model",
 		MaxBudgetUSD: 0.5,
 		ExtraArgs:    []string{"--foo"},
-		MCPURL:       "http://127.0.0.1:1/mcp",
+		MCPURL:       "http://127.0.0.1:1/mcp/",
 		MCPToken:     "secret",
 	})
 	_, err := a.Brief(context.Background(), director.BrieferInput{
@@ -312,6 +313,75 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 				t.Errorf("agent_id marker missing in %s prompt", tc.name)
 			}
 		})
+	}
+}
+
+// TestWriteMCPConfig_PreservesURLAndCarriesRoleHeader pins the per-spawn
+// mcp-config.json shape against the new shared-listener URL contract:
+// the URL is written verbatim (no rewrite, no segment stripping), the
+// X-BCC-Role header carries the role's connection name, and the bearer
+// token lives in Authorization. The trailing slash matters because chi
+// strips the /mcp prefix and an agent that hits /mcp would land outside
+// the mount.
+func TestWriteMCPConfig_PreservesURLAndCarriesRoleHeader(t *testing.T) {
+	const url = "http://127.0.0.1:54321/mcp/"
+	path, cleanup, err := writeMCPConfig(url, "tok", "bcc-planner")
+	if err != nil {
+		t.Fatalf("writeMCPConfig: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read mcp-config: %v", err)
+	}
+	var doc struct {
+		MCPServers map[string]struct {
+			Type    string            `json:"type"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("decode mcp-config: %v\n%s", err, body)
+	}
+	server, ok := doc.MCPServers["bcc"]
+	if !ok {
+		t.Fatalf("mcpServers[bcc] missing: %s", body)
+	}
+	if server.Type != "http" {
+		t.Errorf("type = %q, want http", server.Type)
+	}
+	if server.URL != url {
+		t.Errorf("url = %q, want %q (verbatim, no rewrite)", server.URL, url)
+	}
+	if !strings.HasSuffix(server.URL, "/mcp/") {
+		t.Errorf("url must end with /mcp/, got %q", server.URL)
+	}
+	if got := server.Headers["Authorization"]; got != "Bearer tok" {
+		t.Errorf("Authorization = %q, want Bearer tok", got)
+	}
+	if got := server.Headers["X-BCC-Role"]; got != "bcc-planner" {
+		t.Errorf("X-BCC-Role = %q, want bcc-planner", got)
+	}
+}
+
+// TestWriteMCPConfig_RejectsEmptyURL guards the precondition: callers
+// must supply the run-wide MCP URL (the composition root resolves it
+// once the listener binds).
+func TestWriteMCPConfig_RejectsEmptyURL(t *testing.T) {
+	_, _, err := writeMCPConfig("", "tok", "bcc-planner")
+	if err == nil {
+		t.Fatal("expected error for empty url")
+	}
+}
+
+// TestWriteMCPConfig_RejectsEmptyConnection guards the role header so
+// the handler's connection-name allow-list never sees a blank value.
+func TestWriteMCPConfig_RejectsEmptyConnection(t *testing.T) {
+	_, _, err := writeMCPConfig("http://x/mcp/", "tok", "")
+	if err == nil {
+		t.Fatal("expected error for empty connection name")
 	}
 }
 

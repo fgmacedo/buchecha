@@ -145,11 +145,14 @@ type Config struct {
 	// when zero.
 	MaxLineBytes int
 
-	// MCPURL is the http://127.0.0.1:port/mcp endpoint of the run-wide
-	// MCP server. The adapter writes a per-spawn mcp-config pointing at
-	// it with the role's connection name carried in the X-BCC-Role
-	// header. Empty disables the --mcp-config wiring; useful for tests
-	// against fake-claude scripts that do not connect.
+	// MCPURL is the http://127.0.0.1:port/mcp/ endpoint of the run-wide
+	// MCP handler mounted on the shared API listener. The adapter writes
+	// a per-spawn mcp-config pointing at it verbatim with the role's
+	// connection name carried in the X-BCC-Role header; the trailing
+	// slash matters because chi mounts the handler at /mcp and strips
+	// the prefix, so agents must hit /mcp/ to land inside the mount.
+	// Empty disables the --mcp-config wiring; useful for tests against
+	// fake-claude scripts that do not connect.
 	MCPURL string
 
 	// MCPToken is the bearer token the agent presents in Authorization
