@@ -1,0 +1,61 @@
+/*
+ * Design tokens for the bcc dashboard. V1 is dark-only, so the
+ * canonical palette lives under both :root (default) and the
+ * [data-theme="dark"] guard. The light-mode block is intentionally
+ * absent: a future light theme will land as a [data-theme="light"]
+ * override without touching consumers.
+ *
+ * Status colors map directly to the lifecycle vocabulary used by the
+ * Director: pending, running (in_progress on the wire), done,
+ * needs_fix, and error (terminal failure surfaced by the runtime).
+ *
+ * Font family stacks declare fallbacks only. T6.5 will register the
+ * self-hosted Geist Sans, Geist Mono, and Instrument Serif WOFF2
+ * binaries via @font-face so the named families resolve before
+ * falling back to the system stacks below.
+ */
+
+:root,
+[data-theme="dark"] {
+  /* Surface */
+  --color-background: #0b0d10;
+  --color-foreground: #e6e8eb;
+  --color-muted: #1a1d21;
+  --color-muted-foreground: #9ba1a8;
+  --color-border: #262a30;
+
+  /* Accent */
+  --color-accent: #6ea8ff;
+  --color-accent-foreground: #0b0d10;
+
+  /* Lifecycle status palette */
+  --status-pending: #6b7280;
+  --status-running: #6ea8ff;
+  --status-done: #4ade80;
+  --status-needs-fix: #f59e0b;
+  --status-error: #ef4444;
+
+  /* Typography stacks. Names of T6.5-provided faces appear first;
+     each falls back to a battle-tested system stack so the SPA
+     reads correctly before WOFF2 binaries are wired. */
+  --font-sans:
+    "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  --font-serif:
+    "Instrument Serif", ui-serif, Georgia, Cambria, "Times New Roman",
+    Times, serif;
+}
+
+/* Make the dark palette the document default so an unstyled root
+   still reads as dark, and so html[data-theme="dark"] is forward
+   compatible with later theme variants. */
+html,
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  color-scheme: dark;
+  font-family: var(--font-sans);
+}

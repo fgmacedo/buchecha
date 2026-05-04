@@ -1,0 +1,34 @@
+/*
+ * Entry point stylesheet for the bcc dashboard. Tailwind v4 ships its
+ * preflight, utilities, and theme parser through a single import, and
+ * the @tailwindcss/vite plugin turns this file into the hashed CSS
+ * bundle Vite injects into index.html. tokens.css is loaded after
+ * tailwind so design-token CSS variables can override Tailwind's
+ * theme defaults at the cascade level.
+ */
+
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Promote the design tokens to Tailwind v4's @theme layer so utility
+   classes resolve names like bg-background, text-foreground, and
+   bg-status-done without a config file. The values reference the
+   same CSS variables defined in tokens.css so the source of truth
+   stays in one place. */
+@theme {
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-foreground);
+  --color-muted: var(--color-muted);
+  --color-muted-foreground: var(--color-muted-foreground);
+  --color-border: var(--color-border);
+  --color-accent: var(--color-accent);
+  --color-accent-foreground: var(--color-accent-foreground);
+  --color-status-pending: var(--status-pending);
+  --color-status-running: var(--status-running);
+  --color-status-done: var(--status-done);
+  --color-status-needs-fix: var(--status-needs-fix);
+  --color-status-error: var(--status-error);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+}
