@@ -6,9 +6,12 @@ check-build:
 api-openapi:
 	go run ./internal/api/cmd/gen-openapi
 
-# Stub target: the real SPA bundle lands in P6 (see docs/specs/api-webui).
+# Build the SPA bundle into internal/webui/web/dist/. Vite is invoked
+# after api-openapi so the generator wired in package.json prebuild
+# reads the freshest internal/api/openapi.json on every run, and the
+# Go embed at internal/webui/embed.go picks up the rebuilt bundle.
 webui: api-openapi
-	@echo "webui: stub (real bundle lands in P6)"
+	cd internal/webui/web && npm ci && npm run build
 
 build: webui check-build
 	go build -o bcc ./cmd/bcc
