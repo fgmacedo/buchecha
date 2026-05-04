@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { paths } from './lib/api-client'
 
 // Bind a generated operation type so `tsc -b` fails when the OpenAPI
@@ -6,40 +7,90 @@ import type { paths } from './lib/api-client'
 type GetSessionSnapshot = paths['/sessions/{id}/snapshot']['get']
 void (0 as unknown as GetSessionSnapshot)
 
-// Visual probe rendered until the layout shell (T6.4) lands. It
-// exercises every status color and the surface/foreground tokens so
-// the Tailwind v4 + tokens.css pipeline is verifiable by eye and by
-// build. Anything more ambitious belongs in the layout iteration.
-const statusEntries: ReadonlyArray<{ name: string; className: string }> = [
-  { name: 'pending', className: 'bg-status-pending' },
-  { name: 'running', className: 'bg-status-running' },
-  { name: 'done', className: 'bg-status-done' },
-  { name: 'needs_fix', className: 'bg-status-needs-fix' },
-  { name: 'error', className: 'bg-status-error' },
-]
-
+// Layout shell (T6.4). The five regions render labelled stubs so the
+// geometry is verifiable by eye before P7 fills each panel with its
+// real content. The outer frame is a CSS grid with three rows
+// (header, body, drawer) and the body row is a three-column grid
+// (sidebar, main, right panel) so the sidebar widths can scale with
+// the viewport between 1024px and 2560px without media queries on the
+// shell. The drawer collapses via a useState toggle and animates via
+// a height transition; no external state libraries.
 export function App() {
+  const [drawerOpen, setDrawerOpen] = useState(true)
+
   return (
-    <main className="min-h-screen bg-background text-foreground p-8 font-sans">
-      <header className="mb-8">
-        <h1 className="text-3xl font-semibold">bcc dashboard</h1>
-        <p className="text-muted-foreground mt-2">
-          Design token probe. The layout shell lands in T6.4.
-        </p>
+    <div
+      className="grid h-screen w-screen bg-background text-foreground font-sans"
+      style={{
+        gridTemplateRows: `auto minmax(0, 1fr) auto`,
+      }}
+    >
+      <header
+        aria-label="Header"
+        className="flex items-center border-b border-border bg-muted px-6 py-3"
+      >
+        <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
+          Header
+        </span>
       </header>
-      <section aria-label="status palette">
-        <h2 className="text-xl font-medium mb-4 font-serif">Status palette</h2>
-        <ul className="flex flex-wrap gap-3">
-          {statusEntries.map((entry) => (
-            <li
-              key={entry.name}
-              className={`${entry.className} px-3 py-1 rounded text-sm font-mono text-accent-foreground`}
-            >
-              {entry.name}
-            </li>
-          ))}
-        </ul>
+      <div
+        className="grid min-h-0"
+        style={{
+          gridTemplateColumns: `clamp(14rem, 18vw, 20rem) minmax(0, 1fr) clamp(18rem, 22vw, 28rem)`,
+        }}
+      >
+        <aside
+          aria-label="Sidebar"
+          className="flex flex-col border-r border-border bg-muted px-4 py-4 overflow-y-auto"
+        >
+          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
+            Sidebar
+          </span>
+        </aside>
+        <main
+          aria-label="Main"
+          className="flex min-w-0 flex-col overflow-y-auto px-6 py-6"
+        >
+          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
+            Main
+          </span>
+        </main>
+        <aside
+          aria-label="Right panel"
+          className="flex flex-col border-l border-border bg-muted px-4 py-4 overflow-y-auto"
+        >
+          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
+            Right panel
+          </span>
+        </aside>
+      </div>
+      <section
+        aria-label="Drawer"
+        className="border-t border-border bg-muted overflow-hidden transition-[height] duration-200 ease-out"
+        style={{ height: drawerOpen ? '14rem' : '2.5rem' }}
+      >
+        <div className="flex items-center justify-between px-6 py-2 border-b border-border">
+          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
+            Drawer
+          </span>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen((open) => !open)}
+            aria-expanded={drawerOpen}
+            aria-controls="drawer-body"
+            className="text-xs font-mono text-accent hover:text-accent-foreground hover:bg-accent rounded px-2 py-1 transition-colors"
+          >
+            {drawerOpen ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
+        <div
+          id="drawer-body"
+          aria-hidden={!drawerOpen}
+          className="px-6 py-3 text-sm text-muted-foreground"
+        >
+          Drawer content lands in P7.
+        </div>
       </section>
-    </main>
+    </div>
   )
 }
