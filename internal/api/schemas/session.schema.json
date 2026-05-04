@@ -7,6 +7,10 @@
   "additionalProperties": false,
   "required": ["id", "spec_path", "baseline_sha", "started_at", "status", "iteration_index", "max_iter"],
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional URI of the JSON Schema this document validates against, attached by huma's SchemaLinkTransformer."
+    },
     "id": {
       "type": "string",
       "minLength": 1
