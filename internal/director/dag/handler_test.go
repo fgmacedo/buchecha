@@ -483,6 +483,42 @@ func TestHandleBriefingEmit_AcceptsAndStores(t *testing.T) {
 	}
 }
 
+func TestHandleBriefingEmit_CoercesStringifiedBriefing(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	bid, _ := h.Registry().Register(RoleBriefer, RegisterArgs{})
+	stringified := `{"iteration_id":"P1-1","phase_id":"P1","sub_dag_task_ids":["t1"],"instructions":"do t1","spec_path":"/tmp/spec.md"}`
+	res, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodBriefingEmit, map[string]any{
+		"agent_id": string(bid),
+		"briefing": stringified,
+	})
+	if err != nil {
+		t.Fatalf("briefing emit (stringified): %v", err)
+	}
+	if !strings.Contains(res, "P1-1") {
+		t.Errorf("result %q missing iteration_id echo", res)
+	}
+	if h.Briefing("P1-1") == nil {
+		t.Error("briefing not stored after coercion")
+	}
+}
+
+func TestHandleBriefingEmit_RejectsUnparseableString(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	bid, _ := h.Registry().Register(RoleBriefer, RegisterArgs{})
+	_, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodBriefingEmit, map[string]any{
+		"agent_id": string(bid),
+		"briefing": "this is not JSON",
+	})
+	if err == nil {
+		t.Fatal("expected rejection: string is not parseable JSON object")
+	}
+	if !strings.Contains(err.Error(), "schema validation") {
+		t.Errorf("err = %v, want schema validation rejection", err)
+	}
+}
+
 func TestHandleBriefingEmit_RejectsIneligiblePhase(t *testing.T) {
 	h := NewHandler(nil, NewAgentRegistry(nil))
 	emitSamplePlan(t, h)

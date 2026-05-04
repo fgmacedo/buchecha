@@ -17,6 +17,8 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 2. Read the spec at `{{.SpecPath}}` via the `Read` tool to ground the briefing. You may also use `Grep`, `Glob`, and read-only `Bash` to inspect the repo.
 3. Emit the `Briefing` via `bcc_briefing_emit(agent_id, briefing)`. The handler validates that the phase is eligible and the sub-DAG is consistent; on rejection, correct and re-emit.
 
+   **Argument shape**: pass `briefing` as a JSON object literal, not as a stringified JSON. The argument value must be the briefing object itself (`{"phase_id": ..., "sub_dag_task_ids": [...], ...}`), not a string containing JSON (`"{\"phase_id\": ...}"`). The schema rejects strings.
+
 ## Briefing shape
 
 ```

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -411,6 +412,9 @@ func (h *Handler) HandleCall(ctx context.Context, connectionName, methodName str
 		h.logCall(connectionName, id, methodName, input, "", err)
 		return "", err
 	}
+	if methodName == MethodBriefingEmit {
+		coerceStringifiedObject(input, "briefing", id, methodName)
+	}
 	if sch := h.schemas[methodName]; sch != nil {
 		if err := sch.Validate(input); err != nil {
 			wrapped := fmt.Errorf("dag: %s: schema validation: %w", methodName, err)
@@ -447,6 +451,32 @@ func rolesSet(roles ...Role) map[Role]bool {
 		out[r] = true
 	}
 	return out
+}
+
+// coerceStringifiedObject mutates input in place when input[key] arrived
+// as a JSON-stringified object literal instead of an object. It is a
+// tolerance pass for a recurring LLM mistake on tools that take a large
+// structured field: the model wraps the JSON in quotes and ships a
+// string. When the string parses to a JSON object, we substitute the
+// parsed value and emit a slog warning so the regression is visible.
+// When the string does not parse, or the value is some other non-object
+// type, the input is left untouched and downstream schema validation
+// rejects it as before.
+func coerceStringifiedObject(input map[string]any, key, agentID, method string) {
+	raw, ok := input[key].(string)
+	if !ok {
+		return
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return
+	}
+	input[key] = parsed
+	slog.Warn("dag: agent sent stringified object, coerced",
+		"method", method,
+		"agent_id", agentID,
+		"key", key,
+	)
 }
 
 // handlePlanEmit accepts a Plan body, validates it (schema + structural
