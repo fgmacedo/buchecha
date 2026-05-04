@@ -102,6 +102,13 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 
 	printRunBanner(os.Stderr, listener.addr, listener.sessionToken, runAPI, runWebUI)
 
+	if runWebUIOpen {
+		// Best-effort browser launch: --webui-open is opt-in sugar; a
+		// failure here must not derail the run. openBrowser logs a Warn
+		// slog entry on its own; we discard the error after that.
+		_ = openBrowser(dashboardURL(listener.addr, listener.sessionToken))
+	}
+
 	deps := defaultDirectorDeps(cfg, listener.boot)
 	deps.boot = listener.boot
 	dio := directorIO{

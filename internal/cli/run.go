@@ -29,6 +29,8 @@ var (
 	runDebugLogsStdout bool
 	runAPI             bool
 	runWebUI           bool
+	runWebUIOpen       bool
+	runWebUIDev        bool
 )
 
 var runCmd = &cobra.Command{
@@ -56,7 +58,15 @@ func init() {
 	runCmd.Flags().BoolVar(&runDebugLogs, "debug-logs", false, "capture per-spawn stderr of every Director role under .bcc/sessions/<id>/runs/ (overrides [debug].capture_subprocess_logs)")
 	runCmd.Flags().BoolVar(&runDebugLogsStdout, "debug-logs-stdout", false, "also capture per-spawn stream-json stdout (heavier; implies --debug-logs; overrides [debug].capture_subprocess_stdout)")
 	runCmd.Flags().BoolVar(&runAPI, "api", false, "advertise the bcc HTTP API on stderr at startup (the listener always binds for MCP; this flag only controls the banner)")
-	runCmd.Flags().BoolVar(&runWebUI, "webui", false, "advertise the embedded web dashboard on stderr at startup; takes precedence over --api when both are set")
+	runCmd.Flags().BoolVarP(&runWebUI, "webui", "w", false, "serve the embedded web dashboard at the listener root and advertise it on stderr; takes precedence over --api when both are set")
+	runCmd.Flags().BoolVarP(&runWebUIOpen, "webui-open", "W", false, "after the listener is up, launch the default browser at the dashboard URL (implies --webui)")
+	runCmd.Flags().BoolVar(&runWebUIDev, "webui-dev", false, "reverse-proxy the SPA from the local Vite dev server (contributor mode)")
+	if err := runCmd.Flags().MarkHidden("webui-dev"); err != nil {
+		// Hidden marking only fails when the flag is missing. We just
+		// registered it above, so a non-nil err here is a programmer
+		// error worth surfacing in tests.
+		panic(fmt.Errorf("cli: hide --webui-dev: %w", err))
+	}
 	rootCmd.AddCommand(runCmd)
 }
 
@@ -93,6 +103,14 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 
 	if runAgentName != "" {
 		cfg.Agent.Name = runAgentName
+	}
+	// --webui-open implies --webui: passing -W alone is sugar for "open
+	// the dashboard right away", which is meaningless without the
+	// dashboard mounted. Promote the flag here so all downstream reads
+	// (config override, banner, handler construction) see a single
+	// truthy value.
+	if runWebUIOpen {
+		runWebUI = true
 	}
 	if cmd.Flags().Changed("debug-logs") {
 		cfg.Debug.CaptureSubprocessLogs = boolPtr(runDebugLogs)
