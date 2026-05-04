@@ -102,14 +102,14 @@ func (s *Server) Routes() http.Handler {
 		apiRouter.Use(SessionAuth(s.authToken))
 	}
 	cfg := huma.DefaultConfig("bcc", APIVersion)
-	// Disable huma's auto-mounted OpenAPI route. T3.2 serves the
-	// embedded bytes verbatim from internal/api/openapi.json so the
-	// document clients consume is byte-identical to the one
-	// regenerated at build time by `make api-openapi`. The huma
-	// adapter's runtime serializer would reformat and inject
-	// SchemaLinkTransformer fields, breaking that equality.
+	// Disable huma's auto-mounted OpenAPI, docs, and schemas routes.
+	// T3.2 serves the embedded openapi.json verbatim, T3.3 owns the
+	// /schemas/{name} subtree, and bcc does not expose a docs UI in
+	// V1. Leaving huma's defaults active would either duplicate
+	// chi routes (panic) or shadow ours.
 	cfg.OpenAPIPath = ""
 	cfg.DocsPath = ""
+	cfg.SchemasPath = ""
 	s.humaAPI = humachi.New(apiRouter, cfg)
 	s.apiRouter = apiRouter
 	handlers.Register(s.humaAPI, apiRouter, s.svc, handlers.Deps{
@@ -117,6 +117,7 @@ func (s *Server) Routes() http.Handler {
 		BinaryVersion: BinaryVersion(),
 		OpenAPIJSON:   OpenAPIJSON,
 		LoadSchema:    LoadSchema,
+		WriteError:    WriteError,
 	})
 	root.Mount("/api/"+APIVersion, apiRouter)
 

@@ -8,6 +8,8 @@
 package handlers
 
 import (
+	"net/http"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 
@@ -33,6 +35,11 @@ type Deps struct {
 	// SchemaFS in the api package; the schemas handler delegates to
 	// it instead of importing the embedded fs directly.
 	LoadSchema func(name string) ([]byte, error)
+	// WriteError serializes an error to the canonical envelope and
+	// the right HTTP status. Provided by the api package so handlers
+	// stay out of the circular import that would result from
+	// reaching back into api directly.
+	WriteError func(w http.ResponseWriter, r *http.Request, err error)
 }
 
 // Register installs every V1 read-only operation against api and,
@@ -45,4 +52,5 @@ type Deps struct {
 func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps) {
 	registerRoot(api, deps)
 	registerOpenAPI(router, deps.OpenAPIJSON)
+	registerSchemas(router, deps)
 }
