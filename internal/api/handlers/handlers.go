@@ -59,4 +59,5 @@ func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps
 	registerOpenAPI(router, deps.OpenAPIJSON)
 	registerSchemas(router, deps)
 	registerSessions(api, svc, deps)
+	registerSnapshot(api, svc, deps)
 }

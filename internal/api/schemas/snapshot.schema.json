@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/api/v1/snapshot.schema.json",
+  "title": "Snapshot",
+  "description": "Bootstrap payload for one session. Carries the SessionMeta, a deep-copied DAG state (or null when no plan has been recorded), and the most recent PhaseBriefed reference when known.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session", "dag"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional URI of the JSON Schema this document validates against, attached by huma's SchemaLinkTransformer."
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "spec_path", "baseline_sha", "started_at", "status", "iteration_index", "max_iter"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "spec_path": {"type": "string"},
+        "baseline_sha": {"type": "string"},
+        "started_at": {"type": "string", "format": "date-time"},
+        "finished_at": {"type": "string", "format": "date-time"},
+        "status": {"type": "string"},
+        "iteration_index": {"type": "integer", "minimum": 0},
+        "max_iter": {"type": "integer", "minimum": 0}
+      }
+    },
+    "dag": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["phases"],
+          "properties": {
+            "phases": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "tasks"],
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "depends_on": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "tasks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "status", "retry_budget"],
+                      "properties": {
+                        "id": {"type": "string", "minLength": 1},
+                        "status": {
+                          "type": "string",
+                          "enum": ["pending", "in_progress", "done", "needs_fix"]
+                        },
+                        "depends_on": {
+                          "type": "array",
+                          "items": {"type": "string"}
+                        },
+                        "retry_budget": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "last_phase_briefed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase_id", "attempt", "iteration_id"],
+      "properties": {
+        "phase_id": {"type": "string", "minLength": 1},
+        "attempt": {"type": "integer", "minimum": 1},
+        "iteration_id": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
