@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/tui"
+	"github.com/fgmacedo/buchecha/internal/webui"
 )
 
 // errPlannerSkipped is returned by freshPlan / resolveDirectorPlan when
@@ -89,7 +91,8 @@ type directorIO struct {
 // persistence, and user confirmation; the brief/execute/review pipeline
 // lands in P5-P7.
 func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string, cfg *config.Config) error {
-	listener, err := startRunListener(ctx, nil, nil, nil, runListenerBind())
+	webuiHandler := resolveWebUIHandler(cfg, runWebUIDev)
+	listener, err := startRunListener(ctx, nil, nil, webuiHandler, runListenerBind())
 	if err != nil {
 		ExitCode = loop.ExitInvalid
 		return err
@@ -100,9 +103,16 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		}
 	}()
 
-	printRunBanner(os.Stderr, listener.addr, listener.sessionToken, runAPI, runWebUI)
+	// --webui implies --api at the banner level: a webui run is by
+	// definition api-enabled because the SPA depends on /api/v1/* on
+	// the same listener. The banner already prefers webui over api when
+	// both are set; promoting api here keeps the wiring honest if the
+	// user opted into --webui without --api.
+	apiBanner := runAPI || cfg.Webui.Enabled
+	webuiBanner := cfg.Webui.Enabled
+	printRunBanner(os.Stderr, listener.addr, listener.sessionToken, apiBanner, webuiBanner)
 
-	if runWebUIOpen {
+	if cfg.Webui.Open {
 		// Best-effort browser launch: --webui-open is opt-in sugar; a
 		// failure here must not derail the run. openBrowser logs a Warn
 		// slog entry on its own; we discard the error after that.
@@ -118,6 +128,22 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		session: runSessionID,
 	}
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
+}
+
+// resolveWebUIHandler picks the http.Handler the run-wide listener
+// mounts at / based on the [webui] config block. cfg.Webui.Enabled
+// false returns nil so chi's default 404 stands. When Enabled is true,
+// the dev flag selects between the production embedded bundle handler
+// and the Vite reverse-proxy handler used during contributor work on
+// the SPA. The flag is hidden from --help; only contributors set it.
+func resolveWebUIHandler(cfg *config.Config, dev bool) http.Handler {
+	if cfg == nil || !cfg.Webui.Enabled {
+		return nil
+	}
+	if dev {
+		return webui.NewDev()
+	}
+	return webui.New()
 }
 
 // runListenerBind returns the bind address used by startRunListener.
