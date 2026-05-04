@@ -89,7 +89,7 @@ type directorIO struct {
 // persistence, and user confirmation; the brief/execute/review pipeline
 // lands in P5-P7.
 func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string, cfg *config.Config) error {
-	boot, err := startMCPBoot(nil)
+	boot, err := newMCPBoot(nil)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
 		return err
@@ -122,7 +122,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		ExtraArgs:    cfg.Director.Claude.ExtraArgs,
 		MaxBudgetUSD: cfg.Director.Claude.MaxBudgetUSD,
 		Stderr:       subprocessStderr,
-		MCPURL:       boot.url(),
+		MCPURL:       boot.MCPURL(),
 		MCPToken:     boot.token(),
 	})
 	registry := director.MergeCapabilityRegistries(
