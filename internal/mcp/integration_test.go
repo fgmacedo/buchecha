@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,14 +27,15 @@ func TestEndToEnd_DAGHandlerOverHTTP(t *testing.T) {
 	handler := dag.NewHandlerWithOptions(nil, registry, dag.HandlerOptions{
 		Audit: dag.NewAuditLog(auditPath),
 	})
-	srv, err := mcp.Start(mcp.ServerConfig{
+	srv, err := mcp.New(mcp.ServerConfig{
 		Handler:         handler,
 		ConnectionNames: []string{string(dag.RolePlanner)},
 	})
 	if err != nil {
-		t.Fatalf("start mcp: %v", err)
+		t.Fatalf("new mcp: %v", err)
 	}
-	t.Cleanup(func() { _ = srv.Close() })
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
 
 	plannerID, err := registry.Register(dag.RolePlanner, dag.RegisterArgs{})
 	if err != nil {
@@ -82,8 +84,7 @@ func TestEndToEnd_DAGHandlerOverHTTP(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(rpcBody)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL(), bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+srv.Token())
+	req, _ := http.NewRequest(http.MethodPost, ts.URL, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(mcp.RoleHeader, string(dag.RolePlanner))
 	resp, err := http.DefaultClient.Do(req)
@@ -129,7 +130,7 @@ func TestEndToEnd_DAGHandlerOverHTTP(t *testing.T) {
 func TestEndToEnd_RoleHeaderRejected(t *testing.T) {
 	registry := dag.NewAgentRegistry(nil)
 	handler := dag.NewHandler(nil, registry)
-	srv, err := mcp.Start(mcp.ServerConfig{
+	srv, err := mcp.New(mcp.ServerConfig{
 		Handler: handler,
 		ConnectionNames: []string{
 			string(dag.RolePlanner),
@@ -137,9 +138,10 @@ func TestEndToEnd_RoleHeaderRejected(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("start: %v", err)
+		t.Fatalf("new: %v", err)
 	}
-	t.Cleanup(func() { _ = srv.Close() })
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
 
 	plannerID, _ := registry.Register(dag.RolePlanner, dag.RegisterArgs{})
 	rpcBody := map[string]any{
@@ -155,8 +157,7 @@ func TestEndToEnd_RoleHeaderRejected(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(rpcBody)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL(), bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+srv.Token())
+	req, _ := http.NewRequest(http.MethodPost, ts.URL, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(mcp.RoleHeader, string(dag.RoleBriefer))
 	resp, err := http.DefaultClient.Do(req)
