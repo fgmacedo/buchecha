@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/api/v1/root.schema.json",
+  "title": "RootCatalog",
+  "description": "Discoverable metadata returned by GET /api/v1. Carries the wire-level api version, the bcc binary version, absolute URLs for the OpenAPI document and the schemas directory, and the list of every registered V1 endpoint with parameter placeholders preserved.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "binary_version", "openapi_url", "schemas_url", "endpoints"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional URI of the JSON Schema this document validates against, attached by huma's SchemaLinkTransformer."
+    },
+    "api_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "binary_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "openapi_url": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schemas_url": {
+      "type": "string",
+      "minLength": 1
+    },
+    "endpoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

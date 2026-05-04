@@ -22,6 +22,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/fgmacedo/buchecha/internal/api/handlers"
 	"github.com/fgmacedo/buchecha/internal/services"
 )
 
@@ -56,6 +57,7 @@ type Server struct {
 	mounts    Mounts
 	authToken string
 	humaAPI   huma.API
+	apiRouter chi.Router
 }
 
 // New builds a Server bound to svc. svc may be nil during the
@@ -100,6 +102,13 @@ func (s *Server) Routes() http.Handler {
 		apiRouter.Use(SessionAuth(s.authToken))
 	}
 	s.humaAPI = humachi.New(apiRouter, huma.DefaultConfig("bcc", APIVersion))
+	s.apiRouter = apiRouter
+	handlers.Register(s.humaAPI, apiRouter, s.svc, handlers.Deps{
+		APIVersion:    APIVersion,
+		BinaryVersion: BinaryVersion(),
+		OpenAPIJSON:   OpenAPIJSON,
+		LoadSchema:    LoadSchema,
+	})
 	root.Mount("/api/"+APIVersion, apiRouter)
 
 	if s.mounts.MCP != nil {
@@ -118,6 +127,23 @@ func (s *Server) Routes() http.Handler {
 // handlers will share in P3.
 func (s *Server) HumaAPI() huma.API {
 	return s.humaAPI
+}
+
+// APIRouter returns the chi sub-router mounted under /api/v1. It is
+// nil before the first Routes() call. Handlers that cannot flow
+// through huma (notably the SSE stream) mount directly on this
+// router so they inherit the auth middleware and request-context
+// stamping like every other operation under the subtree.
+func (s *Server) APIRouter() chi.Router {
+	return s.apiRouter
+}
+
+// Services returns the services aggregator the Server was built with.
+// Handlers registered against the huma adapter consume it to satisfy
+// requests. Returns nil for foundation-only servers (e.g. the OpenAPI
+// generator) where no business handler is expected to fire.
+func (s *Server) Services() *services.Services {
+	return s.svc
 }
 
 // OpenAPI returns the OpenAPI 3.1 document built by the huma adapter.
