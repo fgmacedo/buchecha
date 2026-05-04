@@ -23,7 +23,6 @@ var (
 	runVerbosity       string
 	runNoColor         bool
 	runAgentName       string
-	runAutoProceed     bool
 	runResume          bool
 	runSessionID       string
 	runDebugLogs       bool
@@ -50,8 +49,7 @@ func init() {
 	runCmd.Flags().StringVar(&runVerbosity, "verbosity", loop.LevelInfo.String(), "event level low-water mark: error|warn|info|debug|trace")
 	runCmd.Flags().BoolVar(&runNoColor, "no-color", false, "disable color output (lipgloss styles render as plain text)")
 	runCmd.Flags().StringVar(&runAgentName, "agent", "", "active agent adapter (overrides [agent].name for this run)")
-	runCmd.Flags().BoolVar(&runAutoProceed, "auto-proceed", false, "skip the post-plan confirmation prompt")
-	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan with a diff prompt when the spec hash diverges")
+	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan when the spec hash diverges")
 	runCmd.Flags().StringVar(&runSessionID, "session", "", "resume the named session id (combine with --resume to resolve; without --resume, fails if the session does not exist)")
 	runCmd.Flags().BoolVar(&runDebugLogs, "debug-logs", false, "capture per-spawn stderr of every Director role under .bcc/sessions/<id>/runs/ (overrides [debug].capture_subprocess_logs)")
 	runCmd.Flags().BoolVar(&runDebugLogsStdout, "debug-logs-stdout", false, "also capture per-spawn stream-json stdout (heavier; implies --debug-logs; overrides [debug].capture_subprocess_stdout)")

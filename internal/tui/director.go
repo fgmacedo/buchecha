@@ -62,6 +62,26 @@ func (m *Model) SignalPlanFailed(message string) {
 	m.program.Send(planFailedMsg{message: message})
 }
 
+// planReadyMsg latches the resolved Plan on the director panel and
+// drops the planning-pending placeholder. The orchestrator sends it
+// after the Planner returns, just before kicking off the loop, so the
+// dashboard renders the plan tree without waiting for the loop's first
+// PhasePlanned event.
+type planReadyMsg struct {
+	plan *director.Plan
+}
+
+// SignalPlanReady tells the Model the Planner returned a plan. The
+// dashboard latches the tree onto the director panel and clears the
+// planning placeholder; no confirmation is gated, the loop starts
+// right after.
+func (m *Model) SignalPlanReady(plan *director.Plan) {
+	if m.program == nil {
+		return
+	}
+	m.program.Send(planReadyMsg{plan: plan})
+}
+
 // directorPanel renders the Director-mode state on the dashboard: the
 // confirmed Plan as a checklist, the active phase in highlight, the
 // latest verdict's outcome, and the cumulative executor cost. The

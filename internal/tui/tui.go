@@ -115,24 +115,11 @@ type Model struct {
 	// non-Director or test contexts.
 	escalationGate chan<- loop.EscalationReply
 
-	// planConfirmGate is the channel the Model writes into when the
-	// user resolves the plan-confirmation modal. nil disables the
-	// modal silently; SignalPlanReady becomes a no-op in that case.
-	planConfirmGate chan<- PlanConfirmReply
-
 	// planningPending tracks the "planner is in flight" state. While
 	// true the director panel renders a placeholder. Set via the
-	// PlanningPending option; cleared via ClearPlanningPending().
+	// PlanningPending option; cleared once SignalPlanReady fires (or
+	// SignalPlanSkipped / SignalPlanFailed on the failure paths).
 	planningPending bool
-
-	// planReady is true once the planner has returned a plan and the
-	// confirm modal is up (when !autoProceed). Latched by
-	// SignalPlanReady → planReadyMsg → Update.
-	planReady bool
-
-	// autoProceed mirrors the Options field; when true the Model
-	// bypasses the plan-confirmation modal entirely.
-	autoProceed bool
 
 	// Live state.
 	width, height  int
@@ -210,22 +197,11 @@ type Options struct {
 	// the modal's R/S/A actions silently (useful in tests).
 	EscalationGate chan<- loop.EscalationReply
 
-	// PlanConfirmGate is the channel the Model writes into when the
-	// user resolves the plan-confirmation modal (TUI mode). nil
-	// disables the modal silently; the host falls back to auto-proceed
-	// semantics.
-	PlanConfirmGate chan<- PlanConfirmReply
-
 	// PlanningPending, when true, tells the Model that the planner is
 	// still in flight. The director panel renders a "planning..."
-	// placeholder until the host clears the flag (ClearPlanningPending).
+	// placeholder until the host signals plan resolution via
+	// SignalPlanReady (or one of the failure-path signals).
 	PlanningPending bool
-
-	// AutoProceed, when true, makes the Model bypass the
-	// plan-confirmation modal: SignalPlanReady transitions straight
-	// through to the loop. When false the Model surfaces a [P]/[A]
-	// modal that gates the loop start.
-	AutoProceed bool
 }
 
 // New returns a Model wired to the given event channel and cancel
@@ -257,9 +233,7 @@ func New(opts Options) Model {
 		helpView:        help.New(),
 		newEvents:       opts.NewEvents,
 		escalationGate:  opts.EscalationGate,
-		planConfirmGate: opts.PlanConfirmGate,
 		planningPending: opts.PlanningPending,
-		autoProceed:     opts.AutoProceed,
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
@@ -308,9 +282,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.director.escalation {
 			return m.handleEscalationKey(msg)
 		}
-		if m.planReady {
-			return m.handlePlanConfirmKey(msg)
-		}
 		if m.sessionMode {
 			return m.handleSessionKey(msg)
 		}
@@ -333,7 +304,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.nothingToDoMode = true
 		m.nothingToDoReason = msg.reason
 		m.planningPending = false
-		m.planReady = false
 		return m, nil
 
 	case planFailedMsg:
@@ -344,25 +314,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// alongside this message.
 		m.sessionExitMsg = "planner: " + msg.message
 		m.planningPending = false
-		m.planReady = false
 		return m, nil
 
 	case planReadyMsg:
-		// Planner returned a plan and confirmation is pending. Latch
-		// the plan onto the director panel (mirrors what PhasePlanned
-		// will do once the loop starts) and surface the confirm modal
-		// unless we are running with --auto-proceed.
+		// Planner returned a plan; latch it onto the director panel
+		// (mirrors what PhasePlanned will do once the loop starts) and
+		// drop the planning placeholder so the dashboard reverts to
+		// its normal rendering until the loop kicks off.
 		if msg.plan != nil {
 			m.director.onPhasePlanned(msg.plan)
 		}
-		if !m.autoProceed {
-			m.planReady = true
-		}
-		return m, nil
-
-	case clearPlanningPendingMsg:
 		m.planningPending = false
-		m.planReady = false
 		return m, nil
 
 	case restartLoopMsg:
@@ -747,9 +709,6 @@ func (m Model) viewDashboard(session bool) string {
 	if m.director.escalation {
 		modal := renderEscalationModal(m.director, m.directorKeys)
 		dashboard += "\n" + modal
-	}
-	if m.planReady {
-		dashboard += "\n" + renderPlanConfirmModal(lay.headerW, m.director.plan)
 	}
 	return dashboard
 }

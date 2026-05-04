@@ -95,7 +95,7 @@ bcc run --session <id> docs/specs/<spec>.md               # specific session, no
 
 Outcomes:
 
-1. **`--resume` only**: bcc looks up sessions whose `spec_path` matches and resumes the most recent. If the spec hash is unchanged, the persisted Plan is reused. If it diverged, bcc calls the Planner again, prints a `PlanDiff`, and prompts `[D]iff again, [P]roceed, [A]bort`. With no matching session, bcc creates a fresh one and proceeds.
+1. **`--resume` only**: bcc looks up sessions whose `spec_path` matches and resumes the most recent. If the spec hash is unchanged, the persisted Plan is reused. If it diverged, bcc calls the Planner again, prints a `PlanDiff` for the user's information, persists the new Plan, and starts the loop. With no matching session, bcc creates a fresh one and proceeds.
 2. **`--resume --session <id>`**: same as above, but the named session is the one resumed. Spec mismatch returns `ErrSessionSpecMismatch`; missing id returns `ErrSessionNotFound`.
 3. **`--session <id>` without `--resume`**: the named session is reopened; bcc never creates a fresh session under this form. Missing id is fatal.
 4. **No flags**: a fresh session is created.

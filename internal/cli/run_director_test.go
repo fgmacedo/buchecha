@@ -372,7 +372,7 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 
 	var stderr bytes.Buffer
 	dio := directorIO{
-		stdin:  strings.NewReader("p\n"),
+		stdin:  strings.NewReader(""),
 		stderr: &stderr,
 	}
 
@@ -413,9 +413,6 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 	if !strings.Contains(stderr.String(), "Director plan") {
 		t.Errorf("stderr missing plan header: %q", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "[P]roceed") {
-		t.Errorf("stderr missing confirmation prompt: %q", stderr.String())
-	}
 
 	// Session lifecycle: a clean run lands in status=done.
 	reopened, err := director.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
@@ -424,113 +421,6 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 	}
 	if reopened.Session().Status != director.SessionDone {
 		t.Errorf("session status = %q, want %q", reopened.Session().Status, director.SessionDone)
-	}
-}
-
-// TestRunDirectorWith_AbortPath covers `[A]bort`: ExitInvalid, no
-// loop run, and the persisted plan still exists for inspection.
-func TestRunDirectorWith_AbortPath(t *testing.T) {
-	resetExitCode(t)
-	withOutputMode(t, OutputJSON)
-
-	tmp := t.TempDir()
-	specPath := writeTestSpec(t, tmp)
-
-	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
-		},
-	}
-	briefer := &fake.Briefer{
-		BriefFn: func(_ context.Context, _ director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
-			t.Fatal("briefer should not be called when user aborts")
-			return nil, nil
-		},
-	}
-	store := mkSessionStore(t, tmp, specPath)
-	h := newTestHandler()
-	deps := directorDeps{
-		handler:  h,
-		planner:  planner,
-		briefer:  briefer,
-		reviewer: &fake.Reviewer{},
-		store:    store,
-		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
-			return &recordingExecutor{}
-		},
-		now: time.Now,
-	}
-	dio := directorIO{stdin: strings.NewReader("a\n"), stderr: io.Discard}
-
-	cfg := directorTestConfig()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if !errors.Is(err, errDirectorAborted) {
-		t.Fatalf("err = %v, want errDirectorAborted", err)
-	}
-	if ExitCode != loop.ExitInvalid {
-		t.Errorf("ExitCode = %d, want ExitInvalid", ExitCode)
-	}
-	if _, statErr := os.Stat(filepath.Join(store.SessionDir(), "plan.json")); statErr != nil {
-		t.Errorf("plan.json missing after abort: %v", statErr)
-	}
-
-	// Session lifecycle: aborted runs end up in status=aborted so a
-	// later `bcc sessions list` shows the failure clearly.
-	reopened, err := director.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
-	if err != nil {
-		t.Fatalf("OpenSession: %v", err)
-	}
-	if reopened.Session().Status != director.SessionAborted {
-		t.Errorf("status = %q, want %q", reopened.Session().Status, director.SessionAborted)
-	}
-}
-
-// TestRunDirectorWith_AutoProceedSkipsPrompt covers --auto-proceed:
-// stdin is never read, the confirmation block is skipped, the loop
-// runs the plan to ExitDone.
-func TestRunDirectorWith_AutoProceedSkipsPrompt(t *testing.T) {
-	resetExitCode(t)
-	withOutputMode(t, OutputJSON)
-
-	tmp := t.TempDir()
-	specPath := writeTestSpec(t, tmp)
-
-	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
-		},
-	}
-	h := newTestHandler()
-	newExec, _ := recordingExecutorFactory(agentcontract.SignalReview, h)
-	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    approvingReviewer(h),
-		store:       mkSessionStore(t, tmp, specPath),
-		git:         newAdvancingGit(),
-		newExecutor: newExec,
-		now:         time.Now,
-	}
-	// emptyReader returns EOF immediately; if the implementation reads
-	// stdin under --auto-proceed before escalation it would either block
-	// or treat EOF as abort.
-	dio := directorIO{stdin: strings.NewReader(""), stderr: io.Discard, autoProceed: true}
-
-	cfg := directorTestConfig()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if ExitCode != loop.ExitDone {
-		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
 	}
 }
 
@@ -754,19 +644,6 @@ func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
 	}
 }
 
-// TestRunCmd_AutoProceedFlagDefaultsOff locks --auto-proceed off so a
-// missing terminal in CI does not silently green-light a Director plan
-// that no human reviewed.
-func TestRunCmd_AutoProceedFlagDefaultsOff(t *testing.T) {
-	flag := runCmd.Flags().Lookup("auto-proceed")
-	if flag == nil {
-		t.Fatal("runCmd has no --auto-proceed flag")
-	}
-	if got := flag.DefValue; got != "false" {
-		t.Errorf("--auto-proceed default = %q, want false", got)
-	}
-}
-
 // TestRunCmd_SessionFlagExistsDefaultsEmpty pins the --session flag
 // surface so a future CLI refactor cannot silently drop it.
 func TestRunCmd_SessionFlagExistsDefaultsEmpty(t *testing.T) {
@@ -853,8 +730,8 @@ func TestRunDirectorWith_ResumeMatchingHash_SkipsPlanner(t *testing.T) {
 
 // TestRunDirectorWith_ResumeNoPlan_FallsThroughToFresh covers a user
 // who passes --resume on a session with no persisted plan: there's no
-// plan.json yet, so runDirectorWith plans + prompts as if --resume
-// were not set.
+// plan.json yet, so runDirectorWith plans as if --resume were not set
+// and the loop runs to completion.
 func TestRunDirectorWith_ResumeNoPlan_FallsThroughToFresh(t *testing.T) {
 	resetExitCode(t)
 	withOutputMode(t, OutputJSON)
@@ -884,7 +761,7 @@ func TestRunDirectorWith_ResumeNoPlan_FallsThroughToFresh(t *testing.T) {
 
 	var stderr bytes.Buffer
 	dio := directorIO{
-		stdin:  strings.NewReader("p\n"),
+		stdin:  strings.NewReader(""),
 		stderr: &stderr,
 		resume: true,
 	}
@@ -905,9 +782,6 @@ func TestRunDirectorWith_ResumeNoPlan_FallsThroughToFresh(t *testing.T) {
 	out := stderr.String()
 	if !strings.Contains(out, "no persisted plan") {
 		t.Errorf("stderr missing fall-through marker: %q", out)
-	}
-	if !strings.Contains(out, "[P]roceed") {
-		t.Errorf("fresh path should still prompt: %q", out)
 	}
 }
 
@@ -971,7 +845,7 @@ func TestRunDirectorWith_ResumeHashMismatch_ReplansAndProceeds(t *testing.T) {
 
 	var stderr bytes.Buffer
 	dio := directorIO{
-		stdin:  strings.NewReader("p\n"),
+		stdin:  strings.NewReader(""),
 		stderr: &stderr,
 		resume: true,
 	}
@@ -1005,168 +879,10 @@ func TestRunDirectorWith_ResumeHashMismatch_ReplansAndProceeds(t *testing.T) {
 		"plan diff",
 		"+ phase-3",
 		"~ phase-1",
-		"[D]iff",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stderr missing %q: %s", want, out)
 		}
-	}
-}
-
-// TestRunDirectorWith_ResumeHashMismatch_AbortPath covers [A]bort at
-// the re-plan diff prompt: the persisted plan must NOT be overwritten,
-// the loop must NOT run, ExitCode = ExitInvalid, error is the typed
-// re-plan abort sentinel.
-func TestRunDirectorWith_ResumeHashMismatch_AbortPath(t *testing.T) {
-	resetExitCode(t)
-	withOutputMode(t, OutputJSON)
-
-	tmp := t.TempDir()
-	specPath := writeTestSpec(t, tmp)
-
-	stale := scriptedPlan()
-	stale.SpecHash = "00000000staleHash00000000"
-	store := mkSessionStore(t, tmp, specPath)
-	if err := store.WritePlan(stale); err != nil {
-		t.Fatalf("seed stale plan: %v", err)
-	}
-
-	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			plan := scriptedPlan()
-			plan.Phases[0].Title = "Different"
-			return plan, &director.DirectorCallStats{}, nil
-		},
-	}
-	briefer := &fake.Briefer{
-		BriefFn: func(_ context.Context, _ director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
-			t.Fatal("briefer should not be called after abort")
-			return nil, nil
-		},
-	}
-	h := newTestHandler()
-	deps := directorDeps{
-		handler:  h,
-		planner:  planner,
-		briefer:  briefer,
-		reviewer: &fake.Reviewer{},
-		store:    store,
-		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
-			return &recordingExecutor{}
-		},
-		now: time.Now,
-	}
-	dio := directorIO{stdin: strings.NewReader("a\n"), stderr: io.Discard, resume: true}
-
-	cfg := directorTestConfig()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if !errors.Is(err, errDirectorRePlanAborted) {
-		t.Fatalf("err = %v, want errDirectorRePlanAborted", err)
-	}
-	if ExitCode != loop.ExitInvalid {
-		t.Errorf("ExitCode = %d, want ExitInvalid", ExitCode)
-	}
-
-	// The stale plan must still be on disk; the abort path must not
-	// have overwritten it.
-	got, err := store.ReadPlan()
-	if err != nil {
-		t.Fatalf("read persisted plan after abort: %v", err)
-	}
-	if got.SpecHash != "00000000staleHash00000000" {
-		t.Errorf("plan was overwritten after abort: spec_hash = %q", got.SpecHash)
-	}
-}
-
-// TestRunDirectorWith_ResumeHashMismatch_AutoProceed_PersistsAndRuns
-// pins --resume + --auto-proceed under a hash mismatch: no prompt is
-// issued, the new plan is persisted, the loop runs to ExitDone.
-func TestRunDirectorWith_ResumeHashMismatch_AutoProceed_PersistsAndRuns(t *testing.T) {
-	resetExitCode(t)
-	withOutputMode(t, OutputJSON)
-
-	tmp := t.TempDir()
-	specPath := writeTestSpec(t, tmp)
-
-	stale := scriptedPlan()
-	stale.SpecHash = "00000000staleHash00000000"
-	store := mkSessionStore(t, tmp, specPath)
-	if err := store.WritePlan(stale); err != nil {
-		t.Fatalf("seed stale plan: %v", err)
-	}
-
-	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
-		},
-	}
-	h := newTestHandler()
-	newExec, _ := recordingExecutorFactory(agentcontract.SignalReview, h)
-	deps := directorDeps{
-		handler:     h,
-		planner:     planner,
-		briefer:     scriptedBriefer(h),
-		reviewer:    approvingReviewer(h),
-		store:       store,
-		git:         newAdvancingGit(),
-		newExecutor: newExec,
-		now:         time.Now,
-	}
-	var stderr bytes.Buffer
-	dio := directorIO{
-		stdin:       strings.NewReader(""),
-		stderr:      &stderr,
-		resume:      true,
-		autoProceed: true,
-	}
-
-	cfg := directorTestConfig()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio); err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if ExitCode != loop.ExitDone {
-		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
-	}
-	if !strings.Contains(stderr.String(), "auto-proceed; accepting replanned") {
-		t.Errorf("stderr missing auto-proceed marker: %q", stderr.String())
-	}
-}
-
-// TestPromptDirectorRePlanConfirmation_Variants pins the [D]iff /
-// [P]roceed / [A]bort answers and the EOF-as-abort fallback.
-func TestPromptDirectorRePlanConfirmation_Variants(t *testing.T) {
-	old := &director.Plan{Goal: "x", Phases: []director.Phase{{ID: "p1", Title: "T"}}}
-	newPlan := &director.Plan{Goal: "y", Phases: []director.Phase{{ID: "p1", Title: "T"}}}
-	diff := director.ComputePlanDiff(old, newPlan)
-
-	cases := []struct {
-		name  string
-		input string
-		want  confirmChoice
-	}{
-		{name: "p", input: "p\n", want: confirmProceed},
-		{name: "uppercase A", input: "A\n", want: confirmAbort},
-		{name: "diff then proceed", input: "d\np\n", want: confirmProceed},
-		{name: "eof aborts", input: "", want: confirmAbort},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var w bytes.Buffer
-			got, err := promptDirectorRePlanConfirmation(strings.NewReader(tc.input), &w, diff)
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
-			if got != tc.want {
-				t.Errorf("choice = %v, want %v", got, tc.want)
-			}
-		})
 	}
 }
 
@@ -1179,46 +895,6 @@ func TestRunCmd_ResumeFlagDefaultsOff(t *testing.T) {
 	}
 	if got := flag.DefValue; got != "false" {
 		t.Errorf("--resume default = %q, want false", got)
-	}
-}
-
-// TestPromptDirectorConfirmation_Variants pins the accepted answers and
-// the EOF-as-abort fallback. Whitespace and case are ignored; anything
-// else loops until a recognized answer.
-func TestPromptDirectorConfirmation_Variants(t *testing.T) {
-	cases := []struct {
-		name   string
-		input  string
-		want   confirmChoice
-		errSub string
-	}{
-		{name: "lowercase p", input: "p\n", want: confirmProceed},
-		{name: "uppercase P", input: "P\n", want: confirmProceed},
-		{name: "yes alias", input: "yes\n", want: confirmProceed},
-		{name: "lowercase a", input: "a\n", want: confirmAbort},
-		{name: "uppercase A", input: "A\n", want: confirmAbort},
-		{name: "no alias", input: "no\n", want: confirmAbort},
-		{name: "loops then proceed", input: "what?\np\n", want: confirmProceed},
-		{name: "eof aborts", input: "", want: confirmAbort},
-		{name: "trims whitespace", input: "  p  \n", want: confirmProceed},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var w bytes.Buffer
-			got, err := promptDirectorConfirmation(strings.NewReader(tc.input), &w)
-			if tc.errSub != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.errSub) {
-					t.Fatalf("err = %v, want substring %q", err, tc.errSub)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
-			if got != tc.want {
-				t.Errorf("choice = %v, want %v", got, tc.want)
-			}
-		})
 	}
 }
 

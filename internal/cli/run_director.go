@@ -28,15 +28,6 @@ import (
 	"github.com/fgmacedo/buchecha/internal/tui"
 )
 
-// errDirectorAborted is returned when the user answers [A]bort at the
-// confirmation prompt. ExitCode is set to ExitInvalid before returning.
-var errDirectorAborted = errors.New("director: user aborted plan at confirmation")
-
-// errDirectorRePlanAborted is returned when the user answers [A]bort
-// at the re-plan diff confirmation prompt under --resume after the
-// spec hash diverged from the persisted plan. ExitCode is ExitInvalid.
-var errDirectorRePlanAborted = errors.New("director: user aborted replanned plan at diff confirmation")
-
 // errPlannerSkipped is returned by freshPlan / resolveDirectorPlan when
 // the Planner declared the spec done by calling bcc_plan_skip. It is a
 // success path: callers map it to ExitDone and surface a friendly
@@ -82,16 +73,15 @@ type directorDeps struct {
 	boot *mcpBoot
 }
 
-// directorIO captures the I/O surface so tests can drive the
-// confirmation prompt without touching os.Stdin / os.Stderr. The
-// session and resume flags drive how runDirectorWith resolves the
-// per-run Store; the spec's first acceptance pins the matrix.
+// directorIO captures the I/O surface so tests can drive escalation
+// and resume flows without touching os.Stdin / os.Stderr. The session
+// and resume flags drive how runDirectorWith resolves the per-run
+// Store; the spec's first acceptance pins the matrix.
 type directorIO struct {
-	stdin       io.Reader
-	stderr      io.Writer
-	autoProceed bool
-	resume      bool
-	session     string
+	stdin   io.Reader
+	stderr  io.Writer
+	resume  bool
+	session string
 }
 
 // runDirector is the entry point for the Director-driven loop, called
@@ -109,11 +99,10 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 	deps := defaultDirectorDeps(cfg, boot)
 	deps.boot = boot
 	dio := directorIO{
-		stdin:       os.Stdin,
-		stderr:      os.Stderr,
-		autoProceed: runAutoProceed,
-		resume:      runResume,
-		session:     runSessionID,
+		stdin:   os.Stdin,
+		stderr:  os.Stderr,
+		resume:  runResume,
+		session: runSessionID,
 	}
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
 }
@@ -579,22 +568,16 @@ func stdinEscalationGate(ctx context.Context, in io.Reader) <-chan loop.Escalati
 // planner runs in a background goroutine that streams its AgentEvents
 // into the TUI's raw channel as loop.AgentEventReceived (so the now /
 // health / actions panels render planning activity in real time), and
-// only after the plan resolves (and is confirmed) does the inner Loop
-// kick off in a second goroutine. The host returns the loop's ExitCode
-// + error after the bubbletea program exits.
+// once the plan resolves the inner Loop kicks off in a second
+// goroutine. The host returns the loop's ExitCode + error after the
+// bubbletea program exits.
 //
 // Plan resolution failure: the planner goroutine emits a synthetic
 // LoopFinished onto raw with reason "planner failed: <msg>"; the Model
 // quits naturally on that signal.
-//
-// Confirmation: when dio.autoProceed is false, the planner goroutine
-// asks the Model for confirmation via a PlanConfirm reply channel
-// (mirrors the escalation modal pattern). The Model surfaces the modal
-// over the rendered plan once PhasePlanned has latched the tree.
 func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, hash string, cfg *config.Config, deps directorDeps, dio directorIO) error {
 	gate := tui.NewGate()
 	escalation := make(chan loop.EscalationReply, 1)
-	planConfirm := make(chan tui.PlanConfirmReply, 1)
 
 	gitProbeAdapter, _ := deps.git.(tui.GitProbe)
 	branch := ""
@@ -619,7 +602,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		latest = r
 	}
 
-	// resolvedPlan is the plan the orchestrator confirmed on the first
+	// resolvedPlan is the plan the orchestrator latched on the first
 	// run; the session-menu Resume factory reuses it so [r] does not
 	// re-run the planner. Captured by the orchestrator goroutine, read
 	// by the factory closure on subsequent UI events.
@@ -672,7 +655,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 
 	// newEvents is the host's Resume factory: the user pressed [r] in
 	// the session menu after the loop terminated. Build a fresh channel,
-	// spawn the loop on it (reusing the confirmed plan), and hand the
+	// spawn the loop on it (reusing the latched plan), and hand the
 	// channel back to the Model so panels live-update against the new
 	// run.
 	newEvents := func() <-chan loop.Event {
@@ -699,9 +682,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		GitProbe:        gitProbeAdapter,
 		GitCtx:          ctx,
 		EscalationGate:  escalation,
-		PlanConfirmGate: planConfirm,
 		PlanningPending: true,
-		AutoProceed:     dio.autoProceed,
 		NewEvents:       newEvents,
 	})
 	progOpts := []tea.ProgramOption{
@@ -722,9 +703,9 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		}
 	}()
 
-	// orchestrator drives plan resolution -> confirmation -> loop start.
-	// It owns the raw channel: closes it via a synthetic LoopFinished on
-	// every terminal path so the bubbletea bridge sees the close and the
+	// orchestrator drives plan resolution -> loop start. It owns the
+	// raw channel: closes it via a synthetic LoopFinished on every
+	// terminal path so the bubbletea bridge sees the close and the
 	// program exits cleanly.
 	orchestrate := func() {
 		defer func() {
@@ -758,49 +739,26 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 				return
 			}
 			_ = deps.store.Touch(director.SessionAborted, deps.now())
-			if errors.Is(perr, errDirectorAborted) || errors.Is(perr, errDirectorRePlanAborted) {
-				setLatest(runResult{code: loop.ExitInvalid, err: perr})
-				emitLoopFinished(raw, "user cancelled", loop.ExitInvalid)
-			} else {
-				// Planner crashed without producing a terminal MCP call
-				// (e.g. claude exited 1 because the account ran out of
-				// credits). Keep the TUI alive in session mode so the
-				// user reads the underlying error in the footer and
-				// decides whether to retry, edit the spec, or quit.
-				// The orchestrator returns nil here: the run "finished"
-				// in the user-visible sense; the run-level ExitCode is
-				// still ExitInvalid so headless callers see the same
-				// failure.
-				model.SignalPlanFailed(perr.Error())
-				setLatest(runResult{code: loop.ExitInvalid, err: nil})
-				emitLoopFinished(raw, LoopFinishedReasonPlannerFailed, loop.ExitInvalid)
-			}
+			// Planner crashed without producing a terminal MCP call
+			// (e.g. claude exited 1 because the account ran out of
+			// credits). Keep the TUI alive in session mode so the
+			// user reads the underlying error in the footer and
+			// decides whether to retry, edit the spec, or quit.
+			// The orchestrator returns nil here: the run "finished"
+			// in the user-visible sense; the run-level ExitCode is
+			// still ExitInvalid so headless callers see the same
+			// failure.
+			model.SignalPlanFailed(perr.Error())
+			setLatest(runResult{code: loop.ExitInvalid, err: nil})
+			emitLoopFinished(raw, LoopFinishedReasonPlannerFailed, loop.ExitInvalid)
 			close(raw)
 			return
 		}
 
-		// Confirmation. autoProceed bypasses; otherwise wait on the
-		// Model's PlanConfirm reply (sent when the user picks
-		// [P]roceed / [A]bort in the modal).
-		if !dio.autoProceed {
-			model.SignalPlanReady(plan)
-			select {
-			case reply := <-planConfirm:
-				if reply.Kind == tui.PlanConfirmAbort {
-					_ = deps.store.Touch(director.SessionAborted, deps.now())
-					setLatest(runResult{code: loop.ExitInvalid, err: errDirectorAborted})
-					emitLoopFinished(raw, "user cancelled", loop.ExitInvalid)
-					close(raw)
-					return
-				}
-			case <-ctx.Done():
-				setLatest(runResult{code: loop.ExitInvalid, err: ctx.Err()})
-				emitLoopFinished(raw, "user cancelled", loop.ExitInvalid)
-				close(raw)
-				return
-			}
-		}
-		model.ClearPlanningPending()
+		// Plan resolved. Latch it onto the dashboard, drop the
+		// planning placeholder, and start the loop straight away.
+		// bcc is autonomous by design: there is no user gate here.
+		model.SignalPlanReady(plan)
 		setResolvedPlan(plan)
 		runLoopOn(plan, raw)
 		// loop.Loop.Run owns raw for the duration of Run: it emits a
@@ -898,9 +856,6 @@ func emitLoopFinished(events chan<- loop.Event, reason string, exit int) {
 // raw events channel onto which the planner's stream-json envelopes
 // are forwarded as loop.AgentEventReceived; the rest of the resume /
 // fresh / re-plan logic is shared via resolveDirectorPlan(events).
-//
-// Confirmation is deferred to the caller (the orchestrator), which
-// surfaces a TUI modal when not running with --auto-proceed.
 func resolveDirectorPlanTUI(
 	ctx context.Context,
 	specPath, hash string,
@@ -917,26 +872,21 @@ func resolveDirectorPlanTUI(
 // resolveDirectorPlan returns the Plan to run, handling --resume:
 //
 //   - --resume + persisted plan + matching SpecHash: reuse the plan,
-//     skip planner + confirmation entirely (the user has already
-//     approved this plan in a prior session).
+//     skip the planner entirely.
 //   - --resume + persisted plan + diverging SpecHash: call the planner,
-//     compute a PlanDiff against the stored plan, render the diff, and
-//     prompt [D]iff/[P]roceed/[A]bort. Persist the new plan on Proceed.
+//     compute a PlanDiff against the stored plan, render the diff for
+//     the user's information, and persist the new plan.
 //   - --resume + no persisted plan: fall through to the fresh path.
-//   - no --resume: always plan, persist, and run the standard
-//     [P]roceed/[A]bort confirmation.
+//   - no --resume: plan, persist, and run.
 //
-// All error paths set ExitCode before returning so the cobra wrapper
-// exits with the right code.
-// resolveDirectorPlan resolves the plan for this run. When raw is
-// non-nil the planner's stream telemetry is forwarded onto raw as
-// loop.AgentEventReceived (TUI mode); when raw is nil the planner runs
-// silently and the caller is responsible for any progress indicator
-// (text/json mode uses startPlanningHeartbeat).
+// bcc runs autonomously: the loop starts as soon as a plan is in
+// hand. There is no user gate. All error paths set ExitCode before
+// returning so the cobra wrapper exits with the right code.
 //
-// In TUI mode the [P]roceed/[A]bort confirmation is deferred to the
-// caller (it owns the modal); resolveDirectorPlan returns the
-// validated plan and the orchestrator decides whether to gate.
+// When raw is non-nil the planner's stream telemetry is forwarded onto
+// raw as loop.AgentEventReceived (TUI mode); when raw is nil the
+// planner runs silently and the caller is responsible for any progress
+// indicator (text/json mode uses startPlanningHeartbeat).
 func resolveDirectorPlan(
 	ctx context.Context,
 	specPath string,
@@ -976,9 +926,6 @@ func resolveDirectorPlan(
 	}
 	if raw == nil {
 		RenderPlan(plan, dio.stderr)
-		if err := confirmDirectorPlan(dio); err != nil {
-			return nil, err
-		}
 	}
 	return plan, nil
 }
@@ -1080,8 +1027,9 @@ func registerDirectorAgent(deps directorDeps, role dag.Role) (string, func(), er
 	return deps.registerFn(role)
 }
 
-// rePlanFlow handles the --resume hash-mismatch branch: replan, render
-// the diff, prompt [D]iff/[P]roceed/[A]bort, persist on Proceed.
+// rePlanFlow handles the --resume hash-mismatch branch: replan,
+// render the diff for the user (text/json mode), and persist the new
+// plan. Autonomous by design, no user gate.
 func rePlanFlow(
 	ctx context.Context,
 	specPath string,
@@ -1101,19 +1049,6 @@ func rePlanFlow(
 	if raw == nil {
 		diff := director.ComputePlanDiff(old, newPlan)
 		director.RenderPlanDiff(diff, dio.stderr)
-		if dio.autoProceed {
-			fmt.Fprintln(dio.stderr, "\nbcc: --auto-proceed; accepting replanned plan")
-		} else {
-			choice, err := promptDirectorRePlanConfirmation(dio.stdin, dio.stderr, diff)
-			if err != nil {
-				ExitCode = loop.ExitInvalid
-				return nil, err
-			}
-			if choice == confirmAbort {
-				ExitCode = loop.ExitInvalid
-				return nil, errDirectorRePlanAborted
-			}
-		}
 	}
 
 	if err := deps.store.WritePlan(newPlan); err != nil {
@@ -1121,85 +1056,4 @@ func rePlanFlow(
 		return nil, fmt.Errorf("director: persist replanned plan: %w", err)
 	}
 	return newPlan, nil
-}
-
-// confirmDirectorPlan runs the standard [P]roceed/[A]bort prompt for
-// the fresh-plan path. Honors --auto-proceed.
-func confirmDirectorPlan(dio directorIO) error {
-	if dio.autoProceed {
-		fmt.Fprintln(dio.stderr, "\nbcc: --auto-proceed; skipping confirmation")
-		return nil
-	}
-	choice, err := promptDirectorConfirmation(dio.stdin, dio.stderr)
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return err
-	}
-	if choice == confirmAbort {
-		ExitCode = loop.ExitInvalid
-		return errDirectorAborted
-	}
-	return nil
-}
-
-type confirmChoice int
-
-const (
-	confirmProceed confirmChoice = iota + 1
-	confirmAbort
-)
-
-// promptDirectorRePlanConfirmation runs the [D]iff/[P]roceed/[A]bort
-// prompt for the --resume re-plan flow. [D]iff re-renders the diff
-// against the originally rendered output (so the user can scroll back);
-// [P] and [A] mirror the standard confirmation. EOF aborts.
-func promptDirectorRePlanConfirmation(r io.Reader, w io.Writer, diff *director.PlanDiff) (confirmChoice, error) {
-	br := bufio.NewReader(r)
-	for {
-		fmt.Fprint(w, "\nbcc: [D]iff again, [P]roceed with replanned plan, or [A]bort? ")
-		line, err := br.ReadString('\n')
-		if errors.Is(err, io.EOF) && line == "" {
-			fmt.Fprintln(w, "bcc: stdin closed; treating as abort")
-			return confirmAbort, nil
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return 0, fmt.Errorf("director: read replan confirmation: %w", err)
-		}
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "p", "proceed", "y", "yes":
-			return confirmProceed, nil
-		case "a", "abort", "n", "no":
-			return confirmAbort, nil
-		case "d", "diff":
-			director.RenderPlanDiff(diff, w)
-		default:
-			fmt.Fprintln(w, "bcc: please answer [D]iff, [P]roceed, or [A]bort")
-		}
-	}
-}
-
-// promptDirectorConfirmation reads a single line from r and returns the
-// user's choice. Accepted answers: "p"/"P" (proceed), "a"/"A" (abort).
-// Anything else loops; EOF on stdin is treated as Abort to fail closed.
-func promptDirectorConfirmation(r io.Reader, w io.Writer) (confirmChoice, error) {
-	br := bufio.NewReader(r)
-	for {
-		fmt.Fprint(w, "\nbcc: [P]roceed with this plan or [A]bort? ")
-		line, err := br.ReadString('\n')
-		if errors.Is(err, io.EOF) && line == "" {
-			fmt.Fprintln(w, "bcc: stdin closed; treating as abort")
-			return confirmAbort, nil
-		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return 0, fmt.Errorf("director: read confirmation: %w", err)
-		}
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "p", "proceed", "y", "yes":
-			return confirmProceed, nil
-		case "a", "abort", "n", "no":
-			return confirmAbort, nil
-		default:
-			fmt.Fprintln(w, "bcc: please answer [P]roceed or [A]bort")
-		}
-	}
 }

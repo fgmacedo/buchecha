@@ -95,7 +95,7 @@ bcc run --session <id> docs/specs/<spec>.md               # sessão específica,
 
 Cenários:
 
-1. **`--resume` sozinho**: bcc procura sessões cujo `spec_path` corresponda e retoma a mais recente. Spec hash inalterado reusa o Plano persistido. Spec hash divergente dispara o Planner, imprime um `PlanDiff` e pergunta `[D]iff de novo, [P]roceed, [A]bort`. Sem sessão correspondente, bcc cria uma sessão nova e segue.
+1. **`--resume` sozinho**: bcc procura sessões cujo `spec_path` corresponda e retoma a mais recente. Spec hash inalterado reusa o Plano persistido. Spec hash divergente dispara o Planner, imprime um `PlanDiff` para registro, persiste o novo Plano e arranca o loop. Sem sessão correspondente, bcc cria uma sessão nova e segue.
 2. **`--resume --session <id>`**: igual ao caso anterior, mas a sessão nomeada é a retomada. Spec divergente devolve `ErrSessionSpecMismatch`; id ausente devolve `ErrSessionNotFound`.
 3. **`--session <id>` sem `--resume`**: a sessão nomeada é reaberta; bcc nunca cria uma sessão nova nessa forma. Id ausente é fatal.
 4. **Sem flags**: uma sessão nova é criada.
