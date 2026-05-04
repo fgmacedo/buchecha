@@ -120,6 +120,23 @@ type Config struct {
 	// Default (nil) discards stderr.
 	Stderr io.Writer
 
+	// StderrFactory, when non-nil, is called per spawn to obtain an
+	// additional WriteCloser that receives the subprocess stderr alongside
+	// the global Stderr and the in-memory tail. The adapter closes the
+	// returned writer after Wait. Returning a nil writer with a nil error
+	// is allowed and is equivalent to a no-op for that spawn.
+	//
+	// role identifies which Director role is being spawned. iterationID
+	// is the briefing's iteration id when the spawn is in-iteration
+	// (Brief, Review); empty for the Planner. agentID is the per-spawn
+	// registry id.
+	StderrFactory func(role, iterationID, agentID string) (io.WriteCloser, error)
+
+	// StdoutFactory mirrors StderrFactory for the raw stream-json stdout
+	// pipe. When set, the adapter tees the pipe into the returned writer
+	// before parsing so the file contains the unmodified line stream.
+	StdoutFactory func(role, iterationID, agentID string) (io.WriteCloser, error)
+
 	// CancelGrace is how long to wait after sending SIGINT before
 	// forcing SIGKILL. Defaults to 5 seconds when zero.
 	CancelGrace time.Duration
@@ -162,6 +179,20 @@ func New(cfg Config) *Adapter {
 		cfg.Binary = "claude"
 	}
 	return &Adapter{cfg: cfg}
+}
+
+// SetStderrFactory installs a per-spawn stderr sink factory after
+// construction. nil disables the factory and reverts to the global
+// Stderr only. Used by the cli to wire .bcc/sessions/<id>/runs/ capture
+// once the session has been resolved.
+func (a *Adapter) SetStderrFactory(fn func(role, iterationID, agentID string) (io.WriteCloser, error)) {
+	a.cfg.StderrFactory = fn
+}
+
+// SetStdoutFactory installs a per-spawn stdout-tee factory after
+// construction. nil disables the factory.
+func (a *Adapter) SetStdoutFactory(fn func(role, iterationID, agentID string) (io.WriteCloser, error)) {
+	a.cfg.StdoutFactory = fn
 }
 
 // planView, briefView, and reviewView are the per-role data the prompt
@@ -207,7 +238,7 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 	if err != nil {
 		return nil, nil, fmt.Errorf("director/claude: compose plan prompt: %w", err)
 	}
-	stats, err := a.runRole(ctx, dag.RolePlanner, prompt, events, "", "")
+	stats, err := a.runRole(ctx, dag.RolePlanner, in.AgentID, "", prompt, events, "", "")
 	return nil, stats, err
 }
 
@@ -231,7 +262,7 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)
 	}
 	model, effort := assignmentOverride(in.Assignment)
-	return a.runRole(ctx, dag.RoleBriefer, prompt, events, model, effort)
+	return a.runRole(ctx, dag.RoleBriefer, in.AgentID, in.IterationID, prompt, events, model, effort)
 }
 
 // Review implements director.Reviewer. The Reviewer's work is recorded
@@ -251,7 +282,7 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)
 	}
 	model, effort := assignmentOverride(in.Assignment)
-	return a.runRole(ctx, dag.RoleReviewer, prompt, events, model, effort)
+	return a.runRole(ctx, dag.RoleReviewer, in.AgentID, in.IterationID, prompt, events, model, effort)
 }
 
 // assignmentOverride extracts the per-call (model, effort) pair from a
@@ -289,7 +320,7 @@ func composePrompt(promptTpl string, view any) (string, error) {
 // values for this single spawn so per-phase capability assignments
 // flow into the CLI flags. Empty strings preserve the configured
 // defaults.
-func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, events chan<- agentcontract.AgentEvent, modelOverride, effortOverride string) (*director.DirectorCallStats, error) {
+func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iterationID, prompt string, events chan<- agentcontract.AgentEvent, modelOverride, effortOverride string) (*director.DirectorCallStats, error) {
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -332,12 +363,39 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, eve
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: stdout pipe: %w", err)
 	}
-	stderrTail := newRingBuffer(stderrCaptureBytes)
-	if a.cfg.Stderr != nil {
-		cmd.Stderr = io.MultiWriter(a.cfg.Stderr, stderrTail)
-	} else {
-		cmd.Stderr = stderrTail
+	var stdoutSink io.WriteCloser
+	if a.cfg.StdoutFactory != nil {
+		stdoutSink, err = a.cfg.StdoutFactory(string(role), iterationID, agentID)
+		if err != nil {
+			return nil, fmt.Errorf("director/claude: open stdout sink: %w", err)
+		}
 	}
+	defer func() {
+		if stdoutSink != nil {
+			_ = stdoutSink.Close()
+		}
+	}()
+	stderrTail := newRingBuffer(stderrCaptureBytes)
+	stderrWriters := []io.Writer{stderrTail}
+	if a.cfg.Stderr != nil {
+		stderrWriters = append(stderrWriters, a.cfg.Stderr)
+	}
+	var stderrSink io.WriteCloser
+	if a.cfg.StderrFactory != nil {
+		stderrSink, err = a.cfg.StderrFactory(string(role), iterationID, agentID)
+		if err != nil {
+			return nil, fmt.Errorf("director/claude: open stderr sink: %w", err)
+		}
+		if stderrSink != nil {
+			stderrWriters = append(stderrWriters, stderrSink)
+		}
+	}
+	defer func() {
+		if stderrSink != nil {
+			_ = stderrSink.Close()
+		}
+	}()
+	cmd.Stderr = io.MultiWriter(stderrWriters...)
 	cmd.Cancel = func() error {
 		return cmd.Process.Signal(syscall.SIGINT)
 	}
@@ -357,7 +415,11 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, prompt string, eve
 	parseDone := make(chan struct{})
 	go func() {
 		defer close(parseDone)
-		sc := bufio.NewScanner(pipe)
+		var src io.Reader = pipe
+		if stdoutSink != nil {
+			src = io.TeeReader(pipe, stdoutSink)
+		}
+		sc := bufio.NewScanner(src)
 		sc.Buffer(make([]byte, 64*1024), a.cfg.MaxLineBytes)
 		for sc.Scan() {
 			line := slices.Clone(sc.Bytes())

@@ -125,10 +125,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	// rely on the adapter's internal ringBuffer for diagnostics; in
 	// text/json mode forward stderr verbatim so users see auth/quota
 	// errors as they happen.
-	var subprocessStderr io.Writer = os.Stderr
-	if runOutput == OutputTUI {
-		subprocessStderr = io.Discard
-	}
+	subprocessStderr := directorSubprocessStderr()
 	adapter := directorclaude.New(directorclaude.Config{
 		Binary:       cfg.Director.Claude.Binary,
 		Model:        cfg.Director.Claude.Model,
@@ -147,49 +144,181 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		boot.handler.SetCapabilityRegistry(&registry)
 	}
 	return directorDeps{
-		planner:    adapter,
-		briefer:    adapter,
-		reviewer:   adapter,
-		registerFn: boot.registerDirectorAgent,
-		baseDir:    ".bcc",
-		git:        gitcli.New(""),
-		newExecutor: func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor {
-			mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
-			if err != nil {
-				return &failingExecutor{err: fmt.Errorf("register executor agent: %w", err)}
+		planner:     adapter,
+		briefer:     adapter,
+		reviewer:    adapter,
+		registerFn:  boot.registerDirectorAgent,
+		baseDir:     ".bcc",
+		git:         gitcli.New(""),
+		newExecutor: makeNewExecutor(cfg, boot, subprocessStderr, nil),
+		now:         time.Now,
+	}
+}
+
+// executorLogSinks is the cli's per-spawn debug-log allocator. The
+// concrete sinks are opened once per call inside makeNewExecutor; the
+// returned StderrLogPath is propagated onto the loop.ExecResult so the
+// loop can name the capture file in error messages.
+type executorLogSinks struct {
+	StderrSink    io.WriteCloser
+	StderrLogPath string
+	StdoutSink    io.WriteCloser
+}
+
+// makeNewExecutor builds the per-iteration executor factory the loop
+// calls. logSinks, when non-nil, opens optional per-spawn capture files
+// and is invoked once per Run with the resolved agent_id and iteration
+// id; the returned writers are wired into the inner adapter and closed
+// when Run returns. Passing nil keeps the no-debug behavior.
+func makeNewExecutor(
+	cfg *config.Config,
+	boot *mcpBoot,
+	subprocessStderr io.Writer,
+	logSinks func(args dag.RegisterArgs, agentID string) (executorLogSinks, error),
+) func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor {
+		mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
+		if err != nil {
+			return &failingExecutor{err: fmt.Errorf("register executor agent: %w", err)}
+		}
+		systemPromptFile, err := renderSystem(mcpCfg.AgentID)
+		if err != nil {
+			cleanup()
+			return &failingExecutor{err: fmt.Errorf("render executor system prompt: %w", err)}
+		}
+		model := cfg.Agent.Claude.Model
+		effort := cfg.Agent.Claude.Effort
+		if assignment != nil {
+			if assignment.Model != "" {
+				model = assignment.Model
 			}
-			systemPromptFile, err := renderSystem(mcpCfg.AgentID)
+			if assignment.Effort != "" {
+				effort = assignment.Effort
+			}
+		}
+		var sinks executorLogSinks
+		if logSinks != nil {
+			sinks, err = logSinks(args, mcpCfg.AgentID)
 			if err != nil {
 				cleanup()
-				return &failingExecutor{err: fmt.Errorf("render executor system prompt: %w", err)}
+				return &failingExecutor{err: fmt.Errorf("open executor log sinks: %w", err)}
 			}
-			model := cfg.Agent.Claude.Model
-			effort := cfg.Agent.Claude.Effort
-			if assignment != nil {
-				if assignment.Model != "" {
-					model = assignment.Model
-				}
-				if assignment.Effort != "" {
-					effort = assignment.Effort
-				}
+		}
+		stderrWriter := subprocessStderr
+		if sinks.StderrSink != nil {
+			if subprocessStderr != nil && subprocessStderr != io.Discard {
+				stderrWriter = io.MultiWriter(subprocessStderr, sinks.StderrSink)
+			} else {
+				stderrWriter = sinks.StderrSink
 			}
-			inner := claude.New(claude.Config{
-				Binary:            cfg.Agent.Claude.Binary,
-				Model:             model,
-				Effort:            effort,
-				ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
-				SkipPermissions:   cfg.Agent.Claude.ShouldSkipPermissions(),
-				SystemPromptFile:  systemPromptFile,
-				Stderr:            subprocessStderr,
-				MCPURL:            mcpCfg.MCPURL,
-				MCPToken:          mcpCfg.MCPToken,
-				MCPConnectionName: mcpCfg.MCPConnectionName,
-				AgentID:           mcpCfg.AgentID,
-			})
-			return &deregisteringExecutor{inner: inner, cleanup: cleanup}
-		},
-		now: time.Now,
+		}
+		inner := claude.New(claude.Config{
+			Binary:            cfg.Agent.Claude.Binary,
+			Model:             model,
+			Effort:            effort,
+			ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
+			SkipPermissions:   cfg.Agent.Claude.ShouldSkipPermissions(),
+			SystemPromptFile:  systemPromptFile,
+			Stderr:            stderrWriter,
+			Stdout:            sinks.StdoutSink,
+			MCPURL:            mcpCfg.MCPURL,
+			MCPToken:          mcpCfg.MCPToken,
+			MCPConnectionName: mcpCfg.MCPConnectionName,
+			AgentID:           mcpCfg.AgentID,
+		})
+		return &deregisteringExecutor{
+			inner:         inner,
+			agentID:       mcpCfg.AgentID,
+			stderrLogPath: sinks.StderrLogPath,
+			cleanup: func() {
+				if sinks.StdoutSink != nil {
+					_ = sinks.StdoutSink.Close()
+				}
+				if sinks.StderrSink != nil {
+					_ = sinks.StderrSink.Close()
+				}
+				cleanup()
+			},
+		}
 	}
+}
+
+// enableDebugLogCapture wires per-spawn stderr (and optionally stdout)
+// capture to .bcc/sessions/<id>/runs/ when the [debug] toggles request
+// it. The session must already be resolved on deps.store. No-op when
+// captures are off, when the directorclaude adapter shape is not what
+// we expect (tests inject fakes), or when no Store is bound.
+func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
+	if !cfg.Debug.IsCaptureSubprocessLogsEnabled() {
+		return
+	}
+	if deps == nil || deps.store == nil {
+		return
+	}
+	store := deps.store
+	captureStdout := cfg.Debug.IsCaptureSubprocessStdoutEnabled()
+
+	openLog := func(bucket, agentID, kind string) (io.WriteCloser, error) {
+		path, err := store.RunLogPath(bucket, agentID, kind)
+		if err != nil {
+			return nil, err
+		}
+		return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	}
+	bucketFor := func(role, iter string) string {
+		if role == string(dag.RolePlanner) {
+			return director.PlannerRunsBucket
+		}
+		return iter
+	}
+
+	if a, ok := deps.planner.(*directorclaude.Adapter); ok {
+		a.SetStderrFactory(func(role, iter, agent string) (io.WriteCloser, error) {
+			return openLog(bucketFor(role, iter), agent, "stderr.log")
+		})
+		if captureStdout {
+			a.SetStdoutFactory(func(role, iter, agent string) (io.WriteCloser, error) {
+				return openLog(bucketFor(role, iter), agent, "stdout.jsonl")
+			})
+		}
+	}
+
+	if deps.boot == nil {
+		return
+	}
+	subprocessStderr := directorSubprocessStderr()
+	deps.newExecutor = makeNewExecutor(cfg, deps.boot, subprocessStderr, func(args dag.RegisterArgs, agentID string) (executorLogSinks, error) {
+		bucket := args.BriefingID
+		stderrPath, err := store.RunLogPath(bucket, agentID, "stderr.log")
+		if err != nil {
+			return executorLogSinks{}, err
+		}
+		stderrSink, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return executorLogSinks{}, err
+		}
+		sinks := executorLogSinks{StderrSink: stderrSink, StderrLogPath: stderrPath}
+		if captureStdout {
+			stdoutSink, err := openLog(bucket, agentID, "stdout.jsonl")
+			if err != nil {
+				_ = stderrSink.Close()
+				return executorLogSinks{}, err
+			}
+			sinks.StdoutSink = stdoutSink
+		}
+		return sinks, nil
+	})
+}
+
+// directorSubprocessStderr returns the live stderr writer the adapters
+// tee subprocess output to. Mirrors the choice in defaultDirectorDeps
+// so debug capture, when re-wiring newExecutor, preserves the same TUI
+// vs text-mode behavior.
+func directorSubprocessStderr() io.Writer {
+	if runOutput == OutputTUI {
+		return io.Discard
+	}
+	return os.Stderr
 }
 
 // failingExecutor is the loop.Executor returned when registration fails
@@ -236,6 +365,8 @@ func runDirectorWith(
 		}
 		deps.boot.bindSession(deps.store, cfg.Director.IsMCPAuditEnabled(), gitProvider, director.JournalDeltaProvider{})
 	}
+
+	enableDebugLogCapture(cfg, &deps)
 
 	if runOutput == OutputTUI {
 		return runDirectorTUI(ctx, cancel, specPath, hash, cfg, deps, dio)

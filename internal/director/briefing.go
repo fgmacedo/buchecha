@@ -27,7 +27,7 @@ func BriefingFor(plan *Plan, specPath, phaseID string, attempt int, subDAG []str
 	in := &BrieferInput{
 		Plan:          plan,
 		SpecPath:      specPath,
-		IterationID:   fmt.Sprintf("%s-%d", phaseID, attempt),
+		IterationID:   fmt.Sprintf("%s-%02d", phaseID, attempt),
 		PhaseID:       phaseID,
 		SubDAGTaskIDs: append([]string(nil), subDAG...),
 		Attempt:       attempt,

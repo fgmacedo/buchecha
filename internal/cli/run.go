@@ -16,16 +16,18 @@ import (
 )
 
 var (
-	runEnvFlags    []string
-	runConfigPath  string
-	runAllowDirty  bool
-	runOutput      string
-	runVerbosity   string
-	runNoColor     bool
-	runAgentName   string
-	runAutoProceed bool
-	runResume      bool
-	runSessionID   string
+	runEnvFlags        []string
+	runConfigPath      string
+	runAllowDirty      bool
+	runOutput          string
+	runVerbosity       string
+	runNoColor         bool
+	runAgentName       string
+	runAutoProceed     bool
+	runResume          bool
+	runSessionID       string
+	runDebugLogs       bool
+	runDebugLogsStdout bool
 )
 
 var runCmd = &cobra.Command{
@@ -36,7 +38,7 @@ var runCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		return runSpec(ctx, cancel, args[0])
+		return runSpec(ctx, cancel, cmd, args[0])
 	},
 }
 
@@ -51,10 +53,12 @@ func init() {
 	runCmd.Flags().BoolVar(&runAutoProceed, "auto-proceed", false, "skip the post-plan confirmation prompt")
 	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan with a diff prompt when the spec hash diverges")
 	runCmd.Flags().StringVar(&runSessionID, "session", "", "resume the named session id (combine with --resume to resolve; without --resume, fails if the session does not exist)")
+	runCmd.Flags().BoolVar(&runDebugLogs, "debug-logs", false, "capture per-spawn stderr of every Director role under .bcc/sessions/<id>/runs/ (overrides [debug].capture_subprocess_logs)")
+	runCmd.Flags().BoolVar(&runDebugLogsStdout, "debug-logs-stdout", false, "also capture per-spawn stream-json stdout (heavier; implies --debug-logs; overrides [debug].capture_subprocess_stdout)")
 	rootCmd.AddCommand(runCmd)
 }
 
-func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) error {
+func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command, specPath string) error {
 	verbosity, err := loop.ParseLevel(runVerbosity)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
@@ -88,6 +92,18 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 	if runAgentName != "" {
 		cfg.Agent.Name = runAgentName
 	}
+	if cmd.Flags().Changed("debug-logs") {
+		cfg.Debug.CaptureSubprocessLogs = boolPtr(runDebugLogs)
+	}
+	if cmd.Flags().Changed("debug-logs-stdout") {
+		cfg.Debug.CaptureSubprocessStdout = boolPtr(runDebugLogsStdout)
+		// --debug-logs-stdout has no effect without stderr capture
+		// (the runs/ directory only materializes when stderr capture is
+		// on). Imply it so the flag is self-sufficient.
+		if runDebugLogsStdout && !cfg.Debug.IsCaptureSubprocessLogsEnabled() {
+			cfg.Debug.CaptureSubprocessLogs = boolPtr(true)
+		}
+	}
 
 	if err := cfg.ApplyEnv(runEnvFlags); err != nil {
 		ExitCode = loop.ExitInvalid
@@ -102,6 +118,8 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, specPath string) er
 
 	return runDirector(ctx, cancel, specPath, cfg)
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 func validOutputMode(s string) bool {
 	switch s {

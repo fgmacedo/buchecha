@@ -34,6 +34,12 @@ const (
 	briefingsDir = "briefings"
 	sessionsDir  = "sessions"
 	planFile     = "plan.json"
+	runsDir      = "runs"
+	// PlannerRunsBucket is the sentinel iteration bucket for planner
+	// spawns, which run outside any iteration. Used as the directory name
+	// under runs/ so planner logs sit next to per-iteration logs without
+	// colliding with a real iteration_id.
+	PlannerRunsBucket = "_planner"
 )
 
 // SessionsRoot returns the parent directory that holds all session
@@ -172,6 +178,30 @@ func (s *Store) WriteBriefing(b *Briefing) error {
 		return errors.New("director: briefing has empty iteration_id")
 	}
 	return writeJSON(s.briefingPath(b.IterationID), b)
+}
+
+// RunLogPath returns the absolute path for a per-spawn capture file
+// under <sessionDir>/runs/<bucket>/<agentID>.<kind>. bucket is the
+// iterationID for in-iteration spawns (briefer, executor, reviewer) or
+// PlannerRunsBucket for planner spawns. kind selects the artifact type
+// (typically "stderr.log" or "stdout.jsonl"). The parent directory is
+// created on demand. The function does not open the file; callers
+// own the file handle and its lifetime.
+func (s *Store) RunLogPath(bucket, agentID, kind string) (string, error) {
+	if bucket == "" {
+		bucket = PlannerRunsBucket
+	}
+	if agentID == "" {
+		return "", errors.New("director: RunLogPath: empty agent_id")
+	}
+	if kind == "" {
+		return "", errors.New("director: RunLogPath: empty kind")
+	}
+	dir := filepath.Join(s.sessionDir, runsDir, bucket)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("director: mkdir %s: %w", dir, err)
+	}
+	return filepath.Join(dir, agentID+"."+kind), nil
 }
 
 // ReadBriefing reads the briefing for an iteration id. Returns an

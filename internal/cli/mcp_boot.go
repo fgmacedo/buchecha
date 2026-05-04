@@ -172,11 +172,20 @@ func (b *mcpBoot) executorMCPConfig(role dag.Role, args dag.RegisterArgs) (claud
 // loop calls deps.NewExecutor once per phase attempt; without this
 // wrapper the registry would leak entries across iterations.
 type deregisteringExecutor struct {
-	inner   loop.Executor
-	cleanup func()
+	inner         loop.Executor
+	cleanup       func()
+	agentID       string
+	stderrLogPath string
 }
 
 func (d *deregisteringExecutor) Run(ctx context.Context, prompt string, events chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
 	defer d.cleanup()
-	return d.inner.Run(ctx, prompt, events)
+	res, err := d.inner.Run(ctx, prompt, events)
+	if d.agentID != "" {
+		res.AgentID = d.agentID
+	}
+	if d.stderrLogPath != "" {
+		res.StderrLogPath = d.stderrLogPath
+	}
+	return res, err
 }

@@ -14,8 +14,8 @@ func TestBriefingFor_FirstAttempt_NoPriors(t *testing.T) {
 	if in.PhaseID != "p1" || in.Attempt != 1 {
 		t.Errorf("identity: %+v", in)
 	}
-	if in.IterationID != "p1-1" {
-		t.Errorf("iteration_id = %q, want p1-1", in.IterationID)
+	if in.IterationID != "p1-01" {
+		t.Errorf("iteration_id = %q, want p1-01", in.IterationID)
 	}
 	if in.SpecPath != "/tmp/spec.md" {
 		t.Errorf("spec_path = %q, want /tmp/spec.md", in.SpecPath)
@@ -37,8 +37,34 @@ func TestBriefingFor_RetryPropagatesPriorFeedback(t *testing.T) {
 	if in.PriorFeedback != "missing test" {
 		t.Errorf("PriorFeedback = %q, want %q", in.PriorFeedback, "missing test")
 	}
-	if in.IterationID != "p1-2" {
-		t.Errorf("iteration_id = %q, want p1-2", in.IterationID)
+	if in.IterationID != "p1-02" {
+		t.Errorf("iteration_id = %q, want p1-02", in.IterationID)
+	}
+}
+
+// TestBriefingFor_IterationIDPaddingSorts verifies the iteration_id
+// uses zero-padded width 2 so lexicographic sort matches numeric order
+// for attempts up to 99 (the working range; the format will not break
+// past 99 but ordering would degrade then).
+func TestBriefingFor_IterationIDPaddingSorts(t *testing.T) {
+	plan := samplePlan(t)
+	cases := []struct {
+		attempt int
+		want    string
+	}{
+		{1, "p1-01"},
+		{9, "p1-09"},
+		{10, "p1-10"},
+		{99, "p1-99"},
+	}
+	for _, tc := range cases {
+		in, err := BriefingFor(plan, "/tmp/spec.md", "p1", tc.attempt, []string{"t1"}, "")
+		if err != nil {
+			t.Fatalf("attempt %d: %v", tc.attempt, err)
+		}
+		if in.IterationID != tc.want {
+			t.Errorf("attempt %d: iteration_id = %q, want %q", tc.attempt, in.IterationID, tc.want)
+		}
 	}
 }
 

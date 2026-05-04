@@ -113,6 +113,13 @@ type Config struct {
 	// log file or os.Stderr explicitly.
 	Stderr io.Writer
 
+	// Stdout, when non-nil, is teed from the subprocess stdout pipe
+	// before the stream-json parser consumes it. The raw line stream
+	// lands in this writer in addition to being parsed into AgentEvents.
+	// The caller owns the writer's lifetime; the adapter does not close
+	// it.
+	Stdout io.Writer
+
 	// CancelGrace is how long to wait after sending SIGINT before forcing
 	// SIGKILL. Defaults to 5 seconds when zero.
 	CancelGrace time.Duration
@@ -256,11 +263,15 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	// Drain the stdout pipe in a goroutine. The pipe EOFs naturally when
 	// the subprocess exits; on cancel, streamjson.Stream exits early via
 	// ctx.Done so a slow consumer never blocks the cmd.Wait below.
+	var src io.Reader = pipe
+	if e.cfg.Stdout != nil {
+		src = io.TeeReader(pipe, e.cfg.Stdout)
+	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamjson.Stream(ctx, pipe, events, e.cfg.MaxLineBytes)
+		streamjson.Stream(ctx, src, events, e.cfg.MaxLineBytes)
 	}()
 
 	// Per Cmd.StdoutPipe doc: callers must finish reading before Wait.

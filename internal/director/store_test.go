@@ -24,6 +24,51 @@ func newTestStore(t *testing.T) (*Store, *Session, string) {
 	return store, sess, base
 }
 
+func TestStore_RunLogPath(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	cases := []struct {
+		name        string
+		bucket      string
+		agentID     string
+		kind        string
+		wantSuffix  string
+		wantBucket  string
+		expectError bool
+	}{
+		{name: "iteration", bucket: "P7-01", agentID: "bcc-executor-abc123", kind: "stderr.log", wantSuffix: "P7-01/bcc-executor-abc123.stderr.log", wantBucket: "P7-01"},
+		{name: "planner empty bucket", bucket: "", agentID: "bcc-planner-xyz", kind: "stderr.log", wantSuffix: "_planner/bcc-planner-xyz.stderr.log", wantBucket: "_planner"},
+		{name: "planner explicit", bucket: PlannerRunsBucket, agentID: "bcc-planner-xyz", kind: "stdout.jsonl", wantSuffix: "_planner/bcc-planner-xyz.stdout.jsonl", wantBucket: "_planner"},
+		{name: "missing agent", bucket: "P1-01", agentID: "", kind: "stderr.log", expectError: true},
+		{name: "missing kind", bucket: "P1-01", agentID: "bcc-x", kind: "", expectError: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.RunLogPath(tc.bucket, tc.agentID, tc.kind)
+			if tc.expectError {
+				if err == nil {
+					t.Fatalf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RunLogPath: %v", err)
+			}
+			if !strings.HasSuffix(got, tc.wantSuffix) {
+				t.Errorf("path = %q, want suffix %q", got, tc.wantSuffix)
+			}
+			parent := filepath.Dir(got)
+			if filepath.Base(parent) != tc.wantBucket {
+				t.Errorf("bucket dir = %q, want %q", filepath.Base(parent), tc.wantBucket)
+			}
+			if info, err := os.Stat(parent); err != nil {
+				t.Errorf("parent dir not created: %v", err)
+			} else if !info.IsDir() {
+				t.Errorf("parent is not a directory")
+			}
+		})
+	}
+}
+
 func TestStore_PlanRoundTrip(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	plan := samplePlan(t)

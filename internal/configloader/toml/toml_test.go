@@ -51,6 +51,10 @@ model = "claude-opus-4-7"
 extra_args = ["--verbose"]
 max_budget_usd = 2.5
 
+[debug]
+capture_subprocess_logs = true
+capture_subprocess_stdout = false
+
 [env]
 files = [".env"]
 
@@ -100,6 +104,30 @@ FOO = "bar"
 	}
 	if c.Director.Claude.MaxBudgetUSD != 2.5 {
 		t.Errorf("Director.Claude.MaxBudgetUSD = %v, want 2.5", c.Director.Claude.MaxBudgetUSD)
+	}
+	if !c.Debug.IsCaptureSubprocessLogsEnabled() {
+		t.Errorf("Debug.CaptureSubprocessLogs not honored from TOML")
+	}
+	if c.Debug.IsCaptureSubprocessStdoutEnabled() {
+		t.Errorf("Debug.CaptureSubprocessStdout = true, want false (explicit)")
+	}
+}
+
+func TestLoad_DebugDefaultsOff(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	writeFile(t, path, `[project]
+language = "en"
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.Debug.IsCaptureSubprocessLogsEnabled() {
+		t.Errorf("default Debug.CaptureSubprocessLogs should be false")
+	}
+	if c.Debug.IsCaptureSubprocessStdoutEnabled() {
+		t.Errorf("default Debug.CaptureSubprocessStdout should be false")
 	}
 }
 

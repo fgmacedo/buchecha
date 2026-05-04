@@ -443,11 +443,7 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 		// Executor crashed without emitting bcc_iteration_finished. Surface
 		// the captured stderr tail so the dashboard does not show a bare
 		// "head_stuck" with no diagnostic context.
-		tail := strings.TrimSpace(result.StderrTail)
-		if tail == "" {
-			return agentcontract.SignalBlocked, fmt.Errorf("director: executor exited %d with no terminal signal", result.ExitCode)
-		}
-		return agentcontract.SignalBlocked, fmt.Errorf("director: executor exited %d: %s", result.ExitCode, tail)
+		return agentcontract.SignalBlocked, formatExecutorCrash(result, briefingID)
 	}
 	signal := agentcontract.SignalUnknown
 	if handler != nil {
@@ -457,6 +453,30 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 		signal = agentcontract.SignalReview
 	}
 	return signal, nil
+}
+
+// formatExecutorCrash builds the diagnostic message for an iteration
+// where the Executor exited non-zero without emitting the terminal
+// bcc_iteration_finished call. The format is human-readable, single
+// error wrapping a multi-line string, with the iteration id, agent id
+// (when known), the captured stderr tail (when present), and either the
+// path to the persisted capture file or a hint to enable --debug-logs.
+func formatExecutorCrash(result ExecResult, iterationID string) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "director: executor (iteration %s", iterationID)
+	if result.AgentID != "" {
+		fmt.Fprintf(&b, ", agent %s", result.AgentID)
+	}
+	fmt.Fprintf(&b, ") exited %d with no terminal signal", result.ExitCode)
+	if tail := strings.TrimSpace(result.StderrTail); tail != "" {
+		fmt.Fprintf(&b, "\nlast stderr: %s", tail)
+	}
+	if result.StderrLogPath != "" {
+		fmt.Fprintf(&b, "\nfull output at: %s", result.StderrLogPath)
+	} else {
+		b.WriteString("\nhint: rerun with --debug-logs to capture full subprocess output to .bcc/sessions/<id>/runs/<iteration>/")
+	}
+	return errors.New(b.String())
 }
 
 // parseSignalString converts the wire string the agent sent on

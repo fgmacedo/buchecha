@@ -20,6 +20,7 @@ type Config struct {
 	Git      Git            `toml:"git"`
 	Env      Env            `toml:"env"`
 	Director DirectorConfig `toml:"director"`
+	Debug    DebugConfig    `toml:"debug"`
 }
 
 // Project holds top-level project settings.
@@ -126,6 +127,45 @@ func (d DirectorConfig) IsMCPAuditEnabled() bool {
 		return true
 	}
 	return *d.MCPAudit
+}
+
+// DebugConfig toggles diagnostic captures. Off by default to keep the
+// happy-path session footprint small. The CLI may override individual
+// fields via flags; see internal/cli/run.go.
+type DebugConfig struct {
+	// CaptureSubprocessLogs persists the full stderr of every Director
+	// role spawn (planner, briefer, executor, reviewer) under
+	// .bcc/sessions/<id>/runs/. Tristate via pointer; default false.
+	// When set to true, the adapter teams the subprocess stderr to a
+	// per-spawn file in addition to the existing in-memory tail.
+	CaptureSubprocessLogs *bool `toml:"capture_subprocess_logs"`
+
+	// CaptureSubprocessStdout persists the raw stream-json stdout of
+	// every spawn alongside the stderr file. Tristate via pointer;
+	// default false. Heavier than CaptureSubprocessLogs since stream-json
+	// can be large; opt-in independently for cases where the user wants
+	// to reconstruct the model narrative offline.
+	CaptureSubprocessStdout *bool `toml:"capture_subprocess_stdout"`
+}
+
+// IsCaptureSubprocessLogsEnabled returns the effective value of the
+// CaptureSubprocessLogs tristate, applying the default (false) when
+// absent.
+func (d DebugConfig) IsCaptureSubprocessLogsEnabled() bool {
+	if d.CaptureSubprocessLogs == nil {
+		return false
+	}
+	return *d.CaptureSubprocessLogs
+}
+
+// IsCaptureSubprocessStdoutEnabled returns the effective value of the
+// CaptureSubprocessStdout tristate, applying the default (false) when
+// absent.
+func (d DebugConfig) IsCaptureSubprocessStdoutEnabled() bool {
+	if d.CaptureSubprocessStdout == nil {
+		return false
+	}
+	return *d.CaptureSubprocessStdout
 }
 
 // DirectorClaude configures the Director's Claude adapter (P3+).

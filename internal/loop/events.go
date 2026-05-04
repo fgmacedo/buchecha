@@ -16,6 +16,17 @@ type ExecResult struct {
 	// the agent exits non-zero. Empty on clean exits or when the adapter
 	// chose not to capture.
 	StderrTail string
+	// AgentID is the per-spawn registry id assigned by the run boot. The
+	// adapter does not populate this; the cli wrapper attaches it after
+	// Run so the loop can name the agent in error messages without
+	// reaching into the registry.
+	AgentID string
+	// StderrLogPath, when non-empty, is the absolute path the cli wrote
+	// the subprocess stderr to (per-spawn capture file under
+	// .bcc/sessions/<id>/runs/<iteration>/). Populated only when the
+	// debug capture is enabled. The loop surfaces it in error messages
+	// so users know where to look.
+	StderrLogPath string
 }
 
 // Event is the union of loop-level events emitted on the loop's events
