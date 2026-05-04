@@ -63,7 +63,7 @@ These apply to every task:
 
 Nine phases. Sequencing follows the dependency graph at the end of this section.
 
-### P1: Application services layer
+### [x] P1: Application services layer
 
 **id**: `P1-services`
 **intent**: Introduce `internal/services/` with the read-only services consumed by all protocol adapters in this milestone (TUI, API, MCP). Define the closed error enum, the audit log infra, the events fan-out with sequence numbers and ring buffer.
@@ -71,7 +71,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: any change outside `internal/services/`.
 **depends_on**: none.
 
-#### T1.1: `Services` aggregator and constructor
+#### [x] T1.1: `Services` aggregator and constructor
 
 **acceptance_criteria**:
 - `internal/services/services.go` exports a `Services` struct holding handles to `SessionService`, `EventService`, `BriefingService`, `PromptService`.
@@ -81,7 +81,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: `Deps` is the seam between core and services. The composition root in `internal/cli/` builds `Deps` from existing constructors and passes it to `services.New`.
 **depends_on**: none.
 
-#### T1.2: `SessionService`
+#### [x] T1.2: `SessionService`
 
 **acceptance_criteria**:
 - `internal/services/sessions.go` exports `SessionService` with methods `List(ctx) ([]SessionMeta, error)`, `Get(ctx, id) (SessionMeta, error)`, `Snapshot(ctx, id) (Snapshot, error)`.
@@ -94,7 +94,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The DAG snapshot type is defined in `internal/director/dag/`. `SessionService.Snapshot` reuses it but never returns the in-memory pointer; consumers must not mutate it.
 **depends_on**: T1.1.
 
-#### T1.3: `EventService` with fan-out and ring buffer
+#### [x] T1.3: `EventService` with fan-out and ring buffer
 
 **acceptance_criteria**:
 - `internal/services/events.go` exports `EventService` with methods `Subscribe(ctx, sessionID, fromSeq int64) (<-chan SeqEvent, error)` and `Replay(ctx, sessionID, fromSeq int64) (<-chan SeqEvent, error)`.
@@ -110,7 +110,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Event types live in `internal/loop/events.go`. `loop.MarshalJSONEvent` lives in `internal/loop/` (lifted from `internal/cli/render.go` as part of this task) so any consumer can serialize events without depending on the cli package.
 **depends_on**: T1.1.
 
-#### T1.4: `BriefingService.Get`
+#### [x] T1.4: `BriefingService.Get`
 
 **acceptance_criteria**:
 - `internal/services/briefings.go` exports `BriefingService.Get(ctx, sessionID, phaseID, attempt int) (Briefing, error)`.
@@ -121,7 +121,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The briefing file is materialized to disk by the Briefer in the existing loop. Service reads it by path; no parsing required.
 **depends_on**: T1.1.
 
-#### T1.5: `PromptService.Get`
+#### [x] T1.5: `PromptService.Get`
 
 **acceptance_criteria**:
 - `internal/services/prompts.go` exports `PromptService.Get(ctx, sessionID, role string) (Prompt, error)`.
@@ -133,7 +133,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Like briefings, prompts are materialized to disk by the run boot. The service reads files; it does not regenerate prompts.
 **depends_on**: T1.1.
 
-#### T1.6: Canonical errors
+#### [x] T1.6: Canonical errors
 
 **acceptance_criteria**:
 - `internal/services/errors.go` defines a sealed `Error` type with codes from a closed enum: `unauthorized`, `forbidden`, `session_not_found`, `phase_not_found`, `task_not_found`, `attempt_not_found`, `role_not_found`, `seq_gone`, `not_implemented`, `invalid_request`, `conflict`, `internal`.
@@ -145,7 +145,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Protocol adapters map `services.Error` to their wire format (HTTP status codes for the API, MCP error codes for MCP).
 **depends_on**: T1.1.
 
-#### T1.7: Audit log infrastructure
+#### [x] T1.7: Audit log infrastructure
 
 **acceptance_criteria**:
 - `internal/services/audit.go` exports `Audit` struct with `Record(ctx, entry AuditEntry)` method.
@@ -157,7 +157,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: V2 mutating endpoints (in a later spec) require this in place. Stub now to avoid retrofitting later.
 **depends_on**: T1.1.
 
-#### T1.8: Service layer test suite
+#### [x] T1.8: Service layer test suite
 
 **acceptance_criteria**:
 - All services have table-driven unit tests in `internal/services/*_test.go`.
@@ -168,7 +168,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Every other phase will rely on these services. Stable test base means downstream phases are not chasing service bugs.
 **depends_on**: T1.2, T1.3, T1.4, T1.5, T1.6, T1.7.
 
-### P2: HTTP API foundation (chi + huma)
+### [x] P2: HTTP API foundation (chi + huma)
 
 **id**: `P2-api-foundation`
 **intent**: Set up `internal/api/` with chi router, huma adapter, auth middleware, error envelope, schemas embed, OpenAPI generator. No business handlers yet; those land in P3.
@@ -176,7 +176,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: any handler under `internal/api/handlers/` (P3).
 **depends_on**: P1.
 
-#### T2.1: Add dependencies
+#### [x] T2.1: Add dependencies
 
 **acceptance_criteria**:
 - `go.mod` declares `github.com/danielgtaylor/huma/v2 v2.x` (latest stable) and `github.com/go-chi/chi/v5 v5.x`.
@@ -186,7 +186,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: These are the only new HTTP-related dependencies in this spec. CLAUDE.md is updated in P9 to reflect the relaxed rule.
 **depends_on**: none.
 
-#### T2.2: Server skeleton
+#### [x] T2.2: Server skeleton
 
 **acceptance_criteria**:
 - `internal/api/server.go` exports `New(svc *services.Services) *Server` and `(s *Server).Routes() http.Handler`.
@@ -198,7 +198,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the protocol-level composition surface. The composition root in `internal/cli/run.go` builds the `Mounts`, gets `Routes()`, and serves it.
 **depends_on**: T2.1.
 
-#### T2.3: Auth middleware
+#### [x] T2.3: Auth middleware
 
 **acceptance_criteria**:
 - `internal/api/auth.go` exports a token mint helper (`NewSessionToken() string`, 32 bytes hex).
@@ -210,7 +210,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: A single token per `bcc run` is shared by the API and the SPA on the same origin. MCP authentication is path-scoped and lives separately under `/mcp/` (P4).
 **depends_on**: T2.2.
 
-#### T2.4: Error envelope
+#### [x] T2.4: Error envelope
 
 **acceptance_criteria**:
 - `internal/api/errors.go` defines `ErrorResponse` matching `error.schema.json`.
@@ -221,7 +221,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The mapping is deterministic and one-to-one. New codes added in V2+ extend this table additively.
 **depends_on**: T2.2, T1.6.
 
-#### T2.5: Embedded JSON schemas
+#### [x] T2.5: Embedded JSON schemas
 
 **acceptance_criteria**:
 - `internal/api/schemas/` contains hand-written `error.schema.json`, `session.schema.json`, `event.schema.json`, `briefing.schema.json` (and others required by V1 endpoints).
@@ -232,7 +232,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Schemas mirror the existing `internal/director/schemas/` pattern. The OpenAPI document references them via `$ref` from huma when the Go struct cannot be auto-derived.
 **depends_on**: T2.2.
 
-#### T2.6: OpenAPI generator command
+#### [x] T2.6: OpenAPI generator command
 
 **acceptance_criteria**:
 - `internal/api/cmd/gen-openapi/main.go` imports the api package, calls `(s *Server).OpenAPI()`, marshals to JSON, writes to `internal/api/openapi.json`.
@@ -242,7 +242,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The generator runs at build time. It does not start a listener.
 **depends_on**: T2.2.
 
-#### T2.7: Makefile target and stub
+#### [x] T2.7: Makefile target and stub
 
 **acceptance_criteria**:
 - `Makefile` declares targets: `api-openapi` (runs the generator), `webui` (depends on `api-openapi`), `build` (depends on `webui` then runs `go build -o bcc ./cmd/bcc`).
@@ -252,7 +252,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The stub keeps `go build` valid in CI and on fresh clones. CI replaces both stubs on every release build.
 **depends_on**: T2.6.
 
-#### T2.8: API version constants
+#### [x] T2.8: API version constants
 
 **acceptance_criteria**:
 - `internal/api/version.go` declares `APIVersion = "v1"`, `BinaryVersionVar` (a function returning the bcc binary version), and a deprecation policy comment.
@@ -261,7 +261,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Future `/api/v2/` introduces an additional registered route group; this file gates the policy.
 **depends_on**: T2.1.
 
-#### T2.9: Auth middleware integration tests
+#### [x] T2.9: Auth middleware integration tests
 
 **acceptance_criteria**:
 - `internal/api/auth_test.go` covers an end-to-end request through the chi router with auth applied: cookie path, bearer path, query token redirect, missing credential 401.
@@ -270,7 +270,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This validates the wire-level auth flow before any business handler exists.
 **depends_on**: T2.3, T2.4.
 
-### P3: HTTP API V1 endpoints (read-only)
+### [ ] P3: HTTP API V1 endpoints (read-only)
 
 **id**: `P3-api-v1-endpoints`
 **intent**: Implement every read-only `GET` endpoint listed in `docs/specs/api/2026-05-04-http-api.md` under `/api/v1/`.
@@ -278,7 +278,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: any mutating endpoint.
 **depends_on**: P2.
 
-#### T3.1: `GET /api/v1` root catalog
+#### [x] T3.1: `GET /api/v1` root catalog
 
 **acceptance_criteria**:
 - `internal/api/handlers/root.go` registers a handler returning `{api_version, binary_version, openapi_url, schemas_url, endpoints: [...]}`.
@@ -288,7 +288,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is discoverable metadata for tools that want to introspect the API at runtime.
 **depends_on**: T2.2, T2.5.
 
-#### T3.2: `GET /api/v1/openapi.json`
+#### [x] T3.2: `GET /api/v1/openapi.json`
 
 **acceptance_criteria**:
 - `internal/api/handlers/openapi.go` serves the embedded `internal/api/openapi.json` with `Content-Type: application/json` and immutable cache headers.
@@ -297,7 +297,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Direct passthrough of the embedded asset.
 **depends_on**: T2.7.
 
-#### T3.3: `GET /api/v1/schemas/{name}`
+#### [x] T3.3: `GET /api/v1/schemas/{name}`
 
 **acceptance_criteria**:
 - `internal/api/handlers/schemas.go` registers a handler that resolves `{name}` against `SchemaFS` and serves the schema bytes.
@@ -307,7 +307,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Clients validate responses against these schemas without bundling them.
 **depends_on**: T2.5.
 
-#### T3.4: `GET /api/v1/sessions` and `GET /api/v1/sessions/{id}`
+#### [x] T3.4: `GET /api/v1/sessions` and `GET /api/v1/sessions/{id}`
 
 **acceptance_criteria**:
 - `internal/api/handlers/sessions.go` registers `List` and `Get`.
@@ -318,7 +318,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the entry point for any client that wants to enumerate or pick a session.
 **depends_on**: T1.2, T2.2.
 
-#### T3.5: `GET /api/v1/sessions/{id}/snapshot`
+#### [x] T3.5: `GET /api/v1/sessions/{id}/snapshot`
 
 **acceptance_criteria**:
 - `internal/api/handlers/snapshot.go` registers the handler.
@@ -329,7 +329,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the SPA's bootstrap call on initial load.
 **depends_on**: T1.2, T2.2.
 
-#### T3.6: `GET /api/v1/sessions/{id}/dag`
+#### [x] T3.6: `GET /api/v1/sessions/{id}/dag`
 
 **acceptance_criteria**:
 - `internal/api/handlers/dag.go` registers the handler.
@@ -340,7 +340,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Refetch endpoint when the SPA wants to reload only the DAG (e.g., after `seq_gone` from SSE).
 **depends_on**: T3.5.
 
-#### T3.7: `GET /api/v1/sessions/{id}/briefings/{phase}/{attempt}`
+#### [x] T3.7: `GET /api/v1/sessions/{id}/briefings/{phase}/{attempt}`
 
 **acceptance_criteria**:
 - `internal/api/handlers/briefings.go` registers the handler.
@@ -351,7 +351,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Briefings are markdown documents; the API does not render them. The SPA renders via `react-markdown`.
 **depends_on**: T1.4, T2.2.
 
-#### T3.8: `GET /api/v1/sessions/{id}/prompts/{role}`
+#### [x] T3.8: `GET /api/v1/sessions/{id}/prompts/{role}`
 
 **acceptance_criteria**:
 - `internal/api/handlers/prompts.go` registers the handler.
@@ -362,7 +362,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Lazy-loaded by the SPA when the user opens the Prompts tab.
 **depends_on**: T1.5, T2.2.
 
-#### T3.9: `GET /api/v1/sessions/{id}/events` (SSE)
+#### [x] T3.9: `GET /api/v1/sessions/{id}/events` (SSE)
 
 **acceptance_criteria**:
 - `internal/api/sse.go` provides an SSE writer that serializes a `SeqEvent` as `id: <seq>\nevent: <kind>\ndata: <json>\n\n`.
@@ -376,7 +376,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the heart of the live dashboard. Most regressions in observability surface here first.
 **depends_on**: T1.3, T2.2.
 
-#### T3.10: Integration test suite
+#### [ ] T3.10: Integration test suite
 
 **acceptance_criteria**:
 - `internal/api/integration_test.go` boots a real `Server` against fake `Services`, exercises every endpoint via `httptest`, asserts JSON shape against schemas.
@@ -386,7 +386,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the final gate before P4 changes the listener layout.
 **depends_on**: T3.1 through T3.9.
 
-### P4: Shared listener and MCP migration
+### [ ] P4: Shared listener and MCP migration
 
 **id**: `P4-shared-listener`
 **intent**: One listener per `bcc run`. MCP is mounted at `/mcp/*` on the API listener; it does not own a listener. Agent vendors use URLs with the `/mcp/` prefix. Auth is path-scoped: `/mcp/*` validates against the agent registry, `/api/v1/*` and `/` validate against the session token.
@@ -394,7 +394,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: webui mount (P5).
 **depends_on**: P2.
 
-#### T4.1: MCP exposes `Routes() http.Handler`
+#### [ ] T4.1: MCP exposes `Routes() http.Handler`
 
 **acceptance_criteria**:
 - `internal/mcp/server.go` exports `Routes() http.Handler` that returns the MCP request handler ready to mount at any prefix.
@@ -404,7 +404,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is a refactor; behavior is unchanged. The handler used to be wired via an internal `http.Server`; now it is just an `http.Handler`.
 **depends_on**: T2.2.
 
-#### T4.2: `mcp_boot.go` returns a handler instead of starting a listener
+#### [ ] T4.2: `mcp_boot.go` returns a handler instead of starting a listener
 
 **acceptance_criteria**:
 - `internal/cli/mcp_boot.go` is renamed conceptually: it builds the MCP handler, the agent registry, and the dag handler, but does not start an HTTP listener.
@@ -414,7 +414,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The composition root, not `mcp_boot`, owns the listener.
 **depends_on**: T4.1.
 
-#### T4.3: Composition root mounts everything on one listener
+#### [ ] T4.3: Composition root mounts everything on one listener
 
 **acceptance_criteria**:
 - `internal/cli/run.go` constructs the `internal/api/Server` with `Mounts{MCP: mcpHandler, WebUI: webuiHandler}`.
@@ -425,7 +425,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This task collapses the previous two-listener layout into one.
 **depends_on**: T4.2, T2.2.
 
-#### T4.4: Agent vendor URL update
+#### [ ] T4.4: Agent vendor URL update
 
 **acceptance_criteria**:
 - `internal/director/claude/` constructs the `--mcp-config` URL with prefix `/mcp/`. Example: `http://127.0.0.1:54321/mcp/`.
@@ -435,7 +435,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Agents are transparent to the prefix change as long as the adapter sets the right URL.
 **depends_on**: T4.3.
 
-#### T4.5: Stderr banner unified
+#### [ ] T4.5: Stderr banner unified
 
 **acceptance_criteria**:
 - Banner format on startup: `bcc: dashboard at http://127.0.0.1:<port>/?t=<token>` (when webui is enabled) or `bcc: api at http://127.0.0.1:<port>/api/v1` (when only api is enabled).
@@ -445,7 +445,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Users see one URL. The MCP being a sub-path is an implementation detail they do not need.
 **depends_on**: T4.3.
 
-#### T4.6: Path-scoped auth
+#### [ ] T4.6: Path-scoped auth
 
 **acceptance_criteria**:
 - `internal/api/server.go` registers two auth middlewares scoped by path: `/mcp/*` uses the agent-registry token check (existing MCP logic, lifted into a middleware); `/api/v1/*` and `/` use the session-token check from T2.3.
@@ -455,7 +455,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the security guarantee that justifies sharing one listener.
 **depends_on**: T4.3, T2.3.
 
-#### T4.7: End-to-end smoke test
+#### [ ] T4.7: End-to-end smoke test
 
 **acceptance_criteria**:
 - A test boots `bcc run` against a tiny fixture spec, waits for the listener, hits `/api/v1/sessions`, hits `/mcp/` with a fake agent token, asserts both succeed and isolation holds.
@@ -464,7 +464,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Final gate of the listener migration.
 **depends_on**: T4.4, T4.5, T4.6.
 
-### P5: WebUI Go-side handler
+### [ ] P5: WebUI Go-side handler
 
 **id**: `P5-webui-go`
 **intent**: `internal/webui/` produces an `http.Handler` that serves the embedded SPA. The composition root mounts it at `/` on the API listener.
@@ -472,7 +472,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: Any frontend tooling or panel (P6, P7).
 **depends_on**: P2, P4.
 
-#### T5.1: `New() http.Handler`
+#### [ ] T5.1: `New() http.Handler`
 
 **acceptance_criteria**:
 - `internal/webui/handler.go` exports `New() http.Handler` returning a handler that serves `/` and `/assets/*` from the embedded bundle.
@@ -482,7 +482,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The handler is mountable on any router; it does not assume chi or huma.
 **depends_on**: T5.2.
 
-#### T5.2: Embedded bundle
+#### [ ] T5.2: Embedded bundle
 
 **acceptance_criteria**:
 - `internal/webui/embed.go` declares `//go:embed web/dist/*` into `var BundleFS embed.FS`.
@@ -492,7 +492,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The stub is the placeholder until P6 produces a real bundle.
 **depends_on**: none.
 
-#### T5.3: Vite dev proxy for `--webui-dev`
+#### [ ] T5.3: Vite dev proxy for `--webui-dev`
 
 **acceptance_criteria**:
 - `internal/webui/proxy.go` exports a function that returns an `http.Handler` reverse-proxying everything except `/api/v1/*` to `http://127.0.0.1:5173`.
@@ -502,7 +502,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Dev mode preserves same-origin discipline; the API still serves `/api/v1/*` from in-process state.
 **depends_on**: T5.1.
 
-#### T5.4: `--webui` and `--webui-open` flags
+#### [ ] T5.4: `--webui` and `--webui-open` flags
 
 **acceptance_criteria**:
 - `internal/cli/` registers boolean flags `--webui` (short `-w`) and `--webui-open` (short `-W`) on the `run` command.
@@ -513,7 +513,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Both flags are presented in `bcc run --help`. `--webui-dev` is documented in the contributor guide only, not in `--help`.
 **depends_on**: T5.1.
 
-#### T5.5: `[webui]` config block
+#### [ ] T5.5: `[webui]` config block
 
 **acceptance_criteria**:
 - `internal/config/config.go` adds a `Webui` struct with `Enabled bool` and `Open bool`. Default both false.
@@ -524,7 +524,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The TOML block has no `bind` field. Bind belongs to `[api]`.
 **depends_on**: T5.4.
 
-#### T5.6: Composition root: `--webui` implies `--api`
+#### [ ] T5.6: Composition root: `--webui` implies `--api`
 
 **acceptance_criteria**:
 - If `--webui` is set (or `[webui].enabled = true`) and the API is not explicitly enabled, the API auto-enables on default bind (`127.0.0.1:0`).
@@ -534,7 +534,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Same-origin between SPA and API depends on this implication.
 **depends_on**: T4.3, T5.4, T5.5.
 
-### P6: SPA stack and build pipeline
+### [ ] P6: SPA stack and build pipeline
 
 **id**: `P6-spa-stack`
 **intent**: Initialize the Vite + React 19 + TypeScript project, configure Tailwind v4, generate the TypeScript client from `internal/api/openapi.json`, set up the build pipeline, pin Node in mise.
@@ -542,7 +542,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: V1 panels (P7).
 **depends_on**: P3 (real `openapi.json` available).
 
-#### T6.1: Vite + React 19 + TypeScript scaffold
+#### [ ] T6.1: Vite + React 19 + TypeScript scaffold
 
 **acceptance_criteria**:
 - `internal/webui/web/` contains `package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`, `src/main.tsx`, `src/app.tsx`.
@@ -552,7 +552,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Vanilla scaffold. No state, no routes, just a header that says "bcc dashboard".
 **depends_on**: none.
 
-#### T6.2: Tailwind v4 with design tokens
+#### [ ] T6.2: Tailwind v4 with design tokens
 
 **acceptance_criteria**:
 - Tailwind v4 configured in `tailwind.config.ts`.
@@ -562,7 +562,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Dark only in V1.
 **depends_on**: T6.1.
 
-#### T6.3: Generated TypeScript API client
+#### [ ] T6.3: Generated TypeScript API client
 
 **acceptance_criteria**:
 - A Vite plugin (or a separate `npm run gen-client` step run by `npm run build`) reads `../../api/openapi.json` and generates `src/lib/api-client.ts` with typed functions for every endpoint.
@@ -572,7 +572,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Hand-written request/response types are forbidden. Generator choice (`openapi-typescript-codegen`, `openapi-fetch`, or similar) is left to the implementer; the criterion is that `tsc` fails when the API contract drifts.
 **depends_on**: T6.1, T3.x (any endpoint to generate against).
 
-#### T6.4: Layout shell
+#### [ ] T6.4: Layout shell
 
 **acceptance_criteria**:
 - `src/app.tsx` renders a layout shell: top header band, left sidebar, central main area, collapsible bottom drawer, right panel.
@@ -582,7 +582,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: P7 fills each region. The shell is the geometric scaffold.
 **depends_on**: T6.2.
 
-#### T6.5: Self-hosted fonts
+#### [ ] T6.5: Self-hosted fonts
 
 **acceptance_criteria**:
 - `internal/webui/web/public/fonts/` contains Geist Sans, Geist Mono, and Instrument Serif (or Fraunces) WOFF2 files with permissive licenses.
@@ -592,7 +592,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: No CDN dependency at runtime.
 **depends_on**: T6.2.
 
-#### T6.6: Makefile target
+#### [ ] T6.6: Makefile target
 
 **acceptance_criteria**:
 - `Makefile` has the chain `api-openapi → webui → build` already established in P2.7.
@@ -602,7 +602,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is also exercised in CI.
 **depends_on**: T6.3.
 
-#### T6.7: Node pin in mise
+#### [ ] T6.7: Node pin in mise
 
 **acceptance_criteria**:
 - `.mise.toml` pins Node to a specific LTS version (e.g., `node = "22.x"`).
@@ -612,7 +612,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The Go pin is already in `.mise.toml`. Node is added next to it.
 **depends_on**: none.
 
-#### T6.8: Bundle size CI gate
+#### [ ] T6.8: Bundle size CI gate
 
 **acceptance_criteria**:
 - A CI step (or a Makefile sub-target) computes the gzipped size of all files in `internal/webui/web/dist/`.
@@ -622,7 +622,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This guards against accidental dependency bloat in P7.
 **depends_on**: T6.6.
 
-### P7: SPA V1 panels
+### [ ] P7: SPA V1 panels
 
 **id**: `P7-spa-panels`
 **intent**: Implement every V1 panel listed in `docs/specs/webui/2026-05-04-embedded-web-dashboard.md`.
@@ -630,7 +630,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: V2 mutation UIs.
 **depends_on**: P6.
 
-#### T7.1: Header
+#### [ ] T7.1: Header
 
 **acceptance_criteria**:
 - Header renders left (session title, id, spec path with copy-to-clipboard), center (status pill, iteration counter, elapsed time), right (sparkline of throughput, view toggle DAG | Activity, settings menu).
@@ -640,7 +640,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Status pill uses status-palette CSS variables from T6.2.
 **depends_on**: T6.4.
 
-#### T7.2: DAG view
+#### [ ] T7.2: DAG view
 
 **acceptance_criteria**:
 - `src/components/dag-view/` renders the DAG via `@xyflow/react` with custom node types `Phase` and `Task`.
@@ -653,7 +653,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the structural view of the run.
 **depends_on**: T7.1.
 
-#### T7.3: Activity Gantt
+#### [ ] T7.3: Activity Gantt
 
 **acceptance_criteria**:
 - `src/components/activity-view/` renders a horizontal Gantt with Visx primitives.
@@ -663,7 +663,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Sources are the events `IterationStarted`, `IterationFinished`, `TaskStarted`, `TaskCompleted`, `TaskApproved`, `TaskNeedsFix`, `PhaseBriefed`. No new event types are introduced.
 **depends_on**: T7.1.
 
-#### T7.4: View toggle
+#### [ ] T7.4: View toggle
 
 **acceptance_criteria**:
 - The header toggle switches the central stage between DAG (T7.2) and Activity (T7.3) views.
@@ -673,7 +673,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Both views observe the same session state; only rendering differs.
 **depends_on**: T7.2, T7.3.
 
-#### T7.5: Right panel timeline
+#### [ ] T7.5: Right panel timeline
 
 **acceptance_criteria**:
 - `src/components/timeline-panel/` renders an editorial list of `loop.Event` records received via SSE, grouped by iteration, newest at top.
@@ -685,7 +685,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Events arrive via the `useEvents` hook (T7.8).
 **depends_on**: T7.1, T7.8.
 
-#### T7.6: Bottom drawer briefings and prompts
+#### [ ] T7.6: Bottom drawer briefings and prompts
 
 **acceptance_criteria**:
 - `src/components/briefing-panel/` renders a collapsible drawer with three tabs: Briefing, Prompts, Reviewer notes.
@@ -696,7 +696,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: All three tabs use the generated API client (T6.3).
 **depends_on**: T7.1.
 
-#### T7.7: Left sidebar sessions
+#### [ ] T7.7: Left sidebar sessions
 
 **acceptance_criteria**:
 - `src/components/sessions-sidebar/` lists sessions returned by `GET /api/v1/sessions`.
@@ -707,7 +707,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The archived route uses the same data flow; only the SSE stream is the replay flavor.
 **depends_on**: T7.1.
 
-#### T7.8: Hooks `use-snapshot` and `use-events`
+#### [ ] T7.8: Hooks `use-snapshot` and `use-events`
 
 **acceptance_criteria**:
 - `src/hooks/use-snapshot.ts` fetches `/api/v1/sessions/{id}/snapshot` on mount, exposes `{snapshot, error, refetch}`.
@@ -718,7 +718,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: These hooks are the SPA's only contact with the API.
 **depends_on**: T6.3.
 
-### P8: TUI migration to services
+### [ ] P8: TUI migration to services
 
 **id**: `P8-tui-migration`
 **intent**: Refactor `internal/tui/` to consume `internal/services/` instead of touching the loop event channel and dag handler directly. No behavior change.
@@ -726,7 +726,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: Any new feature.
 **depends_on**: P1.
 
-#### T8.1: Constructor accepts `*services.Services`
+#### [ ] T8.1: Constructor accepts `*services.Services`
 
 **acceptance_criteria**:
 - The TUI construction function (currently in `internal/tui/`) accepts `*services.Services`.
@@ -735,7 +735,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the seam through which the migration happens.
 **depends_on**: T1.1.
 
-#### T8.2: Replace direct loop channel with `EventService.Subscribe`
+#### [ ] T8.2: Replace direct loop channel with `EventService.Subscribe`
 
 **acceptance_criteria**:
 - The TUI's bubbletea bridge no longer reads directly from a `<-chan loop.Event`; it subscribes via `EventService.Subscribe`.
@@ -745,7 +745,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The wire format inside the TUI does not change; only the source.
 **depends_on**: T8.1, T1.3.
 
-#### T8.3: Replace dag handler reads with `SessionService.Snapshot`
+#### [ ] T8.3: Replace dag handler reads with `SessionService.Snapshot`
 
 **acceptance_criteria**:
 - The TUI no longer imports `internal/director/dag/` for behavior; it reads snapshots via `SessionService.Snapshot`.
@@ -755,7 +755,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Value objects continue to flow across the services boundary; behavior calls do not.
 **depends_on**: T8.1, T1.2.
 
-#### T8.4: Composition root passes `services` to the TUI
+#### [ ] T8.4: Composition root passes `services` to the TUI
 
 **acceptance_criteria**:
 - `internal/cli/run.go` constructs `services` once and passes the handle to both the TUI and the API server.
@@ -764,7 +764,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Single source of truth across protocol adapters.
 **depends_on**: T8.1, T2.2.
 
-#### T8.5: TUI behavioral parity
+#### [ ] T8.5: TUI behavioral parity
 
 **acceptance_criteria**:
 - Existing TUI tests pass.
@@ -774,7 +774,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This phase is a refactor; users must not notice a change.
 **depends_on**: T8.2, T8.3, T8.4.
 
-### P9: Documentation
+### [ ] P9: Documentation
 
 **id**: `P9-docs`
 **intent**: Update `CLAUDE.md`, add a surface coverage table, update `README.md`.
@@ -782,7 +782,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: Code.
 **depends_on**: P8.
 
-#### T9.1: `internal/services/` documented in CLAUDE.md
+#### [ ] T9.1: `internal/services/` documented in CLAUDE.md
 
 **acceptance_criteria**:
 - The "Layers" section of `CLAUDE.md` lists `internal/services/` as the application services layer between core and protocol adapters.
@@ -791,7 +791,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The architectural rule is normative; code review enforces it.
 **depends_on**: none.
 
-#### T9.2: HTTP routing rule relaxed
+#### [ ] T9.2: HTTP routing rule relaxed
 
 **acceptance_criteria**:
 - `CLAUDE.md` updates the "Stack" section to read: HTTP routing uses stdlib `net/http` for the MCP and `chi` for the HTTP API. Frameworks with custom contexts (gin, echo, fiber) remain rejected.
@@ -800,7 +800,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the policy change motivated by the HTTP API's surface size.
 **depends_on**: none.
 
-#### T9.3: `internal/api/` and `internal/webui/` documented
+#### [ ] T9.3: `internal/api/` and `internal/webui/` documented
 
 **acceptance_criteria**:
 - `CLAUDE.md` describes `internal/api/` as a protocol adapter peer of `internal/mcp/`, and `internal/webui/` as a presentation peer of `internal/tui/`.
@@ -809,7 +809,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: New readers see the two new packages alongside the existing ones.
 **depends_on**: T9.1, T9.2.
 
-#### T9.4: Surface coverage table
+#### [ ] T9.4: Surface coverage table
 
 **acceptance_criteria**:
 - `docs/surface-coverage.md` (new) lists every user-facing capability with columns: Capability, TUI, WebUI, Notes.
@@ -819,7 +819,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the authoritative answer when users ask why a feature is in one surface and not the other.
 **depends_on**: T9.3.
 
-#### T9.5: `README.md` updated
+#### [ ] T9.5: `README.md` updated
 
 **acceptance_criteria**:
 - The "Run" section of `README.md` documents `bcc run --webui` and `--api` with the same examples as the PRDs.
@@ -897,3 +897,8 @@ The following are explicitly out of scope here and ride a later spec built on th
 - chi: https://github.com/go-chi/chi
 - OpenAPI 3.1 specification
 - Server-Sent Events (W3C / WHATWG)
+
+
+## Execution Journal
+
+<!-- Filled in by the agent during execution per the bcc-markdown contract. -->
