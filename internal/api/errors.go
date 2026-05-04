@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/services"
@@ -69,6 +70,23 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusFor(svc.Code))
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// RegisterErrorComponent ensures the OpenAPI document references the
+// canonical Error envelope under #/components/schemas/Error so the
+// document is non-empty even before any business operation is
+// registered. The huma registry is responsible for emitting the JSON
+// Schema; we only have to ask for it.
+func RegisterErrorComponent(s *Server) {
+	api := s.HumaAPI()
+	if api == nil {
+		_ = s.Routes()
+		api = s.HumaAPI()
+	}
+	if api == nil {
+		return
+	}
+	api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(ErrorResponse{}), true, "Error")
 }
 
 // requestIDHeader is the canonical request-id header name; the value
