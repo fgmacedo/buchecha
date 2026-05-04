@@ -113,6 +113,56 @@ FOO = "bar"
 	}
 }
 
+func TestLoad_WebuiBlock(t *testing.T) {
+	cases := []struct {
+		name        string
+		toml        string
+		wantEnabled bool
+		wantOpen    bool
+	}{
+		{
+			name:        "block absent defaults to off",
+			toml:        "[project]\nlanguage = \"en\"\n",
+			wantEnabled: false,
+			wantOpen:    false,
+		},
+		{
+			name: "explicit true honored",
+			toml: `[webui]
+enabled = true
+open = true
+`,
+			wantEnabled: true,
+			wantOpen:    true,
+		},
+		{
+			name: "partial set leaves the other field at zero",
+			toml: `[webui]
+enabled = true
+`,
+			wantEnabled: true,
+			wantOpen:    false,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".bcc.toml")
+			writeFile(t, path, tt.toml)
+			c, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.Webui.Enabled != tt.wantEnabled {
+				t.Errorf("Webui.Enabled = %v, want %v", c.Webui.Enabled, tt.wantEnabled)
+			}
+			if c.Webui.Open != tt.wantOpen {
+				t.Errorf("Webui.Open = %v, want %v", c.Webui.Open, tt.wantOpen)
+			}
+		})
+	}
+}
+
 func TestLoad_DebugDefaultsOff(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")

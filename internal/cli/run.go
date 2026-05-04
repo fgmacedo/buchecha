@@ -112,6 +112,12 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 	if runWebUIOpen {
 		runWebUI = true
 	}
+	mergeWebuiFlags(cfg, webuiOverride{
+		webuiChanged:     cmd.Flags().Changed("webui") || runWebUIOpen,
+		webuiOpenChanged: cmd.Flags().Changed("webui-open"),
+		webui:            runWebUI,
+		webuiOpen:        runWebUIOpen,
+	})
 	if cmd.Flags().Changed("debug-logs") {
 		cfg.Debug.CaptureSubprocessLogs = boolPtr(runDebugLogs)
 	}
@@ -140,6 +146,33 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// webuiOverride captures the inputs mergeWebuiFlags needs to apply the
+// CLI-wins-over-TOML rule for [webui]. The two *Changed fields mirror
+// cobra's cmd.Flags().Changed semantics: true means the user passed
+// the flag explicitly, false means leave the TOML value alone.
+type webuiOverride struct {
+	webuiChanged     bool
+	webuiOpenChanged bool
+	webui            bool
+	webuiOpen        bool
+}
+
+// mergeWebuiFlags applies the [webui] override rule: CLI flags win
+// when the user set them, otherwise the TOML value (cfg.Webui as
+// loaded from disk) stands. Pulled out of runSpec so the matrix is
+// unit-testable without booting cobra.
+func mergeWebuiFlags(cfg *config.Config, o webuiOverride) {
+	if cfg == nil {
+		return
+	}
+	if o.webuiChanged {
+		cfg.Webui.Enabled = o.webui
+	}
+	if o.webuiOpenChanged {
+		cfg.Webui.Open = o.webuiOpen
+	}
+}
 
 func validOutputMode(s string) bool {
 	switch s {
