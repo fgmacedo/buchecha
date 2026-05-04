@@ -1,9 +1,16 @@
-.PHONY: build install check-build test test-race vet fmt fmt-check tidy clean
+.PHONY: build install check-build test test-race vet fmt fmt-check tidy clean api-openapi webui
 
 check-build:
 	go build ./...
 
-build: check-build
+api-openapi:
+	go run ./internal/api/cmd/gen-openapi
+
+# Stub target: the real SPA bundle lands in P6 (see docs/specs/api-webui).
+webui: api-openapi
+	@echo "webui: stub (real bundle lands in P6)"
+
+build: webui check-build
 	go build -o bcc ./cmd/bcc
 
 install: check-build
