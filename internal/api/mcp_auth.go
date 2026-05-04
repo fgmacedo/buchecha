@@ -19,9 +19,9 @@ const mcpRoleHeader = "X-BCC-Role"
 // behind the run-wide MCP bearer token plus the role allow-list. A
 // request must carry both:
 //
-//   1. Authorization: Bearer <token> matching the run-wide MCP token,
-//   2. X-BCC-Role: <role> matching one of the registered connection
-//      names.
+//  1. Authorization: Bearer <token> matching the run-wide MCP token,
+//  2. X-BCC-Role: <role> matching one of the registered connection
+//     names.
 //
 // Either failure produces the canonical unauthorized envelope with
 // the same code (CodeUnauthorized) callers see on the /api/v1/*

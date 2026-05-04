@@ -76,34 +76,34 @@ func TestPrintRunBanner_LANWarning(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name    string
-		addr    string
-		api     bool
-		webui   bool
+		name     string
+		addr     string
+		api      bool
+		webui    bool
 		wantWarn bool
 	}{
 		{
-			name:    "loopback bind silent",
-			addr:    "127.0.0.1:1234",
-			api:     true,
+			name:     "loopback bind silent",
+			addr:     "127.0.0.1:1234",
+			api:      true,
 			wantWarn: false,
 		},
 		{
-			name:    "non-loopback ipv4 emits warning",
-			addr:    "192.168.1.5:1234",
-			api:     true,
+			name:     "non-loopback ipv4 emits warning",
+			addr:     "192.168.1.5:1234",
+			api:      true,
 			wantWarn: true,
 		},
 		{
-			name:    "wildcard bind treated as loopback display, no warning",
-			addr:    "0.0.0.0:1234",
-			api:     true,
+			name:     "wildcard bind treated as loopback display, no warning",
+			addr:     "0.0.0.0:1234",
+			api:      true,
 			wantWarn: true,
 		},
 		{
-			name:    "ipv6 loopback silent",
-			addr:    "[::1]:1234",
-			api:     true,
+			name:     "ipv6 loopback silent",
+			addr:     "[::1]:1234",
+			api:      true,
 			wantWarn: false,
 		},
 	}
