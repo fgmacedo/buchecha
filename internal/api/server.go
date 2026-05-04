@@ -118,6 +118,7 @@ func (s *Server) Routes() http.Handler {
 		OpenAPIJSON:   OpenAPIJSON,
 		LoadSchema:    LoadSchema,
 		WriteError:    WriteError,
+		HumaError:     HumaServiceError,
 	})
 	root.Mount("/api/"+APIVersion, apiRouter)
 

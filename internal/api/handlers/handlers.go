@@ -40,6 +40,11 @@ type Deps struct {
 	// stay out of the circular import that would result from
 	// reaching back into api directly.
 	WriteError func(w http.ResponseWriter, r *http.Request, err error)
+	// HumaError lifts a services error into a huma.StatusError so
+	// huma operation handlers can return one and let huma render the
+	// canonical envelope with the mapped HTTP status. Non-huma
+	// handlers (openapi, schemas, sse) use WriteError instead.
+	HumaError func(err error) huma.StatusError
 }
 
 // Register installs every V1 read-only operation against api and,
@@ -53,4 +58,5 @@ func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps
 	registerRoot(api, deps)
 	registerOpenAPI(router, deps.OpenAPIJSON)
 	registerSchemas(router, deps)
+	registerSessions(api, svc, deps)
 }

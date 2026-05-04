@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/fgmacedo/buchecha/internal/services"
 )
 
@@ -70,6 +72,52 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusFor(svc.Code))
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// humaServiceError adapts a *services.Error so it can be returned
+// directly from a huma operation handler. huma serializes the body
+// via MarshalJSON, so the wire envelope ends up identical to the
+// one WriteError emits on the chi-mounted handlers.
+type humaServiceError struct {
+	err    *services.Error
+	status int
+}
+
+// Error satisfies the error interface and the huma.StatusError check.
+func (e *humaServiceError) Error() string { return e.err.Error() }
+
+// GetStatus is the huma.StatusError contract: returning the mapped
+// HTTP status from codeStatus keeps the wire response in lock-step
+// with the WriteError table.
+func (e *humaServiceError) GetStatus() int { return e.status }
+
+// MarshalJSON emits the canonical envelope so the JSON body matches
+// schemas/error.schema.json byte-for-byte regardless of which code
+// path produced the error.
+func (e *humaServiceError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ErrorResponse{
+		Code:    e.err.Code,
+		Message: e.err.Message,
+		Details: e.err.Details,
+	})
+}
+
+// HumaServiceError lifts err into a huma.StatusError that, when
+// returned from a huma operation handler, makes huma write the
+// canonical envelope with the mapped HTTP status. Non-services
+// errors are sanitized to CodeInternal; the original error is logged
+// via WriteError instead of leaking into the response body. Handlers
+// that flow through huma return HumaServiceError(err); chi-mounted
+// handlers (openapi, schemas, sse) keep using WriteError directly.
+func HumaServiceError(err error) huma.StatusError {
+	svc, ok := services.AsServiceError(err)
+	if !ok {
+		slog.Warn("api: non-service error wrapped for huma response",
+			"err", err,
+		)
+		svc = services.ErrInternal
+	}
+	return &humaServiceError{err: svc, status: statusFor(svc.Code)}
 }
 
 // RegisterErrorComponent ensures the OpenAPI document references the
