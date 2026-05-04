@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/api/v1/briefing.schema.json",
+  "title": "Briefing",
+  "description": "Rendered briefing markdown returned by the API. Wraps the on-disk briefing.md content with the addressing tuple (session, phase, attempt, iteration) so adapters can attach metadata (Content-Type, ETag) without re-reading the file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "phase_id", "attempt", "iteration_id", "markdown"],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "iteration_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "markdown": {
+      "type": "string"
+    }
+  }
+}

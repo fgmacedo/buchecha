@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/api/v1/error.schema.json",
+  "title": "Error",
+  "description": "Canonical HTTP error envelope. Mirrors services.Error: code is the closed-enum value protocol adapters key off; message is a short human-readable explanation; details, when present, carries adapter-agnostic structured context (offending ids, requested seq, etc.) verbatim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": [
+        "unauthorized",
+        "forbidden",
+        "session_not_found",
+        "phase_not_found",
+        "task_not_found",
+        "attempt_not_found",
+        "role_not_found",
+        "seq_gone",
+        "not_implemented",
+        "invalid_request",
+        "conflict",
+        "internal"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
