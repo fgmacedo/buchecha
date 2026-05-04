@@ -101,7 +101,16 @@ func (s *Server) Routes() http.Handler {
 	if s.authToken != "" {
 		apiRouter.Use(SessionAuth(s.authToken))
 	}
-	s.humaAPI = humachi.New(apiRouter, huma.DefaultConfig("bcc", APIVersion))
+	cfg := huma.DefaultConfig("bcc", APIVersion)
+	// Disable huma's auto-mounted OpenAPI route. T3.2 serves the
+	// embedded bytes verbatim from internal/api/openapi.json so the
+	// document clients consume is byte-identical to the one
+	// regenerated at build time by `make api-openapi`. The huma
+	// adapter's runtime serializer would reformat and inject
+	// SchemaLinkTransformer fields, breaking that equality.
+	cfg.OpenAPIPath = ""
+	cfg.DocsPath = ""
+	s.humaAPI = humachi.New(apiRouter, cfg)
 	s.apiRouter = apiRouter
 	handlers.Register(s.humaAPI, apiRouter, s.svc, handlers.Deps{
 		APIVersion:    APIVersion,

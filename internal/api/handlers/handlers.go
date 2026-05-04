@@ -44,4 +44,5 @@ type Deps struct {
 // detection; callers register exactly once per Server lifecycle.
 func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps) {
 	registerRoot(api, deps)
+	registerOpenAPI(router, deps.OpenAPIJSON)
 }
