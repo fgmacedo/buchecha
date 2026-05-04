@@ -52,9 +52,10 @@ type Mounts struct {
 // this iteration registers no operation that consumes it, so callers
 // may pass nil while the foundation is being assembled.
 type Server struct {
-	svc     *services.Services
-	mounts  Mounts
-	humaAPI huma.API
+	svc       *services.Services
+	mounts    Mounts
+	authToken string
+	humaAPI   huma.API
 }
 
 // New builds a Server bound to svc. svc may be nil during the
@@ -72,6 +73,16 @@ func (s *Server) WithMounts(m Mounts) *Server {
 	return s
 }
 
+// WithAuth installs the per-run session token used by the SessionAuth
+// middleware on the /api/v1 subtree. An empty token leaves the
+// foundation usable in tests that exercise the router without auth.
+// The MCP and WebUI mounts get their own auth in P4/P5; this setter
+// does not touch them.
+func (s *Server) WithAuth(token string) *Server {
+	s.authToken = token
+	return s
+}
+
 // Routes builds and returns the configured chi.Router. The /api/v1
 // subtree (including the huma OpenAPI 3.1 document at
 // /api/v1/openapi.json) is always registered. Optional MCP and WebUI
@@ -85,6 +96,9 @@ func (s *Server) Routes() http.Handler {
 	// dedicated sub-router so the huma routes live below /api/v1
 	// without leaking onto the root.
 	apiRouter := chi.NewRouter()
+	if s.authToken != "" {
+		apiRouter.Use(SessionAuth(s.authToken))
+	}
 	s.humaAPI = humachi.New(apiRouter, huma.DefaultConfig("bcc", APIVersion))
 	root.Mount("/api/"+APIVersion, apiRouter)
 
