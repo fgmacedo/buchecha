@@ -63,4 +63,12 @@
   .font-numeric {
     font-family: var(--font-numeric);
   }
+
+  .bg-canvas-textured {
+    background-image:
+      radial-gradient(circle, var(--surface-canvas) 0%, transparent 100%),
+      url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><filter id="n"><feTurbulence baseFrequency="0.9" numOctaves="1" type="fractalNoise"/></filter><rect width="128" height="128" fill="%23000" filter="url(%23n)" opacity="0.05"/></svg>');
+    background-size: cover, 128px 128px;
+    background-attachment: fixed;
+  }
 }
