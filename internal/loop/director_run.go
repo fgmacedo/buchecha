@@ -307,9 +307,6 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			if signal == agentcontract.SignalBlocked {
 				return l.terminate(events, "blocked", ExitBlocked), nil
 			}
-			if !headAdvanced {
-				return l.terminate(events, "head_stuck", ExitHEADStuck), nil
-			}
 
 			d.Handler.SetBriefingDiffRange(briefing.IterationID, headBefore, headAfter)
 
@@ -380,7 +377,6 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				SubDAGAnyNeedsFix: anyNeedsFix,
 				Attempt:           attempt,
 				RetryBudget:       budget,
-				HEADAdvanced:      headAdvanced,
 			})
 			logger.Info("director decision",
 				"phase", phaseID, "attempt", attempt,
@@ -516,8 +512,8 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 	}
 	if result.ExitCode != 0 && handler != nil && handler.IterationSignal(briefingID) == "" {
 		// Executor crashed without emitting bcc_iteration_finished. Surface
-		// the captured stderr tail so the dashboard does not show a bare
-		// "head_stuck" with no diagnostic context.
+		// the captured stderr tail so the dashboard shows a real diagnostic
+		// instead of a generic blocked state.
 		return agentcontract.SignalBlocked, stats, formatExecutorCrash(result, briefingID)
 	}
 	signal := agentcontract.SignalUnknown

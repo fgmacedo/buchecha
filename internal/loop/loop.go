@@ -99,8 +99,6 @@ func stopReason(code int) string {
 		return "blocked"
 	case ExitInvalid:
 		return "invalid"
-	case ExitHEADStuck:
-		return "head_stuck"
 	case ExitMaxIterations:
 		return "max_iterations"
 	case ExitReview:

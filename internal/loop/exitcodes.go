@@ -13,10 +13,6 @@ const (
 	// any invocation failure (binary missing, ctx canceled, etc.).
 	ExitInvalid = 2
 
-	// ExitHEADStuck: agent did not commit during an iteration; aborted
-	// to avoid an infinite loop where the child fails to advance HEAD.
-	ExitHEADStuck = 3
-
 	// ExitMaxIterations: iteration cap reached without 'done'.
 	ExitMaxIterations = 4
 

@@ -21,9 +21,9 @@ const (
 	// for an external decision (resume, force-approve, skip, abort).
 	DirectorEscalate
 
-	// DirectorAbort: the iteration produced no progress (HEAD did not
-	// advance) or the inputs are malformed. The loop terminates with
-	// Decision.ExitCode.
+	// DirectorAbort: the inputs are malformed (empty or unknown
+	// outcome, approve without a fully done sub-DAG, etc.). The loop
+	// terminates with Decision.ExitCode.
 	DirectorAbort
 )
 
@@ -66,19 +66,17 @@ const (
 // for the iteration's sub-DAG. Outcome is the Reviewer's reported
 // outcome (empty when no review ran). Attempt is the 1-based index of
 // the just-finished attempt; RetryBudget is the effective per-iteration
-// budget; HEADAdvanced is the orthogonal safety net.
+// budget.
 type DirectorDeciderInput struct {
 	Outcome           ReviewOutcome
 	SubDAGFullyDone   bool
 	SubDAGAnyNeedsFix bool
 	Attempt           int
 	RetryBudget       int
-	HEADAdvanced      bool
 }
 
 // DirectorDecide aggregates the iteration outcome into one action:
 //
-//	HEADAdvanced=false                          → Abort, ExitHEADStuck
 //	Outcome=approve, sub-DAG fully done         → Advance
 //	Outcome=approve, sub-DAG not fully done     → Abort, ExitInvalid
 //	Outcome=revise, attempt < 1+budget          → Retry
@@ -86,14 +84,12 @@ type DirectorDeciderInput struct {
 //	Outcome=escalate                            → Escalate
 //	Outcome empty / unknown                     → Abort, ExitInvalid
 //
-// HEAD-stuck is checked first because an iteration that did not move
-// HEAD made no commits regardless of what the Reviewer claims. Budget
-// semantics: attempt 1 is the first try; valid retries are attempts
-// 2..1+budget.
+// An iteration with no commits (HEAD unchanged) is no longer aborted
+// here; the Reviewer audits an empty diff and decides whether the
+// no-op is legitimate (approve), incomplete (revise), or confused
+// (escalate). Budget semantics: attempt 1 is the first try; valid
+// retries are attempts 2..1+budget.
 func DirectorDecide(in DirectorDeciderInput) DirectorDecision {
-	if !in.HEADAdvanced {
-		return DirectorDecision{Action: DirectorAbort, ExitCode: ExitHEADStuck}
-	}
 	switch in.Outcome {
 	case ReviewApprove:
 		if !in.SubDAGFullyDone {

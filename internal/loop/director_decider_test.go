@@ -9,53 +9,43 @@ func TestDirectorDecide(t *testing.T) {
 		want DirectorDecision
 	}{
 		{
-			name: "head not advanced beats approve",
-			in:   DirectorDeciderInput{Outcome: ReviewApprove, SubDAGFullyDone: true, Attempt: 1, RetryBudget: 2, HEADAdvanced: false},
-			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitHEADStuck},
-		},
-		{
-			name: "head not advanced beats revise",
-			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 1, RetryBudget: 2, HEADAdvanced: false},
-			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitHEADStuck},
-		},
-		{
 			name: "approve with sub-DAG fully done advances",
-			in:   DirectorDeciderInput{Outcome: ReviewApprove, SubDAGFullyDone: true, Attempt: 1, RetryBudget: 2, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewApprove, SubDAGFullyDone: true, Attempt: 1, RetryBudget: 2},
 			want: DirectorDecision{Action: DirectorAdvance},
 		},
 		{
 			name: "approve without sub-DAG done is invalid",
-			in:   DirectorDeciderInput{Outcome: ReviewApprove, SubDAGFullyDone: false, Attempt: 1, RetryBudget: 2, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewApprove, SubDAGFullyDone: false, Attempt: 1, RetryBudget: 2},
 			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitInvalid},
 		},
 		{
 			name: "revise within budget retries",
-			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 1, RetryBudget: 2, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 1, RetryBudget: 2},
 			want: DirectorDecision{Action: DirectorRetry},
 		},
 		{
 			name: "revise on final attempt escalates",
-			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 3, RetryBudget: 2, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 3, RetryBudget: 2},
 			want: DirectorDecision{Action: DirectorEscalate},
 		},
 		{
 			name: "revise with budget 0 escalates immediately",
-			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 1, RetryBudget: 0, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewRevise, SubDAGAnyNeedsFix: true, Attempt: 1, RetryBudget: 0},
 			want: DirectorDecision{Action: DirectorEscalate},
 		},
 		{
 			name: "explicit escalate ignores budget remaining",
-			in:   DirectorDeciderInput{Outcome: ReviewEscalate, Attempt: 1, RetryBudget: 5, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewEscalate, Attempt: 1, RetryBudget: 5},
 			want: DirectorDecision{Action: DirectorEscalate},
 		},
 		{
 			name: "empty outcome aborts",
-			in:   DirectorDeciderInput{Outcome: "", Attempt: 1, RetryBudget: 2, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: "", Attempt: 1, RetryBudget: 2},
 			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitInvalid},
 		},
 		{
 			name: "unknown outcome aborts",
-			in:   DirectorDeciderInput{Outcome: ReviewOutcome("nonsense"), Attempt: 1, RetryBudget: 2, HEADAdvanced: true},
+			in:   DirectorDeciderInput{Outcome: ReviewOutcome("nonsense"), Attempt: 1, RetryBudget: 2},
 			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitInvalid},
 		},
 	}

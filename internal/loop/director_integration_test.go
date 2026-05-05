@@ -398,8 +398,12 @@ func TestDirectorIntegration_RetryBudgetExhausted(t *testing.T) {
 	}
 }
 
-// TestDirectorIntegration_HEADStuck covers the HEAD-stuck guard.
-func TestDirectorIntegration_HEADStuck(t *testing.T) {
+// TestDirectorIntegration_NoCommitGoesToReviewer verifies that an
+// iteration where HEAD does not advance is no longer aborted by the
+// loop. The Reviewer audits the empty diff and decides; an approving
+// reviewer with all sub-DAG tasks marked done lets the run complete
+// successfully (the no-op iteration is treated as legitimate).
+func TestDirectorIntegration_NoCommitGoesToReviewer(t *testing.T) {
 	tmp := t.TempDir()
 	specPath := directorTestSpec(t, tmp)
 	store := directorTestStore(t, tmp, specPath)
@@ -429,8 +433,8 @@ func TestDirectorIntegration_HEADStuck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if code != loop.ExitHEADStuck {
-		t.Errorf("exit = %d, want ExitHEADStuck", code)
+	if code != loop.ExitDone {
+		t.Errorf("exit = %d, want ExitDone (reviewer approved no-op iteration)", code)
 	}
 }
 

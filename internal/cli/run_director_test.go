@@ -729,6 +729,81 @@ func TestRunDirectorWith_ResumeMatchingHash_SkipsPlanner(t *testing.T) {
 	}
 }
 
+// TestRunDirectorWith_ResumeMatchingHash_PreservesDAGProgress verifies
+// that --resume with a matching SpecHash also restores per-task DAG
+// progress from the persisted dag.json. The fixture marks phase-1.t1
+// done before the resume; the executor must run only once (for
+// phase-2) instead of twice, proving the loaded state is honored
+// instead of being overwritten by NewStateFromPlan.
+func TestRunDirectorWith_ResumeMatchingHash_PreservesDAGProgress(t *testing.T) {
+	resetExitCode(t)
+	withOutputMode(t, OutputJSON)
+
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+
+	persisted := scriptedPlan()
+	specContent, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	persisted.SpecHash = director.SpecHash(specContent)
+	store := mkSessionStore(t, tmp, specPath)
+	if err := store.WritePlan(persisted); err != nil {
+		t.Fatalf("seed plan: %v", err)
+	}
+
+	priorState := dag.NewStateFromPlan(persisted)
+	if err := priorState.SetTaskStatus("phase-1", "t1", director.TaskDone); err != nil {
+		t.Fatalf("seed prior progress: %v", err)
+	}
+	dagPath := filepath.Join(store.SessionDir(), "dag.json")
+	if err := dag.SaveStateFile(priorState, dagPath); err != nil {
+		t.Fatalf("seed dag.json: %v", err)
+	}
+
+	planner := &fake.Planner{
+		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+			t.Fatal("planner should not be called when spec hash matches")
+			return nil, nil, nil
+		},
+	}
+	h := newTestHandler()
+	newExec, rec := recordingExecutorFactory(agentcontract.SignalReview, h)
+
+	deps := directorDeps{
+		handler:     h,
+		planner:     planner,
+		briefer:     scriptedBriefer(h),
+		reviewer:    approvingReviewer(h),
+		store:       store,
+		git:         newAdvancingGit(),
+		newExecutor: newExec,
+		now:         func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
+	}
+
+	var stderr bytes.Buffer
+	dio := directorIO{
+		stdin:  strings.NewReader(""),
+		stderr: &stderr,
+		resume: true,
+	}
+
+	cfg := directorTestConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if ExitCode != loop.ExitDone {
+		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
+	}
+	if rec.runs != 1 {
+		t.Errorf("executor ran %d times, want 1 (phase-1.t1 was already done)", rec.runs)
+	}
+}
+
 // TestRunDirectorWith_ResumeNoPlan_FallsThroughToFresh covers a user
 // who passes --resume on a session with no persisted plan: there's no
 // plan.json yet, so runDirectorWith plans as if --resume were not set

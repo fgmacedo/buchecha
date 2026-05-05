@@ -1111,6 +1111,10 @@ func resolveDirectorPlan(
 					RenderPlan(existing, dio.stderr)
 					fmt.Fprintln(dio.stderr, "\nbcc: --resume; spec hash unchanged; resuming from persisted plan")
 				}
+				if err := loadPersistedDAGState(deps, existing); err != nil {
+					ExitCode = loop.ExitInvalid
+					return nil, err
+				}
 				return existing, nil
 			}
 			return rePlanFlow(ctx, specPath, hash, existing, deps, dio, raw)
@@ -1136,6 +1140,34 @@ func resolveDirectorPlan(
 		RenderPlan(plan, dio.stderr)
 	}
 	return plan, nil
+}
+
+// loadPersistedDAGState restores the DAG state captured under the
+// session directory so a `--resume` run continues from the prior
+// progress instead of treating every task as pending. Called only when
+// the persisted plan's SpecHash matches the current spec; on re-plan
+// the persisted state is stale and the loop builds a fresh one from
+// the new plan via NewStateFromPlan.
+//
+// A missing dag.json is not an error: the session may have been
+// created but never advanced past planning. In that case the loop
+// initializes the state from the plan as usual.
+func loadPersistedDAGState(deps directorDeps, plan *director.Plan) error {
+	handler := directorEffectiveHandler(deps)
+	if handler == nil || deps.store == nil {
+		return nil
+	}
+	dagPath := filepath.Join(deps.store.SessionDir(), "dag.json")
+	state, err := dag.LoadStateFile(dagPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("director: load persisted dag state: %w", err)
+	}
+	handler.SetState(state)
+	handler.SetPlan(plan)
+	return nil
 }
 
 // freshPlan calls the planner, normalises the bcc-owned fields, and

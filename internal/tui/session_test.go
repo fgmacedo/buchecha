@@ -287,7 +287,6 @@ func TestSessionStatus_LabelsSignalsAndReasons(t *testing.T) {
 		{"done", agentcontract.SignalDone, "done"},
 		{"blocked", agentcontract.SignalBlocked, "blocked"},
 		{"max_iterations", agentcontract.SignalUnknown, "max iterations"},
-		{"head_stuck", agentcontract.SignalUnknown, "head stuck"},
 		{"review", agentcontract.SignalUnknown, "review"},
 		{"", agentcontract.SignalUnknown, "idle"},
 	}

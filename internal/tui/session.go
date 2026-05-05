@@ -81,8 +81,6 @@ func sessionStatus(reason string, sig agentcontract.Signal) string {
 	switch reason {
 	case "max_iterations":
 		return "max iterations"
-	case "head_stuck":
-		return "head stuck"
 	case "planner_failed":
 		return "planner failed"
 	case "":
