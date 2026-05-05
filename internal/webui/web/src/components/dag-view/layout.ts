@@ -2,12 +2,20 @@ import dagre from 'dagre'
 import type { Node, Edge } from '@xyflow/react'
 import type { DAGData, DAGPhase } from './types'
 
-// Node dimensions and spacing constants.
-const TASK_W = 200
-const TASK_H = 64
-const PHASE_PAD_X = 24
-const PHASE_PAD_Y = 16
-const PHASE_HEADER_H = 40
+// Task chip dimensions for the compact grid layout inside each phase.
+const TASK_W = 128
+const TASK_H = 48
+const TASK_GAP_X = 8
+const TASK_GAP_Y = 8
+
+// Columns per row in the task grid.
+const GRID_COLS = 4
+
+// Phase layout constants.
+const PHASE_PAD_X = 16
+const PHASE_PAD_Y = 8
+const PHASE_HEADER_H = 56
+const PHASE_FOOTER_H = 36
 
 // SavedPositions is the localStorage shape keyed by xyflow node id.
 export type SavedPositions = Record<string, { x: number; y: number }>
@@ -22,59 +30,61 @@ export function taskNodeId(phaseId: string, taskId: string): string {
   return `task:${phaseId}:${taskId}`
 }
 
-// layoutTasksInPhase runs dagre on the tasks within one phase and
-// returns per-task positions (relative to the phase origin) and the
-// computed phase container dimensions.
+// layoutTasksInPhase positions tasks in a 4-column grid within the phase
+// container, returning per-task positions relative to the phase origin and
+// the computed phase container dimensions.
 function layoutTasksInPhase(phase: DAGPhase): {
   taskPositions: Map<string, { x: number; y: number }>
   phaseWidth: number
   phaseHeight: number
 } {
-  const g = new dagre.graphlib.Graph()
-  g.setGraph({ rankdir: 'LR', nodesep: 16, ranksep: 32, marginx: 0, marginy: 0 })
-  g.setDefaultEdgeLabel(() => ({}))
-
-  for (const task of phase.tasks) {
-    g.setNode(task.id, { width: TASK_W, height: TASK_H })
-  }
-
-  const taskSet = new Set(phase.tasks.map((t) => t.id))
-  for (const task of phase.tasks) {
-    for (const dep of task.depends_on ?? []) {
-      if (taskSet.has(dep)) {
-        g.setEdge(dep, task.id)
-      }
-    }
-  }
-
-  dagre.layout(g)
-
   const taskPositions = new Map<string, { x: number; y: number }>()
-  let maxRight = 0
-  let maxBottom = 0
+  const cols = Math.min(phase.tasks.length, GRID_COLS)
 
-  for (const task of phase.tasks) {
-    const n = g.node(task.id)
-    const x = n.x - TASK_W / 2 + PHASE_PAD_X
-    const y = n.y - TASK_H / 2 + PHASE_PAD_Y + PHASE_HEADER_H
+  for (let i = 0; i < phase.tasks.length; i++) {
+    const task = phase.tasks[i]
+    const col = i % GRID_COLS
+    const row = Math.floor(i / GRID_COLS)
+    const x = PHASE_PAD_X + col * (TASK_W + TASK_GAP_X)
+    const y = PHASE_HEADER_H + PHASE_PAD_Y + row * (TASK_H + TASK_GAP_Y)
     taskPositions.set(task.id, { x, y })
-    maxRight = Math.max(maxRight, x + TASK_W)
-    maxBottom = Math.max(maxBottom, y + TASK_H)
   }
 
-  return {
-    taskPositions,
-    phaseWidth: Math.max(maxRight + PHASE_PAD_X, 280),
-    phaseHeight: Math.max(maxBottom + PHASE_PAD_Y, PHASE_HEADER_H + TASK_H + PHASE_PAD_Y * 2),
-  }
+  const rows = Math.ceil(phase.tasks.length / GRID_COLS)
+  const bodyHeight = rows * TASK_H + Math.max(0, rows - 1) * TASK_GAP_Y
+  const phaseWidth = Math.max(
+    PHASE_PAD_X + cols * TASK_W + Math.max(0, cols - 1) * TASK_GAP_X + PHASE_PAD_X,
+    280,
+  )
+  const phaseHeight =
+    PHASE_HEADER_H +
+    PHASE_PAD_Y +
+    bodyHeight +
+    PHASE_PAD_Y +
+    PHASE_FOOTER_H
+
+  return { taskPositions, phaseWidth, phaseHeight }
+}
+
+// TaskTimestamps holds optional start/end timestamps for a task, keyed by
+// "<phaseId>:<taskId>" in the outer map that callers build from events.
+export interface TaskTimestamps {
+  startedAt?: string
+  endedAt?: string
 }
 
 // buildLayout computes the full xyflow node+edge list from dag data.
-// savedPositions override the dagre-computed default so user-dragged
-// layouts survive component remounts.
+// savedPositions override the computed default so user-dragged layouts
+// survive component remounts.
+// perPhaseCostUSD provides the aggregated USD spend per phase id.
+// perPhaseAttempt provides the iteration attempt count per phase id.
+// perTaskTimestamps provides started/ended timestamps keyed by "phaseId:taskId".
 export function buildLayout(
   dag: DAGData,
   savedPositions: SavedPositions,
+  perPhaseCostUSD: Record<string, number> = {},
+  perPhaseAttempt: Record<string, number> = {},
+  perTaskTimestamps: Record<string, TaskTimestamps> = {},
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = []
   const edges: Edge[] = []
@@ -123,7 +133,12 @@ export function buildLayout(
       id: pid,
       type: 'phaseNode',
       position: phasePos,
-      data: { phaseId: phase.id },
+      data: {
+        phase,
+        tasks: phase.tasks,
+        costUSD: perPhaseCostUSD[phase.id] ?? 0,
+        attempt: perPhaseAttempt[phase.id] ?? 1,
+      },
       style: { width: meta.width, height: meta.height },
     })
 
@@ -138,12 +153,16 @@ export function buildLayout(
       })
     }
 
-    // Task nodes and task-level dependency edges.
-    const taskSet = new Set(phase.tasks.map((t) => t.id))
+    // Task nodes inside the phase (grid-positioned, no intra-phase dep edges).
     for (const task of phase.tasks) {
       const tid = taskNodeId(phase.id, task.id)
-      const computedTaskPos = meta.taskPositions.get(task.id) ?? { x: PHASE_PAD_X, y: PHASE_HEADER_H + PHASE_PAD_Y }
+      const computedTaskPos = meta.taskPositions.get(task.id) ?? {
+        x: PHASE_PAD_X,
+        y: PHASE_HEADER_H + PHASE_PAD_Y,
+      }
       const taskPos = savedPositions[tid] ?? computedTaskPos
+      const tsKey = `${phase.id}:${task.id}`
+      const ts = perTaskTimestamps[tsKey] ?? {}
 
       nodes.push({
         id: tid,
@@ -151,20 +170,13 @@ export function buildLayout(
         position: taskPos,
         parentId: pid,
         extent: 'parent',
-        data: { task },
+        data: {
+          task,
+          phaseId: phase.id,
+          startedAt: ts.startedAt,
+          endedAt: ts.endedAt,
+        },
       })
-
-      for (const dep of task.depends_on ?? []) {
-        if (taskSet.has(dep)) {
-          edges.push({
-            id: `edge:task:${phase.id}:${dep}->${task.id}`,
-            source: taskNodeId(phase.id, dep),
-            target: tid,
-            type: 'smoothstep',
-            style: { stroke: 'var(--color-border)' },
-          })
-        }
-      }
     }
   }
 
