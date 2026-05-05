@@ -1,4 +1,4 @@
-.PHONY: build install check-build test test-race vet fmt fmt-check tidy clean api-openapi webui webui-size
+.PHONY: build install check-build test test-race vet fmt fmt-check tidy clean api-openapi webui webui-size release-snapshot release-check
 
 check-build:
 	go build ./...
@@ -46,3 +46,10 @@ tidy:
 
 clean:
 	rm -f bcc
+	rm -rf dist
+
+release-check:
+	goreleaser check
+
+release-snapshot:
+	goreleaser release --snapshot --clean

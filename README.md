@@ -6,6 +6,25 @@
 
 Status: **early development, not stable, not yet released.**
 
+## Install
+
+```bash
+# macOS or Linux Homebrew
+brew install fgmacedo/tap/bcc
+
+# Linux: detect OS/arch, verify checksum, install to /usr/local/bin
+curl -sSL https://raw.githubusercontent.com/fgmacedo/buchecha/main/scripts/install.sh | sh
+
+# Debian/Ubuntu: download the .deb from the latest release and install
+curl -LO https://github.com/fgmacedo/buchecha/releases/latest/download/bcc_<version>_linux_amd64.deb
+sudo apt install ./bcc_<version>_linux_amd64.deb
+
+# Any OS with a Go toolchain
+go install github.com/fgmacedo/buchecha/cmd/bcc@latest
+```
+
+When installed via tar.gz or `install.sh` on macOS, Gatekeeper may quarantine the binary on first run. Either install via `brew` (which avoids quarantine), or clear the attribute manually: `xattr -d com.apple.quarantine $(command -v bcc)`.
+
 ## Why
 
 Driving a single agent through a long Markdown spec is unreliable: the agent loses focus, declares premature `done`, drifts on scope. `bcc` replaces the single-loop pattern with separate cognitive roles (plan, brief, execute, review), each with its own context, all coordinated by bcc through MCP. The discipline that made the pattern work (typed plan, explicit acceptance criteria, clean working tree per iteration) is preserved; the supervision tax that one agent could not pay for itself moves into the Director.
