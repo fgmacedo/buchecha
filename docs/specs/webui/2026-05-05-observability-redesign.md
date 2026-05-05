@@ -674,6 +674,14 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
+### 2026-05-05 21:00:00 , P11-docs-verify
+
+- CLAUDE.md (T11.1): added `spawn_started` and `spawn_finished` to the anti-drift contract callout; added session layout comment in tooling section listing `briefings/<iteration_id>.prompt.md` and `spawns/<spawn_id>.md` alongside existing paths
+- API PRD (T11.2): added `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt` row to the V1 endpoint table with service call and description
+- WebUI PRD (T11.2): updated V1 roadmap row to mention RightPane (Timeline + Inspector) and CostMeter header component, with forward link to `docs/specs/webui/2026-05-05-observability-redesign.md`
+- OpenAPI regeneration (T11.3): `make api-openapi` exits 0; confirmed idempotent (spawns endpoint already present at HEAD from prior iteration); `npm run build` exits 0 after fixing 4 pre-existing TS errors (unused `vi` import, unused `costAgg` param, `null` vs `undefined` fixture field, `this.media` reference in test helper); gzip bundle ~284 kB (limit 600 kB)
+- **Decisions**: `api-client.ts` is gitignored (generated at build time); the openapi.json did not change because the spawns endpoint was already introduced in a prior iteration. The four TS errors were pre-existing (introduced in P9/P10) and were in files outside this iteration's declared scope but blocked the build acceptance criterion; fixed them in place rather than deferring.
+
 ### 2026-05-05 20:25:00 , P10-activity-and-chrome
 
 - ActivityView (T10.1): container gains `bg-canvas-textured` class; phase row fills switched from `rgba(255,255,255,0.02)` to `var(--surface-panel)` with 0.6 opacity; all iteration boundaries rendered as dashed lines (`strokeDasharray="4,4"`); `iter_started` boundaries add a `font-display italic` text label at top; tooltip expanded with "Ended" timestamp and "Iter USD" from `costAgg.perIteration`; bar `onClick` wired to `useSelection().select({ kind: "task", phaseId, taskId })`; `Bar.iterationIndex` field added to types and tracked in `compute-bars.ts` from `iter_started` events; MARGIN.top increased to 28px to accommodate labels; 9 Vitest tests covering bar rendering, tooltip show/hide, and click selection dispatch
