@@ -13,6 +13,9 @@ func TestIsPseudoTaskID(t *testing.T) {
 	if !isPseudoTaskID(briefingTaskID) {
 		t.Errorf("briefing must be classified as pseudo")
 	}
+	if !isPseudoTaskID(reviewingTaskID) {
+		t.Errorf("reviewing must be classified as pseudo")
+	}
 	if isPseudoTaskID("real-task-id") {
 		t.Errorf("real task id must not be classified as pseudo")
 	}

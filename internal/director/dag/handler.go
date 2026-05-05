@@ -48,13 +48,19 @@ const PlanningTaskID = "planning"
 // PlanningTaskID: the calls are bookkeeping, not state mutation.
 const BriefingTaskID = "briefing"
 
+// ReviewingTaskID is the well-known task id the Reviewer uses on the
+// timeline pair so reviewing shows up alongside work tasks. Same
+// out-of-DAG semantics as PlanningTaskID and BriefingTaskID.
+const ReviewingTaskID = "reviewing"
+
 // PseudoTaskIDs is the set of well-known task IDs that are role
 // bookkeeping rather than real DAG tasks. Consumers (TUI progress
 // counters, exporters) should treat these as informational and not
 // fold them into per-task work metrics.
 var PseudoTaskIDs = map[string]struct{}{
-	PlanningTaskID: {},
-	BriefingTaskID: {},
+	PlanningTaskID:  {},
+	BriefingTaskID:  {},
+	ReviewingTaskID: {},
 }
 
 // IsPseudoTaskID reports whether id is one of the well-known role
@@ -213,11 +219,11 @@ func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOp
 			handle:       (*Handler).handleGetPendingTasks,
 		},
 		MethodTaskStarted: {
-			allowedRoles: rolesSet(RolePlanner, RoleBriefer, RoleExecutor),
+			allowedRoles: rolesSet(RolePlanner, RoleBriefer, RoleExecutor, RoleReviewer),
 			handle:       (*Handler).handleTaskStarted,
 		},
 		MethodTaskCompleted: {
-			allowedRoles: rolesSet(RolePlanner, RoleBriefer, RoleExecutor),
+			allowedRoles: rolesSet(RolePlanner, RoleBriefer, RoleExecutor, RoleReviewer),
 			handle:       (*Handler).handleTaskCompleted,
 		},
 		MethodIterationFinished: {
@@ -918,6 +924,12 @@ func (h *Handler) handleTaskStarted(_ context.Context, entry AgentEntry, input m
 		}
 		return `{"ok":true}`, nil
 	}
+	if entry.Role == RoleReviewer {
+		if id != ReviewingTaskID {
+			return "", fmt.Errorf("dag: bcc_task_started: reviewer must use id=%q, got %q", ReviewingTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
 	if err := h.assertExecutorScope(entry, id); err != nil {
 		return "", err
 	}
@@ -942,6 +954,12 @@ func (h *Handler) handleTaskCompleted(_ context.Context, entry AgentEntry, input
 	if entry.Role == RoleBriefer {
 		if id != BriefingTaskID {
 			return "", fmt.Errorf("dag: bcc_task_completed: briefer must use id=%q, got %q", BriefingTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
+	if entry.Role == RoleReviewer {
+		if id != ReviewingTaskID {
+			return "", fmt.Errorf("dag: bcc_task_completed: reviewer must use id=%q, got %q", ReviewingTaskID, id)
 		}
 		return `{"ok":true}`, nil
 	}
