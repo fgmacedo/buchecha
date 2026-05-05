@@ -719,7 +719,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: These hooks are the SPA's only contact with the API.
 **depends_on**: T6.3.
 
-### [ ] P8: TUI migration to services
+### [x] P8: TUI migration to services
 
 **id**: `P8-tui-migration`
 **intent**: Refactor `internal/tui/` to consume `internal/services/` instead of touching the loop event channel and dag handler directly. No behavior change.
@@ -727,7 +727,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: Any new feature.
 **depends_on**: P1.
 
-#### [ ] T8.1: Constructor accepts `*services.Services`
+#### [x] T8.1: Constructor accepts `*services.Services`
 
 **acceptance_criteria**:
 - The TUI construction function (currently in `internal/tui/`) accepts `*services.Services`.
@@ -736,7 +736,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the seam through which the migration happens.
 **depends_on**: T1.1.
 
-#### [ ] T8.2: Replace direct loop channel with `EventService.Subscribe`
+#### [x] T8.2: Replace direct loop channel with `EventService.Subscribe`
 
 **acceptance_criteria**:
 - The TUI's bubbletea bridge no longer reads directly from a `<-chan loop.Event`; it subscribes via `EventService.Subscribe`.
@@ -746,7 +746,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The wire format inside the TUI does not change; only the source.
 **depends_on**: T8.1, T1.3.
 
-#### [ ] T8.3: Replace dag handler reads with `SessionService.Snapshot`
+#### [x] T8.3: Replace dag handler reads with `SessionService.Snapshot`
 
 **acceptance_criteria**:
 - The TUI no longer imports `internal/director/dag/` for behavior; it reads snapshots via `SessionService.Snapshot`.
@@ -756,7 +756,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Value objects continue to flow across the services boundary; behavior calls do not.
 **depends_on**: T8.1, T1.2.
 
-#### [ ] T8.4: Composition root passes `services` to the TUI
+#### [x] T8.4: Composition root passes `services` to the TUI
 
 **acceptance_criteria**:
 - `internal/cli/run.go` constructs `services` once and passes the handle to both the TUI and the API server.
@@ -765,7 +765,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Single source of truth across protocol adapters.
 **depends_on**: T8.1, T2.2.
 
-#### [ ] T8.5: TUI behavioral parity
+#### [x] T8.5: TUI behavioral parity
 
 **acceptance_criteria**:
 - Existing TUI tests pass.
@@ -909,3 +909,8 @@ The following are explicitly out of scope here and ride a later spec built on th
 2026-05-05 HK-P5: marked P5 phase header and T5.1-T5.6 shipped (commits fcc33be..120e703).
 2026-05-05 HK-P6: marked P6 phase header and T6.1-T6.8 shipped (commits 539a521..a3dfb07).
 2026-05-05 HK-P7: marked P7 phase header and T7.1,T7.5-T7.8 shipped (commits 15aeb42..112b778).
+2026-05-05 T8.1: added Services *services.Services field to tui.Options and Model (commit ac6a705).
+2026-05-05 T8.2: replaced Events/NewEvents with services.Events.Subscribe adapter; tests updated with testSvcResult helper (commit 758132a).
+2026-05-05 T8.3: verified no director/dag behavior calls in internal/tui/; go vet and build clean (bundled with T8.2 commit 758132a).
+2026-05-05 T8.4: wired *services.Services into tui.Options.Services in runDirectorTUI; added TestServiceEventsSameOrderForTUIAndAPI (commit 531ebe5).
+2026-05-05 T8.5: go test -race ./... all green; gofmt -l . clean; go vet ./... zero issues; P8 checkboxes flipped (commit 5ef6d2c).
