@@ -24,6 +24,13 @@ type Store struct {
 // SessionDir returns the directory the Store reads and writes under.
 func (s *Store) SessionDir() string { return s.sessionDir }
 
+// SpawnsDir returns the path <sessionDir>/spawns where per-spawn prompt
+// files are written. The directory is NOT created here; the first writer
+// must call os.MkdirAll(SpawnsDir(), 0o755) before writing.
+func (s *Store) SpawnsDir() string {
+	return filepath.Join(s.sessionDir, "spawns")
+}
+
 // Session returns a pointer to the Session manifest the Store was
 // opened or created with. Callers must not mutate the returned struct;
 // use Touch to update the persisted status.
