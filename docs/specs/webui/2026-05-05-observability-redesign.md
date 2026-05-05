@@ -674,6 +674,17 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
+### 2026-05-05 19:10:00 , P8-dag-view
+
+- phase-node.tsx rebuilt with header (phase id mono bold, depends_on chips, aggregated status pill), 4xN task chip grid body, and footer (done/total, attempt, USD); click anywhere on the header invokes select({ kind: "phase", phaseId }) via useSelection context (T8.1)
+- aggregatePhaseStatus exported from phase-node.tsx; implements error > needs_fix > running > done > pending priority; covered by 15 table-driven Vitest tests (T8.1)
+- layout.ts switched from dagre-based task positioning to a 4-column grid layout; PHASE_FOOTER_H constant added; buildLayout accepts perPhaseCostUSD, perPhaseAttempt, perTaskTimestamps maps; phase nodes now carry full DAGPhase + tasks + costUSD + attempt in data (T8.1)
+- task-node.tsx redesigned as compact chip card: id mono bold, status pill, retry-budget dots (filled circles, capped at 8); hover tooltip shows depends_on list and started/ended timestamps; click invokes select({ kind: "task", phaseId, taskId }); selected outline uses --accent-warn for needs_fix, --status-running otherwise (T8.2)
+- dag-view/index.tsx updated: bg-canvas-textured applied to ReactFlow viewport wrapper; MiniMap enabled bottom-right with status-keyed node colors and --surface-overlay background; Controls moved to bottom-left with --surface-card background; events prop added; per-phase cost, attempt, and per-task timestamps derived from event stream (T8.3)
+- EscapeHandler exported from app.tsx; clears selection (select(null)) on window keydown Escape; mounted inside SelectionProvider in AppShell (T8.4)
+- E2E Vitest tests in dag-view/__tests__/dag-selection.test.tsx: SimulatedPhaseNode click transitions RightPane to Inspector, Escape keydown clears selection and returns to Timeline, App smoke mount with DAG fixture (T8.4)
+- **Decisions**: xyflow culls all nodes in zero-dimension containers (happy-dom), so E2E tests drive selection through useSelection context rather than xyflow DOM events; behavior is identical to a real click since PhaseNodeComponent.onClick calls the same select() function. Per-phase cost aggregated in DAGView from spawn_finished events filtered by phase_id field; hook not imported inside phase-node per spec. pnpm build passes; bundle 188 kB gzipped (limit 600 kB).
+
 ### 2026-05-05 20:00:00 , P7-right-pane
 
 - Selection hook added to internal/webui/web/src/hooks/use-selection.ts: Selection discriminated union (phase, task, iteration, spawn), hand-rolled context + useReducer, SelectionProvider resets selection on session id change, tests cover all union variants and reset (T7.1)
