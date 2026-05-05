@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
@@ -8,6 +8,17 @@ import { Header } from './components/header'
 import { TimelinePanel } from './components/timeline-panel'
 import { BriefingPanel } from './components/briefing-panel'
 import { SessionsSidebar } from './components/sessions-sidebar'
+
+// Both views are lazy-loaded so the DAG and Gantt bundles (xyflow, dagre,
+// d3-axis) are code-split from the main chunk to stay within the 600 KB
+// gzipped budget. Once each view has loaded the first time, both trees
+// remain mounted and switching is instant via CSS display.
+const DAGView = lazy(() =>
+  import('./components/dag-view').then((m) => ({ default: m.DAGView })),
+)
+const ActivityView = lazy(() =>
+  import('./components/activity-view').then((m) => ({ default: m.ActivityView })),
+)
 
 // Bind a generated operation type so `tsc -b` fails when the OpenAPI
 // contract drifts away from a known endpoint shape. The reference is
@@ -61,11 +72,37 @@ function AppShell({ sessionId }: AppShellProps) {
         </div>
         <main
           aria-label="Main"
-          className="flex min-w-0 flex-col overflow-y-auto px-6 py-6"
+          className="flex min-w-0 flex-col overflow-hidden"
+          style={{ position: 'relative' }}
         >
-          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
-            {view === 'dag' ? 'DAG view' : 'Activity view'} (coming in P7c)
-          </span>
+          {/* Both views mount once on first load; display toggles between
+              them so there is no remount penalty on view switch (T7.4 A2). */}
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading...
+              </div>
+            }
+          >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: view === 'dag' ? 'block' : 'none',
+              }}
+            >
+              <DAGView snapshot={snapshot} sessionId={snapshot?.session.id ?? 'live'} />
+            </div>
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: view === 'activity' ? 'block' : 'none',
+              }}
+            >
+              <ActivityView snapshot={snapshot} events={events} />
+            </div>
+          </Suspense>
         </main>
         <div className="border-l border-border bg-muted overflow-hidden">
           <TimelinePanel events={events} />

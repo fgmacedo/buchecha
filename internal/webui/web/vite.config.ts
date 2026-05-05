@@ -22,6 +22,15 @@ export default defineConfig({
         chunkFileNames: 'assets/[name].js',
         assetFileNames: 'assets/[name][extname]',
         manualChunks(id) {
+          // Local lazy-loaded view bundles. Naming them explicitly
+          // keeps rollup from falling back to numeric chunk names
+          // (`index2.js`, `index3.js`) for app-side dynamic imports.
+          if (/[\\/]src[\\/]components[\\/]dag-view[\\/]/.test(id)) {
+            return 'dag-view'
+          }
+          if (/[\\/]src[\\/]components[\\/]activity-view[\\/]/.test(id)) {
+            return 'activity-view'
+          }
           if (!id.includes('node_modules')) return
           if (id.includes('@xyflow') || id.includes('classcat')) {
             return 'vendor-xyflow'

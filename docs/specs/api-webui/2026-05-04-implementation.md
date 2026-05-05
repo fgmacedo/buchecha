@@ -640,7 +640,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Status pill uses status-palette CSS variables from T6.2.
 **depends_on**: T6.4.
 
-#### [ ] T7.2: DAG view
+#### [x] T7.2: DAG view
 
 **acceptance_criteria**:
 - `src/components/dag-view/` renders the DAG via `@xyflow/react` with custom node types `Phase` and `Task`.
@@ -653,7 +653,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the structural view of the run.
 **depends_on**: T7.1.
 
-#### [ ] T7.3: Activity Gantt
+#### [x] T7.3: Activity Gantt
 
 **acceptance_criteria**:
 - `src/components/activity-view/` renders a horizontal Gantt as plain SVG using `d3-scale` (`scaleLinear`, `scaleBand` or `scaleTime`), `d3-shape` where useful, and `d3-axis` for tick rendering.
@@ -663,14 +663,15 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Sources are the events `IterationStarted`, `IterationFinished`, `TaskStarted`, `TaskCompleted`, `TaskApproved`, `TaskNeedsFix`, `PhaseBriefed`. No new event types are introduced.
 **depends_on**: T7.1.
 
-#### [ ] T7.4: View toggle
+#### [x] T7.4: View toggle
 
 **acceptance_criteria**:
 - The header toggle switches the central stage between DAG (T7.2) and Activity (T7.3) views.
 - Switching is instant (both trees mount once and switch via display).
 - The chosen view persists to `localStorage`.
+- Each lazy-loaded view bundle is emitted under a stable, semantic chunk name (`dag-view.js`, `activity-view.js`) via Vite's `manualChunks`; rollup must not fall back to numeric suffixes (`index2.js`, `index3.js`) for app-side dynamic imports.
 
-**context**: Both views observe the same session state; only rendering differs.
+**context**: Both views observe the same session state; only rendering differs. Stable chunk names mirror the vendor-side policy (`vendor-react`, `vendor-xyflow`, etc.) so the dist tree is predictable across builds and easy to map in DevTools.
 **depends_on**: T7.2, T7.3.
 
 #### [ ] T7.5: Right panel timeline

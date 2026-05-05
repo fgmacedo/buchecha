@@ -13,8 +13,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@types/dagre": "^0.7.54",
+    "@xyflow/react": "^12.10.2",
+    "d3-axis": "^3.0.0",
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
+    "dagre": "^0.8.5",
     "openapi-fetch": "^0.17.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -27,6 +31,7 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/d3-axis": "^3.0.6",
     "@types/d3-scale": "^4.0.9",
     "@types/d3-shape": "^3.1.8",
     "@types/react": "^19.0.0",
