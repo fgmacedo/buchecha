@@ -674,6 +674,15 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
+### 2026-05-05 20:00:00 , P7-right-pane
+
+- Selection hook added to internal/webui/web/src/hooks/use-selection.ts: Selection discriminated union (phase, task, iteration, spawn), hand-rolled context + useReducer, SelectionProvider resets selection on session id change, tests cover all union variants and reset (T7.1)
+- RightPane container added to internal/webui/web/src/components/right-pane/index.tsx: renders TimelineMode when selection is null, InspectorMode placeholder otherwise; 150ms cross-fade via transition-opacity; InspectorMode shows selection kind and primary id plus X close button (T7.2)
+- Five typed renderers added under internal/webui/web/src/components/right-pane/timeline/: iter-divider (iter_started/finished/loop_finished), phase-card (phase lifecycle + director_escalation), task-line (task lifecycle with feedback snippet), agent-block (agent_event with internal kind discrimination and tool_use/tool_result pairing via pairedResult prop), spawn-marker (spawn_started/finished with click-to-select) (T7.3)
+- lib/event-grouping.ts added with O(n) groupByIteration returning IterationGroup[] (iterationIndex, iterationId, from/to, events, summary); applyFilters for kind/role/phase/level/search; loadFilters/saveFilters persisting to localStorage under bcc.timeline.filters.<sessionId>; TimelineMode replaced with full implementation: collapsible groups, sticky compact headers, filter toolbar (T7.4)
+- app.tsx updated: mounts RightPane in right column, SelectionProvider wraps AppShell, bottom drawer row removed from layout grid; components/timeline-panel/ and components/briefing-panel/ deleted; RTL test asserts drawer absent, right pane renders, inspector appears on selection dispatch (T7.5)
+- **Decisions**: Both timeline and inspector modes remain mounted simultaneously with opacity/pointer-events toggle to avoid remount cost on selection change; tool_use/tool_result pairing done in TimelineMode via pairedMap (tool_use_id keyed) before rendering; groups reversed so newest iteration appears at top; open final iteration (to: null) expands by default
+
 ### 2026-05-05 19:00:00 , P6-cost-meter
 
 - useCostAggregator hook added to internal/webui/web/src/hooks/use-cost-aggregator.ts; computes totalUSD, totalTokens (input/output/cache-read/cache-create), perRole, perIteration aggregates from spawn_finished events; memoized on events array length (T6.1)
