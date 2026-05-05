@@ -11,6 +11,16 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     assetsDir: 'assets',
+    // The bundle is served only from the embedded FS in a local Go binary,
+    // so we drop rollup's hash suffix. Stable filenames keep the embed
+    // diff small across builds.
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name][extname]',
+      },
+    },
   },
   test: {
     // happy-dom provides browser-like globals (fetch, EventSource, etc.)

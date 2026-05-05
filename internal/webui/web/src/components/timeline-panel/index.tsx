@@ -6,22 +6,7 @@ import {
   useMemo,
 } from 'react'
 import type { SeqEvent, EventKind } from '../../hooks/use-events'
-
-// Lazy-load the shiki highlighter so its grammar bundle does not inflate the
-// initial chunk. The promise is cached at module scope so concurrent callers
-// share a single init.
-let highlighterPromise: Promise<{
-  codeToHtml: (code: string, opts: { lang: string; theme: string }) => string
-}> | null = null
-
-function getHighlighter() {
-  if (!highlighterPromise) {
-    highlighterPromise = import('shiki').then((shiki) =>
-      shiki.createHighlighter({ themes: ['github-dark'], langs: ['json'] }),
-    )
-  }
-  return highlighterPromise
-}
+import { getHighlighter, SHIKI_THEME } from '../../lib/shiki'
 
 // summarizeEvent builds a compact one-line description for an event row.
 function summarizeEvent(event: SeqEvent['event']): string {
@@ -84,7 +69,7 @@ function ExpandedRow({ event }: ExpandedRowProps) {
     let cancelled = false
     void getHighlighter().then((hl) => {
       if (cancelled) return
-      const highlighted = hl.codeToHtml(raw, { lang: 'json', theme: 'github-dark' })
+      const highlighted = hl.codeToHtml(raw, { lang: 'json', theme: SHIKI_THEME })
       setHtml(highlighted)
     })
     return () => {

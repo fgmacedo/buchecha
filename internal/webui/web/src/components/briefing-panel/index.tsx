@@ -3,23 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import type { SeqEvent } from '../../hooks/use-events'
 import type { Snapshot } from '../../hooks/use-snapshot'
-
-// Lazy-load the shiki highlighter shared with the timeline panel.
-let highlighterPromise: Promise<{
-  codeToHtml: (code: string, opts: { lang: string; theme: string }) => string
-}> | null = null
-
-function getHighlighter() {
-  if (!highlighterPromise) {
-    highlighterPromise = import('shiki').then((shiki) =>
-      shiki.createHighlighter({
-        themes: ['github-dark'],
-        langs: ['json', 'bash', 'go', 'typescript', 'markdown'],
-      }),
-    )
-  }
-  return highlighterPromise
-}
+import { getHighlighter, SHIKI_THEME } from '../../lib/shiki'
 
 // ShikiCode renders a fenced code block inside react-markdown using shiki.
 // The children prop is ReactNode from react-markdown; we coerce it to string.
@@ -34,7 +18,7 @@ function ShikiCode({ children, className }: React.HTMLAttributes<HTMLElement>) {
     void getHighlighter().then((hl) => {
       if (cancelled) return
       try {
-        const out = hl.codeToHtml(raw.trimEnd(), { lang, theme: 'github-dark' })
+        const out = hl.codeToHtml(raw.trimEnd(), { lang, theme: SHIKI_THEME })
         setHtml(out)
       } catch {
         // Unknown language falls through to plain rendering.
