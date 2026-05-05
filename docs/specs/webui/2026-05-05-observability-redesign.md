@@ -674,4 +674,12 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
-<!-- Filled in by the agent during execution per the bcc-markdown contract. -->
+### 2026-05-05 12:15:00 , P1-spawn-events
+
+- SpawnCost, SpawnStarted, SpawnFinished types declared in internal/loop/events.go with isLoopEvent() markers
+- JSON serialization added to MarshalJSONEvent; spawn_started omits empty optional fields (phase_id, task_id, iteration_id, attempt, model, effort, prompt_path), spawn_finished always includes cost object with zero values rendered
+- Both kinds appended to AllEventKinds in alphabetical order (spawn_finished, spawn_started)
+- Golden JSON test cases added: SpawnStartedFull (all optional fields populated), SpawnStartedMinimal (only spawn_id and role), SpawnFinished (with cache tokens), SpawnFinishedZeroCost (on non-zero exit)
+- event.schema.json updated with both kinds in type enum
+- TestEventSchemaEnumMatchesLoopAllEventKinds passes; test coverage locked via TestMarshalJSONEvent_AllKindsCovered
+- **Decisions**: Wire payload for spawn_started follows existing pattern of omitting empty optional fields (matching iter_started); spawn_finished cost object always present to enable reliable aggregation on the SPA side. No producers wired yet; they land in P2 and P3.
