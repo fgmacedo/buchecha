@@ -13,12 +13,59 @@ export default defineConfig({
     assetsDir: 'assets',
     // The bundle is served only from the embedded FS in a local Go binary,
     // so we drop rollup's hash suffix. Stable filenames keep the embed
-    // diff small across builds.
+    // diff small across builds. manualChunks splits vendor code by
+    // semantic group so chunk names do not collide and rollup never
+    // resorts to numeric suffixes (`index2.js`, `index3.js`).
     rollupOptions: {
       output: {
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',
         assetFileNames: 'assets/[name][extname]',
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('@xyflow') || id.includes('classcat')) {
+            return 'vendor-xyflow'
+          }
+          if (
+            /[\\/]d3-(zoom|drag|selection|transition|color|interpolate|ease|timer|dispatch)[\\/]/.test(
+              id,
+            )
+          ) {
+            return 'vendor-xyflow'
+          }
+          if (
+            /[\\/]d3-(scale|shape|axis|array|time|format|path|time-format|scale-chromatic)[\\/]/.test(
+              id,
+            )
+          ) {
+            return 'vendor-d3'
+          }
+          if (
+            id.includes('react-markdown') ||
+            id.includes('remark-') ||
+            id.includes('rehype-') ||
+            id.includes('micromark') ||
+            id.includes('mdast') ||
+            id.includes('hast') ||
+            id.includes('unist') ||
+            id.includes('vfile') ||
+            id.includes('decode-named-character-reference') ||
+            id.includes('character-entities') ||
+            id.includes('property-information')
+          ) {
+            return 'vendor-markdown'
+          }
+          if (id.includes('shiki') || id.includes('oniguruma-to-js')) {
+            return 'vendor-shiki'
+          }
+          if (
+            id.includes('react-dom') ||
+            id.includes('scheduler') ||
+            /[\\/]react[\\/]/.test(id)
+          ) {
+            return 'vendor-react'
+          }
+        },
       },
     },
   },

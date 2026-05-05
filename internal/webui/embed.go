@@ -13,8 +13,10 @@ import "embed"
 // BundleFS is the embedded SPA bundle materialised by the build
 // pipeline at internal/webui/web/dist/. The handler in handler.go
 // serves files from this tree rooted at "web/dist". A stub
-// index.html plus committed .gitkeep files keep the embed valid on a
-// fresh clone before P6 produces the real Vite output.
+// index.html is committed so the embed pattern matches at least one
+// file on a fresh clone before `make webui` produces the real Vite
+// output; everything else under dist/ is a build artefact and is
+// gitignored.
 //
 //go:embed web/dist/*
 var BundleFS embed.FS
