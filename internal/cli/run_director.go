@@ -310,7 +310,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		registerFn:  boot.registerDirectorAgent,
 		baseDir:     ".bcc",
 		git:         gitcli.New(""),
-		newExecutor: makeNewExecutor(cfg, boot, subprocessStderr, nil),
+		newExecutor: makeNewExecutor(cfg, boot, subprocessStderr, nil, nil, nil),
 		now:         time.Now,
 	}
 }
@@ -329,12 +329,16 @@ type executorLogSinks struct {
 // calls. logSinks, when non-nil, opens optional per-spawn capture files
 // and is invoked once per Run with the resolved agent_id and iteration
 // id; the returned writers are wired into the inner adapter and closed
-// when Run returns. Passing nil keeps the no-debug behavior.
+// when Run returns. Passing nil keeps the no-debug behavior. store and
+// loopEvents, when non-nil, are forwarded to the executor Config for
+// per-spawn prompt persistence and SpawnStarted event emission.
 func makeNewExecutor(
 	cfg *config.Config,
 	boot *mcpBoot,
 	subprocessStderr io.Writer,
 	logSinks func(args dag.RegisterArgs, agentID string) (executorLogSinks, error),
+	store *director.Store,
+	loopEvents chan<- loop.Event,
 ) func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
 	return func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor {
 		mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
@@ -385,6 +389,11 @@ func makeNewExecutor(
 			MCPToken:          mcpCfg.MCPToken,
 			MCPConnectionName: mcpCfg.MCPConnectionName,
 			AgentID:           mcpCfg.AgentID,
+			PhaseID:           string(args.PhaseID),
+			IterationID:       args.BriefingID,
+			Attempt:           args.Attempt,
+			SessionStore:      store,
+			Events:            loopEvents,
 		})
 		return &deregisteringExecutor{
 			inner:         inner,
@@ -467,7 +476,22 @@ func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
 			sinks.StdoutSink = stdoutSink
 		}
 		return sinks, nil
-	})
+	}, deps.store, deps.serviceEvents)
+}
+
+// bindExecutorSpawnContext re-builds the newExecutor factory after session
+// resolution when debug log capture is NOT active. When debug capture is
+// active, enableDebugLogCapture already calls makeNewExecutor with the
+// store and events; this function handles the non-debug path so executor
+// spawns always get prompt persistence and SpawnStarted emission.
+func bindExecutorSpawnContext(cfg *config.Config, deps *directorDeps) {
+	if cfg == nil || deps == nil || deps.store == nil || deps.boot == nil {
+		return
+	}
+	if !cfg.Debug.IsCaptureSubprocessLogsEnabled() {
+		subprocessStderr := directorSubprocessStderr()
+		deps.newExecutor = makeNewExecutor(cfg, deps.boot, subprocessStderr, nil, deps.store, deps.serviceEvents)
+	}
 }
 
 // bindDirectorAdapterSession wires the resolved session store and the
@@ -550,6 +574,7 @@ func runDirectorWith(
 
 	enableDebugLogCapture(cfg, &deps)
 	bindDirectorAdapterSession(&deps)
+	bindExecutorSpawnContext(cfg, &deps)
 
 	if runOutput == OutputTUI {
 		return runDirectorTUI(ctx, cancel, specPath, hash, cfg, deps, dio)

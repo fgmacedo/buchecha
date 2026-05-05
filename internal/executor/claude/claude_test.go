@@ -3,14 +3,15 @@ package claude
 import (
 	"context"
 	"errors"
-	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -383,5 +384,116 @@ func TestRun_StreamsEventsFromFixture(t *testing.T) {
 		if got[i].Kind != k {
 			t.Errorf("event[%d].Kind = %q, want %q", i, got[i].Kind, k)
 		}
+	}
+}
+
+// newTestStore creates a fresh director.Store for tests that need prompt
+// persistence. Store is rooted in t.TempDir() so cleanup is automatic.
+func newTestStore(t *testing.T) *director.Store {
+	t.Helper()
+	base := t.TempDir()
+	store, _, err := director.CreateSession(base, "/tmp/spec.md", "deadbeef",
+		time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return store
+}
+
+// collectLoopEvents drains a buffered loop.Event channel into a slice.
+func collectLoopEvents(ch <-chan loop.Event) []loop.Event {
+	var out []loop.Event
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return out
+			}
+			out = append(out, ev)
+		default:
+			return out
+		}
+	}
+}
+
+// TestRun_WritesPromptAndEmitsSpawnStarted verifies that Run writes the
+// prompt bytes to <sessionDir>/spawns/<spawnID>.md before the subprocess
+// starts, emits loop.SpawnStarted with matching fields, and returns an
+// ExecResult with SpawnID equal to the file's basename.
+func TestRun_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
+	store := newTestStore(t)
+	loopEvents := make(chan loop.Event, 16)
+	e := New(Config{
+		Binary:      fixture(t, "fake-claude.sh"),
+		SessionStore: store,
+		Events:      loopEvents,
+		PhaseID:     "P1",
+		IterationID: "P1-01",
+		Attempt:     1,
+	})
+	const prompt = "implement the spec"
+	res, _, err := collectEvents(t, e, prompt)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", res.ExitCode)
+	}
+	if res.SpawnID == "" {
+		t.Fatalf("ExecResult.SpawnID is empty")
+	}
+
+	evs := collectLoopEvents(loopEvents)
+	var started *loop.SpawnStarted
+	for i := range evs {
+		if ss, ok := evs[i].(loop.SpawnStarted); ok {
+			started = &ss
+			break
+		}
+	}
+	if started == nil {
+		t.Fatalf("no loop.SpawnStarted emitted; got %v", evs)
+	}
+	if started.Role != "executor" {
+		t.Errorf("Role = %q, want executor", started.Role)
+	}
+	if started.PhaseID != "P1" {
+		t.Errorf("PhaseID = %q, want P1", started.PhaseID)
+	}
+	if started.IterationID != "P1-01" {
+		t.Errorf("IterationID = %q, want P1-01", started.IterationID)
+	}
+	if started.Attempt != 1 {
+		t.Errorf("Attempt = %d, want 1", started.Attempt)
+	}
+	if started.SpawnID == "" {
+		t.Fatalf("SpawnStarted.SpawnID is empty")
+	}
+	if started.SpawnID != res.SpawnID {
+		t.Errorf("SpawnStarted.SpawnID %q != ExecResult.SpawnID %q", started.SpawnID, res.SpawnID)
+	}
+	baseName := strings.TrimSuffix(filepath.Base(started.PromptPath), ".md")
+	if baseName != started.SpawnID {
+		t.Errorf("SpawnID %q != PromptPath basename %q", started.SpawnID, started.PromptPath)
+	}
+	got, err := os.ReadFile(started.PromptPath)
+	if err != nil {
+		t.Fatalf("prompt file not found at %q: %v", started.PromptPath, err)
+	}
+	if !strings.Contains(string(got), prompt) {
+		t.Errorf("prompt file does not contain prompt; got %q", string(got))
+	}
+}
+
+// TestRun_SpawnIDEmptyWhenNoSessionStore verifies backward compatibility:
+// when SessionStore is nil, SpawnID is empty and no file is written.
+func TestRun_SpawnIDEmptyWhenNoSessionStore(t *testing.T) {
+	e := New(Config{Binary: fixture(t, "fake-claude.sh")})
+	res, _, err := collectEvents(t, e, "p")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.SpawnID != "" {
+		t.Errorf("SpawnID = %q, want empty when SessionStore is nil", res.SpawnID)
 	}
 }

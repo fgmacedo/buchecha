@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/executor/claude/streamjson"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
@@ -152,6 +153,22 @@ type Config struct {
 	// the prompt or system prompt so the agent passes it back on every
 	// MCP method call. Recorded here for symmetry with the role.
 	AgentID string
+
+	// SessionStore, when non-nil, is used to derive the spawns directory
+	// for per-spawn prompt persistence. When nil, prompt persistence and
+	// SpawnStarted emission are skipped.
+	SessionStore *director.Store
+
+	// Events, when non-nil, receives loop-level events emitted by the
+	// adapter (SpawnStarted). The adapter never closes this channel; the
+	// caller owns it.
+	Events chan<- loop.Event
+
+	// PhaseID, IterationID, and Attempt carry the iteration context for
+	// the current executor spawn, forwarded into SpawnStarted.
+	PhaseID     string
+	IterationID string
+	Attempt     int
 }
 
 // Executor invokes Claude Code in print mode and streams its stream-json
@@ -256,6 +273,50 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	}
 	cmd.WaitDelay = e.cfg.CancelGrace
 
+	// Persist the resolved prompt and emit SpawnStarted before the subprocess
+	// starts so observers know exactly what each executor spawn received.
+	var spawnID string
+	if e.cfg.SessionStore != nil {
+		spawnID = director.NewSpawnID()
+		promptPath := filepath.Join(e.cfg.SessionStore.SpawnsDir(), spawnID+".md")
+		if mkdirErr := os.MkdirAll(filepath.Dir(promptPath), 0o755); mkdirErr != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("executor/claude: mkdir spawns: %w", mkdirErr)
+		}
+		// Build prompt content: if a system prompt file is set, prepend its
+		// content so the spawn file captures the full context the agent sees.
+		var spawnContent []byte
+		if e.cfg.SystemPromptFile != "" {
+			sysBytes, readErr := os.ReadFile(e.cfg.SystemPromptFile)
+			if readErr == nil {
+				spawnContent = append(sysBytes, '\n', '\n')
+			}
+		}
+		spawnContent = append(spawnContent, []byte(prompt)...)
+		if writeErr := os.WriteFile(promptPath, spawnContent, 0o600); writeErr != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("executor/claude: write prompt: %w", writeErr)
+		}
+		absPath, absErr := filepath.Abs(promptPath)
+		if absErr != nil {
+			absPath = promptPath
+		}
+		if e.cfg.Events != nil {
+			select {
+			case e.cfg.Events <- loop.SpawnStarted{
+				SpawnID:     spawnID,
+				Role:        "executor",
+				PhaseID:     e.cfg.PhaseID,
+				IterationID: e.cfg.IterationID,
+				Attempt:     e.cfg.Attempt,
+				Model:       e.cfg.Model,
+				Effort:      e.cfg.Effort,
+				PromptPath:  absPath,
+				At:          time.Now().UTC(),
+			}:
+			default:
+			}
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("run %s: %w", e.cfg.Binary, err)
 	}
@@ -286,20 +347,20 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 		if errors.As(runErr, &ee) {
 			exitCode = ee.ExitCode()
 		}
-		return loop.ExecResult{ExitCode: exitCode, StderrTail: tail}, ctxErr
+		return loop.ExecResult{ExitCode: exitCode, StderrTail: tail, SpawnID: spawnID}, ctxErr
 	}
 
 	if runErr == nil {
-		return loop.ExecResult{ExitCode: 0, StderrTail: tail}, nil
+		return loop.ExecResult{ExitCode: 0, StderrTail: tail, SpawnID: spawnID}, nil
 	}
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
 		// Agent exited non-zero; that is a normal control-flow signal,
 		// not a Run failure. Caller decides what to do; the captured
 		// stderr tail rides along for diagnostics.
-		return loop.ExecResult{ExitCode: ee.ExitCode(), StderrTail: tail}, nil
+		return loop.ExecResult{ExitCode: ee.ExitCode(), StderrTail: tail, SpawnID: spawnID}, nil
 	}
-	return loop.ExecResult{ExitCode: -1, StderrTail: tail}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
+	return loop.ExecResult{ExitCode: -1, StderrTail: tail, SpawnID: spawnID}, fmt.Errorf("run %s: %w", e.cfg.Binary, runErr)
 }
 
 // writeMCPConfig persists a one-off mcp-config JSON pointing at the
