@@ -3,6 +3,9 @@ import type { CostAgg } from '../../hooks/use-cost-aggregator'
 
 export interface CostMeterProps {
   agg: CostAgg
+  // compact collapses the meter to the USD pill only, hiding the sparkline
+  // and token count. Used below 1024px in the header.
+  compact?: boolean
 }
 
 /**
@@ -128,8 +131,9 @@ function Popover({ isOpen, onClose, anchor, children }: {
 
 /**
  * CostMeter displays the total USD and tokens with a sparkline and detailed breakdown.
+ * When compact=true, only the USD pill is shown (no sparkline or token count).
  */
-export function CostMeter({ agg }: CostMeterProps) {
+export function CostMeter({ agg, compact = false }: CostMeterProps) {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleToggle = () => {
@@ -149,10 +153,14 @@ export function CostMeter({ agg }: CostMeterProps) {
           title="Cost breakdown"
         >
           <span className="font-display italic text-sm">${agg.totalUSD.toFixed(2)}</span>
-          <span className="font-numeric text-xs text-muted-foreground">{totalTokens}</span>
-          <div className="text-muted-foreground">
-            <SparklineChart perIteration={agg.perIteration} />
-          </div>
+          {!compact && (
+            <span className="font-numeric text-xs text-muted-foreground">{totalTokens}</span>
+          )}
+          {!compact && (
+            <div className="text-muted-foreground">
+              <SparklineChart perIteration={agg.perIteration} />
+            </div>
+          )}
         </button>
       }
     >
