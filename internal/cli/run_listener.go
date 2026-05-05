@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/services"
 )
 
@@ -38,18 +37,26 @@ type runListener struct {
 // listen context, waits for the goroutine to drain, and returns any
 // terminal serve error.
 //
-// svc may be nil during the foundation iteration; subsequent
-// iterations supply the real services aggregate to api.New.
+// boot is the run-wide MCP plumbing the listener mounts at /mcp/. nil
+// triggers an internal newMCPBoot(nil) fallback so tests that do not
+// care about the boot's identity (most listener tests) stay terse;
+// production callers build their own boot beforehand so the services
+// aggregator can read its DAGHandler. svc may be nil; the API handlers
+// short-circuit to ErrInternal "services not configured" until the
+// composition root supplies a real aggregate.
 func startRunListener(
 	ctx context.Context,
-	state *dag.State,
+	boot *mcpBoot,
 	svc *services.Services,
 	webuiHandler http.Handler,
 	bind string,
 ) (*runListener, error) {
-	boot, err := newMCPBoot(state)
-	if err != nil {
-		return nil, err
+	if boot == nil {
+		var err error
+		boot, err = newMCPBoot(nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sessionToken := api.NewSessionToken()

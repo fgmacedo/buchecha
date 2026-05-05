@@ -27,6 +27,7 @@ import (
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/services"
 	"github.com/fgmacedo/buchecha/internal/tui"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
@@ -96,8 +97,37 @@ type directorIO struct {
 // persistence, and user confirmation; the brief/execute/review pipeline
 // lands in P5-P7.
 func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string, cfg *config.Config) error {
+	dio := directorIO{
+		stdin:   os.Stdin,
+		stderr:  os.Stderr,
+		resume:  runResume,
+		session: runSessionID,
+	}
+
+	// Resolve (or create) the session and build the run-wide MCP boot
+	// before the listener so the services aggregator the api.Server
+	// consumes has a SessionStore and DAGHandler from t=0. Without this
+	// the read-only API endpoints would respond "services not configured"
+	// for the entire run.
+	store, err := resolveDirectorSessionEarly(specPath, dio)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+	boot, err := newMCPBoot(nil)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+	svc := services.New(services.Deps{
+		DAGHandler:      boot.handler,
+		SessionStore:    store,
+		SessionsBaseDir: filepath.Join(".bcc", "sessions"),
+		AuditPath:       directorAuditPath(cfg, store),
+	})
+
 	webuiHandler := resolveWebUIHandler(cfg, runWebUIDev)
-	listener, err := startRunListener(ctx, nil, nil, webuiHandler, runListenerBind())
+	listener, err := startRunListener(ctx, boot, svc, webuiHandler, runListenerBind())
 	if err != nil {
 		ExitCode = loop.ExitInvalid
 		return err
@@ -126,13 +156,37 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 
 	deps := defaultDirectorDeps(cfg, listener.boot)
 	deps.boot = listener.boot
-	dio := directorIO{
-		stdin:   os.Stdin,
-		stderr:  os.Stderr,
-		resume:  runResume,
-		session: runSessionID,
-	}
+	deps.store = store
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
+}
+
+// resolveDirectorSessionEarly hashes the spec and resolves the session
+// store before the run-wide HTTP listener binds. Pre-resolving the
+// session means the services aggregator passed to api.New has a live
+// SessionStore from t=0, which is what powers GET /api/v1/sessions and
+// the snapshot/dag/briefings/prompts read-only paths.
+func resolveDirectorSessionEarly(specPath string, dio directorIO) (*director.Store, error) {
+	content, err := os.ReadFile(specPath)
+	if err != nil {
+		return nil, fmt.Errorf("director: read spec %s: %w", specPath, err)
+	}
+	hash := director.SpecHash(content)
+	deps := directorDeps{baseDir: ".bcc", now: time.Now}
+	store, err := resolveDirectorSession(deps, dio, specPath, hash)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// directorAuditPath returns the per-session MCP audit log path when the
+// audit toggle is on, otherwise empty. Matches the path mcpBoot.bindSession
+// uses so the services Audit and the dag handler agree on the destination.
+func directorAuditPath(cfg *config.Config, store *director.Store) string {
+	if cfg == nil || store == nil || !cfg.Director.IsMCPAuditEnabled() {
+		return ""
+	}
+	return filepath.Join(store.SessionDir(), "mcp-log.jsonl")
 }
 
 // resolveWebUIHandler picks the http.Handler the run-wide listener
