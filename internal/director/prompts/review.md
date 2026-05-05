@@ -21,7 +21,7 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 2. Call `bcc_get_briefing(agent_id)` to retrieve the briefing the Executor was given. It pins `phase_id`, `sub_dag_task_ids`, `instructions`, and `spec_path`.
 3. Call `bcc_get_dag_snapshot(agent_id)` for current per-task status across the audited phase.
 4. Call `bcc_get_diff(agent_id)` for the unified working-tree diff the Executor produced this iteration.
-5. Call `bcc_get_journal_delta(agent_id)` for the new text appended to the spec's Execution Journal during this iteration.
+5. Call `bcc_get_journal_delta(agent_id)` to retrieve any text the Executor appended to a spec journaling surface this iteration. The delta may be empty: specs without an Execution Journal (or equivalent changelog/status log) carry no journaling surface, and the Executor is instructed to skip in that case. An empty delta is not by itself a reason to mark a task `needs_fix`. Treat a non-empty delta as additional evidence: cross-check it against the diff and the briefing, and flag inconsistencies (claims of work not present in the diff, omitted decisions, formatting drift from the spec's existing convention).
 6. Read the spec via the `Read` tool, using the `spec_path` field from the briefing you fetched in step 2 (if the path is a directory, treat it as a spec bundle). The spec grounds every acceptance check; do not rely on the briefing alone.
 7. For each task in `sub_dag_task_ids`, walk its `acceptance` list and decide pass/fail per item:
    - `evidence: diff`: inspect the diff. Pass when the change is present and well-formed.

@@ -21,3 +21,21 @@ When the iteration is complete, mark end-of-iteration by calling `bcc_iteration_
 ## Working tree
 
 {{template "working_tree" .}}
+
+## Journaling
+
+Before closing the iteration, record what shipped in the spec's journaling surface (Execution Journal, changelog section, status log, whatever the spec already uses). Discover the convention from the spec itself; never invent a new one.
+
+- **Has an existing journal section with a fixed format**: append a new entry following that format verbatim (heading shape, field order, ordering of newest vs oldest).
+- **Has a journal section but no fixed format**: append an entry shaped as
+
+  ```
+  ### <YYYY-MM-DD HH:mm:ss> , <phase_id>
+
+  - <bullet point summary of what shipped>
+  - **Decisions**: <notable choices, trade-offs, deviations from the briefing>
+  ```
+
+- **Has no journaling surface at all** (no Execution Journal, no changelog, no status log, nothing): skip. Do not introduce one.
+
+The journal entry is part of the iteration's diff; the Reviewer audits it together with the code changes.
