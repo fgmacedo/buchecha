@@ -791,7 +791,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		latest = r
 	}
 
-
 	// runLoopOn spins up loop.Loop.Run against a freshly built events
 	// channel. Used by both the first-run orchestrator and the session
 	// Resume factory; loop.Loop.Run owns the channel lifecycle and emits
