@@ -327,7 +327,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The header is the always-visible surface; cost lives there because the user needs to see it without clicking anywhere.
 **depends_on**: T6.2.
 
-### [ ] P7: Right pane unified surface
+### [x] P7: Right pane unified surface
 
 **id**: `P7-right-pane`
 **intent**: Replace the current split between `TimelinePanel` and the bottom `BriefingPanel` with a single right-side pane that shows the Timeline by default and switches to the Inspector when a node is selected. The Inspector shell is a placeholder here; phase P9 fills the tabs.
@@ -335,7 +335,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: DAG and ActivityView changes (P8, P10).
 **depends_on**: P1, P5.
 
-#### [ ] T7.1: Selection state
+#### [x] T7.1: Selection state
 
 **acceptance_criteria**:
 - `hooks/use-selection.ts` exports `useSelection()` returning `{ selection: Selection | null; select: (s: Selection | null) => void }`.
@@ -347,7 +347,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Selection is shared across DAGView, ActivityView, and the Inspector. Co-located in a hook for test friendliness.
 **depends_on**: none.
 
-#### [ ] T7.2: RightPane container
+#### [x] T7.2: RightPane container
 
 **acceptance_criteria**:
 - `components/right-pane/index.tsx` exports `<RightPane events={SeqEvent[]} snapshot={Snapshot} />`.
@@ -359,7 +359,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Wrapping behind a single component keeps `app.tsx` clean and the swap deterministic.
 **depends_on**: T7.1.
 
-#### [ ] T7.3: Typed timeline renderers
+#### [x] T7.3: Typed timeline renderers
 
 **acceptance_criteria**:
 - `components/right-pane/timeline/` contains one renderer per event kind family:
@@ -375,7 +375,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Each renderer owning its visual makes adding new event kinds in the future a single-file change.
 **depends_on**: T7.2, T1.2.
 
-#### [ ] T7.4: Iteration grouping and filters
+#### [x] T7.4: Iteration grouping and filters
 
 **acceptance_criteria**:
 - `lib/event-grouping.ts` exports `groupByIteration(events: SeqEvent[]): IterationGroup[]` where `IterationGroup` is `{ iterationIndex; iterationId; from: Date; to: Date | null; events: SeqEvent[]; summary: { tasksDone, tasksNeedsFix, usd, durationMS } }`.
@@ -388,7 +388,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Grouping is the highest-leverage UX win; it turns 800 events per iteration into a scannable summary.
 **depends_on**: T7.3.
 
-#### [ ] T7.5: Wire RightPane into AppShell
+#### [x] T7.5: Wire RightPane into AppShell
 
 **acceptance_criteria**:
 - `app.tsx` removes `<TimelinePanel>` and `<BriefingPanel>` mount points; the right column renders `<RightPane events={events} snapshot={snapshot} />`.
@@ -399,7 +399,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: This is the user-visible flip. After this task, the Inspector is a shell; P9 fills it.
 **depends_on**: T7.4.
 
-### [ ] P8: DAGView refactor with selection
+### [x] P8: DAGView refactor with selection
 
 **id**: `P8-dag-view`
 **intent**: Rebuild the phase and task nodes to be readable, inspectable, and visually layered. Click a phase or task to focus it in the Inspector via the selection hook.
@@ -407,7 +407,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: ActivityView, RightPane internals.
 **depends_on**: P5, P7.
 
-#### [ ] T8.1: Phase node redesign
+#### [x] T8.1: Phase node redesign
 
 **acceptance_criteria**:
 - `components/dag-view/phase-node.tsx`:
@@ -422,7 +422,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The phase node is the entry point most users interact with; investing in its hierarchy pays back.
 **depends_on**: P5, T7.1.
 
-#### [ ] T8.2: Task node redesign
+#### [x] T8.2: Task node redesign
 
 **acceptance_criteria**:
 - `components/dag-view/task-node.tsx`:
@@ -434,7 +434,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Status pill at the same place across nodes is non-negotiable for quick scanning.
 **depends_on**: T8.1.
 
-#### [ ] T8.3: Canvas background and minimap
+#### [x] T8.3: Canvas background and minimap
 
 **acceptance_criteria**:
 - `components/dag-view/index.tsx` applies `bg-canvas-textured` from T5.3 to the ReactFlow viewport wrapper.
@@ -445,7 +445,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The textured background plus the colored minimap together fix the "black box" perception.
 **depends_on**: T5.3.
 
-#### [ ] T8.4: DAG selection round-trip
+#### [x] T8.4: DAG selection round-trip
 
 **acceptance_criteria**:
 - Clicking a phase or task in the DAG transitions the RightPane from Timeline mode to Inspector mode (the shell from P7).
