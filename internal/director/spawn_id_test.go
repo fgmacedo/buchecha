@@ -71,13 +71,13 @@ func TestValidSpawnID_Boundaries(t *testing.T) {
 		want bool
 	}{
 		{"", false},
-		{"abc", false},                                // too short (3)
-		{"0123456789abcde", false},                    // 15 chars
-		{"0123456789abcdef", true},                    // 16 chars (minimum)
+		{"abc", false},             // too short (3)
+		{"0123456789abcde", false}, // 15 chars
+		{"0123456789abcdef", true}, // 16 chars (minimum)
 		{"01234567890123456789abcdef01234567", false}, // 33 chars
 		{"01234567890123456789abcdef012345", true},    // 32 chars (maximum)
 		{"01bcdefghjkmnpqrstvwxyz012", true},          // 26 chars (ULID length)
-		{"UPPERCASE123456789abcde0", false},            // uppercase not allowed
+		{"UPPERCASE123456789abcde0", false},           // uppercase not allowed
 	}
 	for _, tc := range cases {
 		if got := ValidSpawnID(tc.id); got != tc.want {

@@ -424,12 +424,12 @@ func TestRun_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
 	store := newTestStore(t)
 	loopEvents := make(chan loop.Event, 16)
 	e := New(Config{
-		Binary:      fixture(t, "fake-claude.sh"),
+		Binary:       fixture(t, "fake-claude.sh"),
 		SessionStore: store,
-		Events:      loopEvents,
-		PhaseID:     "P1",
-		IterationID: "P1-01",
-		Attempt:     1,
+		Events:       loopEvents,
+		PhaseID:      "P1",
+		IterationID:  "P1-01",
+		Attempt:      1,
 	})
 	const prompt = "implement the spec"
 	res, _, err := collectEvents(t, e, prompt)
