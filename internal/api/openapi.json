@@ -640,6 +640,70 @@
           "sessions"
         ]
       }
+    },
+    "/sessions/{id}/spawns/{spawnId}/prompt": {
+      "get": {
+        "description": "Returns the exact markdown prompt the specified spawn received before execution, persisted under .bcc/sessions/\u003cid\u003e/spawns/\u003cspawnId\u003e.md. Spawn IDs are ULID-shaped (16-32 lowercase hex chars). Malformed spawn IDs return 400 with envelope code invalid_request; unknown sessions return 404 with session_not_found; missing spawn files return 404 with role_not_found.",
+        "operationId": "get-session-spawn-prompt",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Spawn id (ULID-shaped, 16-32 lowercase hex chars).",
+            "in": "path",
+            "name": "spawnId",
+            "required": true,
+            "schema": {
+              "description": "Spawn id (ULID-shaped, 16-32 lowercase hex chars).",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "contentEncoding": "base64",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resolved prompt for one spawn",
+        "tags": [
+          "prompts"
+        ]
+      }
     }
   }
 }
