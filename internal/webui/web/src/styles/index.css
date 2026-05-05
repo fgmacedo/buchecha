@@ -51,4 +51,16 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --font-serif: var(--font-serif);
+  --font-display: var(--font-display);
+  --font-numeric: var(--font-numeric);
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-numeric {
+    font-family: var(--font-numeric);
+  }
 }

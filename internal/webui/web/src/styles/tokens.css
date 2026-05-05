@@ -108,6 +108,11 @@
   --font-serif:
     "Instrument Serif", ui-serif, Georgia, Cambria, "Times New Roman",
     Times, serif;
+  --font-display:
+    "Instrument Serif", ui-serif, Georgia, serif;
+  --font-numeric:
+    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
 }
 
 /* Make the dark palette the document default so an unstyled root
