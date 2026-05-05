@@ -26,10 +26,11 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 1. `bcc_task_started(agent_id, "planning")`.
 2. Read `{{.SpecPath}}` via the `Read` tool. Quote the spec verbatim where it matters; never paraphrase a stop criterion or an acceptance bullet.
 3. **Decide first whether there is anything to do.** Skim the spec's checkboxes, acceptance bullets, and any Execution Journal section. If every item is already shipped (acceptance bullets checked, code present, journal records the run as complete), call `bcc_plan_skip(agent_id, reason)` with a one-sentence reason that cites what you observed, then `bcc_task_completed(agent_id, "planning", "spec already complete; skipped")` and stop. Do not invent residual tasks. `bcc_plan_skip` and `bcc_plan_emit` are mutually exclusive.
-4. Otherwise inspect the repo with `Grep`, `Glob`, `Read`, and read-only `Bash` (`go vet`, `git log`, `ls`) to ground your plan in the actual current state.
-5. Compose the `Plan`: every remaining unit of work the spec describes, with briefings written inline and per-role routing chosen per phase. See "Designing each phase" below.
-6. Emit via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection, read the error and re-emit.
-7. `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, P1 establishes the session boundary").
+4. **If the spec is partially stale, plan the reconciliation.** When you observe items already shipped (acceptance bullets unchecked but code present in the repo, spec phases described as future work but their tests already green, Execution Journal silent on a delivery you can prove via `git log` or file contents) **alongside genuine residual work**, do not silently include them as pending and do not silently drop them. Make the first phase of your Plan a `spec-housekeeping` phase whose tasks update the spec to match observed reality (see "Spec housekeeping phase" below). Real feature phases follow with `depends_on: ["spec-housekeeping"]`.
+5. Inspect the repo with `Grep`, `Glob`, `Read`, and read-only `Bash` (`go vet`, `git log`, `ls`) to ground your plan in the actual current state. Cross-check every spec phase against repo evidence; record divergences (items the spec lists as future work but the repo proves are done) so they either drive the `spec-housekeeping` phase from step 4 or, if they cover the entire spec, justify the `bcc_plan_skip` from step 3.
+6. Compose the `Plan`: every remaining unit of work the spec describes, with briefings written inline and per-role routing chosen per phase. See "Designing each phase" below.
+7. Emit via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection, read the error and re-emit.
+8. `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, P1 establishes the session boundary").
 
 ## Available models
 
@@ -57,6 +58,16 @@ Three defaults that follow from the pairing rule:
 2. **Never pair frontier on the Briefer with frontier on the Executor.** Both agents would re-read the spec and reason over the same context twice. If you decided the work needs the frontier tier on the Executor, do not also schedule a frontier Briefer; either set goals only and let the Executor reason, or write the briefing yourself and drop the Executor a tier.
 
 3. **Group tasks of the same cognitive demand into the same phase**, so the phase's chosen model and effort fits every task in it. Dependencies come first (phases must be acyclic and tasks within a phase must be runnable together), but among the choices that respect dependencies, prefer the grouping that lets more phases run on a cheaper tier. Splitting one expensive task into its own phase to drop the rest to fast tier is a good trade.
+
+## Spec housekeeping phase
+
+Emit this phase only when step 4 found verifiable divergence between the spec and the repo. Do not emit it preventively when the spec is consistent.
+
+- **Phase id**: `spec-housekeeping`. `depends_on: []`. Every other phase you emit lists `spec-housekeeping` in its own `depends_on`, so the rest of the run executes against a reconciled spec.
+- **Tasks**: one per stale item, grouped only when items touch the same spec section (same file in a bundle, or same subsection of a single-file spec). Fine grain lets the Reviewer mark individual items `needs_fix` without invalidating the rest.
+- **Acceptance criteria**: name the evidence verbatim. Each AC cites the path, function name, commit, or journal line you observed. The Executor does not redo the discovery; the Reviewer validates against the cited evidence. Example: `id: A1, description: "mark 'Director MCP handler' as shipped on the spec; evidence: internal/director/dag/handler.go exists and registers bcc_plan_emit", evidence: "diff"`.
+- **Routing**: the work is mechanical (toggle checkboxes, append Execution Journal entries). Set `executor_assignment` to the lowest tier available with low effort. Write `prepared_briefing` inline with the item list and a verbatim instruction along the lines of "for each task, edit the spec to satisfy the acceptance criteria; preserve existing formatting and ordering". Set `reviewer_assignment` to the lowest tier that can read a markdown diff, or `skip_review: true` when every AC is a literal-string mutation (e.g. "tick the checkbox at line N").
+- **Scope**: `scope_in` is the spec path (or the bundle directory). `scope_out` covers the rest of the repo, so the Executor cannot drift into feature work while reconciling.
 
 ## Reviewer routing
 
