@@ -300,6 +300,45 @@ func TestSessionStatus_LabelsSignalsAndReasons(t *testing.T) {
 	}
 }
 
+// TestSessionExplanation_PerReasonGuidance pins that every non-trivial
+// loop termination reason carries a short paragraph the menu renders so
+// the user sees why the loop stopped, not just a two-word badge.
+// Reasons that are self-explanatory return an empty string.
+func TestSessionExplanation_PerReasonGuidance(t *testing.T) {
+	cases := []struct {
+		reason        string
+		wantNonEmpty  bool
+		mustContain   string
+		mustNotPrefix string
+	}{
+		{"head_stuck", true, "without commits", ""},
+		{"max_iterations", true, "iteration cap", ""},
+		{"planner_failed", true, "planner exited", ""},
+		{"blocked", true, "hard restriction", ""},
+		{"aborted", true, "escalation aborted", ""},
+		{"no plan to resume", true, "No plan latched", ""},
+		{"nothing_to_do", true, "spec already complete", ""},
+		{"done", false, "", ""},
+		{"", false, "", ""},
+		{"unknown_reason", false, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			got := sessionExplanation(tc.reason)
+			if tc.wantNonEmpty && got == "" {
+				t.Fatalf("sessionExplanation(%q) = empty; want guidance", tc.reason)
+			}
+			if !tc.wantNonEmpty && got != "" {
+				t.Fatalf("sessionExplanation(%q) = %q; want empty", tc.reason, got)
+			}
+			if tc.mustContain != "" && !strings.Contains(got, tc.mustContain) {
+				t.Errorf("sessionExplanation(%q) missing %q\n got: %q",
+					tc.reason, tc.mustContain, got)
+			}
+		})
+	}
+}
+
 // TestSessionKeyMap_FullHelpListsResumeEditQuit guards the binding set:
 // resume/edit/quit must surface in the FullHelp output so the `?`
 // overlay in session mode advertises every binding the model handles.

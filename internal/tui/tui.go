@@ -665,7 +665,8 @@ func (m Model) viewSession() string {
 	}
 	dashboard := m.viewDashboard(true)
 	status := sessionStatus(m.sessionReason, m.lastIterSignal)
-	menu := renderSessionMenu(m.helpView, m.sessionKeys, status)
+	explanation := sessionExplanation(m.sessionReason)
+	menu := renderSessionMenu(m.helpView, m.sessionKeys, status, explanation)
 	hint := ""
 	if m.sessionExitMsg != "" {
 		hint = "  " + theme.warn.Render(m.sessionExitMsg) + "\n"
