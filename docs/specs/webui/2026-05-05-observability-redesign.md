@@ -210,7 +210,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: For one transition window the executor will emit both `agent_event.result_summary` (for the TUI) and `spawn_finished` (for the SPA). The TUI migration to `spawn_finished` is deferred to a later spec.
 **depends_on**: T2.3, T3.1.
 
-### [ ] P4: Per-spawn prompt service and HTTP endpoint
+### [x] P4: Per-spawn prompt service and HTTP endpoint
 
 **id**: `P4-prompt-service`
 **intent**: Add `PromptService.GetSpawn(sessionID, spawnID)` and the matching `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt` endpoint. The dashboard uses this to render the body of any spawn the user clicks.
@@ -218,7 +218,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: SPA changes; existing `GET /prompts/{role}` stays as-is.
 **depends_on**: P2.
 
-#### [ ] T4.1: `PromptService.GetSpawn`
+#### [x] T4.1: `PromptService.GetSpawn`
 
 **acceptance_criteria**:
 - `internal/services/prompts.go` adds `GetSpawn(ctx, sessionID, spawnID string) (Prompt, error)`.
@@ -230,7 +230,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The validator gates filesystem access against path traversal; the rest is straightforward.
 **depends_on**: P2.
 
-#### [ ] T4.2: `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt`
+#### [x] T4.2: `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt`
 
 **acceptance_criteria**:
 - `internal/api/handlers/prompts.go` (or extend the existing prompt handler) registers the new route.
@@ -242,7 +242,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Mirrors the shape of the existing `GET /sessions/{id}/prompts/{role}` handler.
 **depends_on**: T4.1.
 
-### [ ] P5: Visual foundation
+### [x] P5: Visual foundation
 
 **id**: `P5-visual-foundation`
 **intent**: Refresh the design tokens to give the dashboard surface depth and clear hierarchy. Three surface levels (canvas, panel, card), an elevated state for hover/selection, intentional use of Instrument Serif italic for editorial accents, and accent colors reserved for signal (cost, escalation). No layout or component changes yet; subsequent phases consume these tokens.
@@ -250,7 +250,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: any `.tsx` change.
 **depends_on**: none.
 
-#### [ ] T5.1: Surface and elevation tokens
+#### [x] T5.1: Surface and elevation tokens
 
 **acceptance_criteria**:
 - `tokens.css` declares: `--surface-canvas: #08090b`, `--surface-panel: #101316`, `--surface-card: #16191d`, `--surface-elevated: #1d2126`, `--surface-overlay: #0d0f12cc` (translucent for popovers).
@@ -262,7 +262,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Tokens land first so subsequent components consume them. Aliases avoid a big-bang rename.
 **depends_on**: none.
 
-#### [ ] T5.2: Typography refinement
+#### [x] T5.2: Typography refinement
 
 **acceptance_criteria**:
 - `tokens.css` adds `--font-display: "Instrument Serif", ui-serif, Georgia, serif;` and a `--font-numeric: "Geist Mono", ...` alias for explicit numeric runs.
@@ -273,7 +273,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Instrument Serif italic at 28px and above gives the dashboard an editorial cadence without leaving the technical aesthetic.
 **depends_on**: T5.1.
 
-#### [ ] T5.3: Canvas texture utility
+#### [x] T5.3: Canvas texture utility
 
 **acceptance_criteria**:
 - A reusable CSS-only background pattern is added under `styles/index.css`: a radial gradient between `--surface-canvas` and `transparent` plus a low-opacity SVG noise data-URL, exposed as a utility class `.bg-canvas-textured`.
@@ -283,7 +283,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The DAG canvas in P7 consumes this; isolating the pattern here keeps it reusable for the ActivityView background later.
 **depends_on**: T5.1.
 
-### [ ] P6: CostMeter
+### [x] P6: CostMeter
 
 **id**: `P6-cost-meter`
 **intent**: Surface session-wide cost in USD and tokens at all times in the header, with a popover that breaks down the total per role and per iteration. The aggregator consumes the new `spawn_finished` events.
@@ -291,7 +291,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: anything outside header and the new aggregator.
 **depends_on**: P3, P5.
 
-#### [ ] T6.1: Cost aggregator hook
+#### [x] T6.1: Cost aggregator hook
 
 **acceptance_criteria**:
 - `hooks/use-cost-aggregator.ts` exports `useCostAggregator(events: SeqEvent[]): CostAgg`.
@@ -303,7 +303,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The hook stays a pure derivation; the events array is the single source of truth.
 **depends_on**: P3.
 
-#### [ ] T6.2: CostMeter component
+#### [x] T6.2: CostMeter component
 
 **acceptance_criteria**:
 - `components/cost-meter/index.tsx` exports `<CostMeter agg={CostAgg} />`.
@@ -316,7 +316,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Restraint matters; the pill must read at a glance and only escalate to the popover on intent.
 **depends_on**: T6.1, T5.2.
 
-#### [ ] T6.3: Integrate into Header
+#### [x] T6.3: Integrate into Header
 
 **acceptance_criteria**:
 - `components/header/index.tsx` consumes `useCostAggregator(events)` and renders `<CostMeter agg={...} />` aligned to the right of the view toggle.
@@ -673,6 +673,28 @@ After P11, the following must hold without manual fix-up:
 - `CLAUDE.md`
 
 ## Execution Journal
+
+### 2026-05-05 19:00:00 , P6-cost-meter
+
+- useCostAggregator hook added to internal/webui/web/src/hooks/use-cost-aggregator.ts; computes totalUSD, totalTokens (input/output/cache-read/cache-create), perRole, perIteration aggregates from spawn_finished events; memoized on events array length (T6.1)
+- CostMeter component added to internal/webui/web/src/components/cost-meter/index.tsx with inline SVG sparkline chart for USD per iteration; popover breaks down cost per role and per iteration with percentage of session total (T6.2)
+- CostMeter integrated into header via internal/webui/web/src/components/header/index.tsx; pill displays USD in font-display italic with sparkline; layout: status badge | iter index | spec path | view toggle | CostMeter fits within 48px row (T6.3)
+- **Decisions**: Sparkline hover tooltip shows iteration index and USD; popover on click uses click-outside detection to close; memoization on events.length trades memory for re-render cost in event-heavy runs
+
+### 2026-05-05 17:30:00 , P5-visual-foundation
+
+- Surface hierarchy tokens added to internal/webui/web/src/styles/tokens.css: canvas (#08090b), panel (#101316), card (#16191d), elevated (#1d2126), overlay (#0d0f12cc); legacy aliases (color-background, color-muted) preserved for backward compatibility (T5.1)
+- Border tokens added: subtle (#1c1f24), default (#262a30), strong (#353a42); accent warning color (#f5b840) reserved for cost signals (T5.1)
+- Typography tokens and utility classes added: --font-display (Instrument Serif), --font-numeric (Geist Mono); .font-display and .font-numeric Tailwind utilities registered; Instrument Serif italic preloaded via index.html link (T5.2)
+- Canvas texture utility class bg-canvas-textured added to internal/webui/web/src/styles/index.css; radial gradient from surface-canvas with inline SVG noise data-URI (T5.3)
+- **Decisions**: All tokens use CSS custom properties for cascading override; legacy aliases prevent big-bang component rename; utility classes scoped to @layer to avoid specificity inversion
+
+### 2026-05-05 16:00:00 , P4-prompt-service
+
+- PromptService.GetSpawn method added to internal/services/prompts.go; reads spawn prompt from .bcc/sessions/<id>/spawns/<spawn_id>.md; validates spawnID against ULID shape (^[0-9a-z]{16,32}$) before filesystem access to prevent path traversal (T4.1)
+- GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt endpoint registered in internal/api/handlers/prompts.go; returns text/markdown with exact bytes the spawn received; malformed spawn IDs return 400 invalid_request, missing spawns return 404 role_not_found (T4.2)
+- Prompt type gains SpawnID field populated only by GetSpawn; Role left empty for spawn-fetched prompts since SPA derives role from originating event (T4.1)
+- **Decisions**: Reused role_not_found error code for missing spawns to minimize error taxonomy; spawn ID regex enforced at service layer before any I/O
 
 ### 2026-05-05 14:00:00 , P3-spawn-cost
 
