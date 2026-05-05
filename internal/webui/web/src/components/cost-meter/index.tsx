@@ -7,8 +7,10 @@ export interface CostMeterProps {
 
 /**
  * SparklineChart renders a 24px sparkline showing USD values across iterations.
+ * On hover, displays a tooltip with the iteration index and USD amount.
  */
 function SparklineChart({ perIteration }: { perIteration: CostAgg['perIteration'] }) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const width = 24
   const height = 24
   const padding = 2
@@ -32,9 +34,37 @@ function SparklineChart({ perIteration }: { perIteration: CostAgg['perIteration'
     : `M ${points[0].x},${points[0].y} L ${points[0].x},${points[0].y}`
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="inline-block">
-      <path d={pathD} stroke="currentColor" strokeWidth="1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <div className="relative inline-block">
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className="inline-block"
+        onMouseLeave={() => setHoveredIdx(null)}
+      >
+        <path d={pathD} stroke="currentColor" strokeWidth="1" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        {/* Invisible circles for hover detection */}
+        {points.map((p, idx) => (
+          <g key={idx}>
+            <circle
+              cx={p.x}
+              cy={p.y}
+              r="2"
+              fill="transparent"
+              style={{ cursor: 'pointer' }}
+              onMouseEnter={() => setHoveredIdx(idx)}
+            />
+            <title>{`Iter ${perIteration[idx].iterationIndex}: $${perIteration[idx].usd.toFixed(2)}`}</title>
+          </g>
+        ))}
+      </svg>
+      {/* Tooltip shown on hover */}
+      {hoveredIdx !== null && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-surface-elevated text-foreground text-xs px-2 py-1 rounded whitespace-nowrap border border-border-default shadow-md pointer-events-none">
+          Iter {perIteration[hoveredIdx].iterationIndex}: ${perIteration[hoveredIdx].usd.toFixed(2)}
+        </div>
+      )}
+    </div>
   )
 }
 
