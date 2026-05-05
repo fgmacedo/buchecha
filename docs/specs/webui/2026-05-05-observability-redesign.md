@@ -674,6 +674,17 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
+### 2026-05-05 20:50:00 , P9-inspector
+
+- BriefingTab (T9.2): fetches GET /api/v1/sessions/{id}/briefings/{phase}/{attempt} on attempt change; attempt list derived from phase_briefed events; shiki markdown rendering with loading skeleton and canonical error envelope; disabled state for non-phase/task selections; attempt selector initialized to latest to avoid double-fetch via derived-state-from-props pattern
+- PromptsTab (T9.3): collects spawn_started events filtered by selection (phase, task, spawn, iteration); sortable table (time, role, model, attempt, USD); row click fetches /spawns/{spawnId}/prompt and renders in split-view panel; URL hash set to #spawn=<id> on selection; Copy button via navigator.clipboard.writeText; cost from correlated spawn_finished events
+- EventsTab (T9.4): pre-filters event stream by selection using two-pass algorithm (matching seqs + iteration boundaries that bracket them); iteration selection handled via groupByIteration; reuses IterDivider/PhaseCard/TaskLine/AgentBlock/SpawnMarker from timeline/; same MultiSelect filter controls as TimelineMode (kinds, roles, levels, search)
+- Inspector index (T9.5): four-tab strip (Overview/Briefing/Prompts/Events); active tab persisted in localStorage keyed by bcc.inspector.tab.<kind>; keyboard shortcuts 1-4 switch tabs, Escape calls onClose; badge counts (Briefing=attempt count, Prompts=spawn count, Events=event count); all four tab bodies mounted with display:none to preserve scroll
+- right-pane/index.tsx: mounts new Inspector from inspector/index.tsx instead of InspectorMode; sessionId forwarded to Inspector
+- overview-tab.tsx: exported StatusPill, RolePill, DepChip, MetaRow, Section for reuse across tabs
+- 35 new Vitest tests across briefing-tab, prompts-tab, events-tab, inspector tests; all 177 tests pass; build exits 0; gzip total ~286 kB (limit 600 kB)
+- **Decisions**: SpawnMarker calls useSelection so EventsTab/Inspector tests are wrapped in SelectionProvider; the briefing-tab initializes selectedAttempt to the latest available attempt at mount using derived-state-from-props to avoid the extra fetch that a separate snap-to-latest useEffect would cause on mount.
+
 ### 2026-05-05 20:45:00 , P9-inspector
 
 - OverviewTab component created at internal/webui/web/src/components/right-pane/inspector/overview-tab.tsx; pure function of selection + events + snapshot props; no useEffect or API calls (T9.1)
