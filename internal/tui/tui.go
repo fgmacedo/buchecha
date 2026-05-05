@@ -11,6 +11,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"charm.land/bubbles/v2/help"
@@ -42,20 +43,21 @@ type keyMap struct {
 	Quit  key.Binding
 	Pause key.Binding
 	Mouse key.Binding
+	Webui key.Binding
 	Help  key.Binding
 }
 
 // ShortHelp returns the bindings rendered as a single inline footer line
 // (the help.Model's ShortHelp mode).
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Quit, k.Pause, k.Mouse, k.Help}
+	return []key.Binding{k.Quit, k.Pause, k.Mouse, k.Webui, k.Help}
 }
 
 // FullHelp returns the bindings grouped by column for the ? overlay
 // (help.Model's FullHelp mode). One column today; columns are added by
 // returning more nested slices.
 func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Quit, k.Pause, k.Mouse, k.Help}}
+	return [][]key.Binding{{k.Quit, k.Pause, k.Mouse, k.Webui, k.Help}}
 }
 
 func defaultKeyMap() keyMap {
@@ -71,6 +73,10 @@ func defaultKeyMap() keyMap {
 		Mouse: key.NewBinding(
 			key.WithKeys("m"),
 			key.WithHelp("m", "toggle mouse capture (off: select/copy text)"),
+		),
+		Webui: key.NewBinding(
+			key.WithKeys("w"),
+			key.WithHelp("w", "open the web dashboard in the browser"),
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
@@ -161,6 +167,15 @@ type Model struct {
 	// scroll-wheel handling.
 	mouseCaptureOff bool
 
+	// webuiURL is the dashboard URL to open when the user presses the
+	// Webui key (default 'w'). Empty disables the binding silently.
+	webuiURL string
+	// openBrowser is the platform-aware browser launcher the host wires
+	// in (cli's openBrowser, in production). Nil disables the Webui
+	// binding silently. The handler swallows errors via slog so the
+	// alt-screen renderer is not corrupted by stray writes.
+	openBrowser func(url string) error
+
 	// Keybindings + help renderer (single source of truth).
 	keys         keyMap
 	sessionKeys  sessionKeyMap
@@ -209,6 +224,16 @@ type Options struct {
 	// placeholder until the host signals plan resolution via
 	// SignalPlanReady (or one of the failure-path signals).
 	PlanningPending bool
+
+	// WebUIURL is the dashboard URL the [w] keybinding launches the
+	// browser at. Empty disables the binding silently (help overlay
+	// hides it; handler is a no-op).
+	WebUIURL string
+
+	// OpenBrowser is the platform-aware browser launcher the host wires
+	// in. Nil disables the [w] binding silently. The Model swallows
+	// errors via slog so the alt-screen renderer stays clean.
+	OpenBrowser func(url string) error
 }
 
 // New returns a Model wired to the given services and cancel callback.
@@ -240,6 +265,14 @@ func New(opts Options) Model {
 		helpView:        help.New(),
 		escalationGate:  opts.EscalationGate,
 		planningPending: opts.PlanningPending,
+		webuiURL:        opts.WebUIURL,
+		openBrowser:     opts.OpenBrowser,
+	}
+	// Disable the [w] binding (and hide it from help) when the host did
+	// not wire a URL or a launcher. The handler is no-op anyway, but
+	// disabling the binding keeps the help overlay honest.
+	if m.webuiURL == "" || m.openBrowser == nil {
+		m.keys.Webui.SetEnabled(false)
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
@@ -434,11 +467,33 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Mouse):
 		m.mouseCaptureOff = !m.mouseCaptureOff
 		return m, nil
+	case key.Matches(msg, m.keys.Webui):
+		return m, m.openWebuiCmd()
 	case key.Matches(msg, m.keys.Help):
 		m.helpVisible = !m.helpVisible
 		return m, nil
 	}
 	return m, nil
+}
+
+// openWebuiCmd returns a tea.Cmd that launches the dashboard in the
+// user's default browser. The command runs the launcher in its own
+// goroutine (tea drains commands serially in a worker pool) and
+// swallows the error via slog so a failed launch does not corrupt the
+// alt-screen renderer. Nil URL or launcher returns nil so the caller
+// can treat this as a no-op binding.
+func (m Model) openWebuiCmd() tea.Cmd {
+	if m.webuiURL == "" || m.openBrowser == nil {
+		return nil
+	}
+	url := m.webuiURL
+	open := m.openBrowser
+	return func() tea.Msg {
+		if err := open(url); err != nil {
+			slog.Warn("tui: open webui", "url", url, "err", err)
+		}
+		return nil
+	}
 }
 
 // handleNothingToDoKey routes input while the nothing-to-do terminal
@@ -459,7 +514,9 @@ func (m Model) handleNothingToDoKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // (the loop is already done, nothing to cancel). The `?` overlay still
 // works: pressing `?` flips helpVisible, the View routes through the
 // existing helpKeyMap renderer, and pressing `?` again returns to the
-// frozen dashboard plus session menu.
+// frozen dashboard plus session menu. The [w] binding stays live in
+// session mode so the user can inspect the dashboard while the run
+// idles.
 func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.sessionKeys.Quit):
@@ -475,6 +532,8 @@ func (m Model) handleSessionKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, editSpecCmd(m.program, m.header.specPath)
+	case key.Matches(msg, m.keys.Webui):
+		return m, m.openWebuiCmd()
 	case key.Matches(msg, m.keys.Help):
 		m.helpVisible = !m.helpVisible
 		return m, nil

@@ -20,6 +20,7 @@ func TestRenderHelpOverlay_ListsAllKeybindings(t *testing.T) {
 	for _, b := range []struct{ label, desc string }{
 		{"q / Ctrl+C", "cancel the loop and quit"},
 		{"space", "pause / resume between iterations"},
+		{"w", "open the web dashboard in the browser"},
 		{"?", "toggle this help overlay"},
 	} {
 		if !strings.Contains(out, b.label) {
@@ -28,6 +29,20 @@ func TestRenderHelpOverlay_ListsAllKeybindings(t *testing.T) {
 		if !strings.Contains(out, b.desc) {
 			t.Errorf("renderHelpOverlay missing description %q:\n%s", b.desc, out)
 		}
+	}
+}
+
+// TestRenderHelpOverlay_HidesDisabledWebuiBinding asserts the [w]
+// binding stays out of the help overlay when the host did not wire a
+// dashboard URL / launcher. Disabling the binding (key.SetEnabled
+// false) is what New does in that case; the help renderer must honor
+// it so the overlay does not advertise a no-op shortcut.
+func TestRenderHelpOverlay_HidesDisabledWebuiBinding(t *testing.T) {
+	keys := defaultKeyMap()
+	keys.Webui.SetEnabled(false)
+	out := renderHelpOverlay(help.New(), keys)
+	if strings.Contains(out, "open the web dashboard in the browser") {
+		t.Errorf("renderHelpOverlay listed disabled [w] binding:\n%s", out)
 	}
 }
 

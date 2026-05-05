@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fgmacedo/buchecha/internal/config"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
 
@@ -88,12 +87,12 @@ func TestStartRunListener_WithRealWebUIHandler(t *testing.T) {
 	}
 }
 
-// TestResolveWebUIHandler_FourCombinations exercises the four
-// (api, webui) combinations called out by T5.6 acceptance: neither,
-// api only, webui only, both. The handler-construction side and the
-// banner side are independent; we drive them in parallel because the
-// composition root in runDirector also drives them in parallel.
-func TestResolveWebUIHandler_FourCombinations(t *testing.T) {
+// TestResolveWebUIHandler_AlwaysMounted exercises the four
+// (api, webui) banner combinations called out by T5.6 acceptance:
+// neither, api only, webui only, both. resolveWebUIHandler now always
+// returns a non-nil handler so the dashboard is reachable on demand
+// regardless of the flags; only the banner line is gated by them.
+func TestResolveWebUIHandler_AlwaysMounted(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -102,38 +101,33 @@ func TestResolveWebUIHandler_FourCombinations(t *testing.T) {
 	)
 
 	cases := []struct {
-		name        string
-		api         bool
-		webui       bool
-		wantHandler bool
+		name  string
+		api   bool
+		webui bool
 		// wantBanner is the line printRunBanner emits (excluding any
 		// LAN warning, which the loopback test addr cannot trigger).
 		// Empty means no banner line.
 		wantBanner string
 	}{
 		{
-			name:        "neither",
-			wantHandler: false,
-			wantBanner:  "",
+			name:       "neither",
+			wantBanner: "",
 		},
 		{
-			name:        "api only",
-			api:         true,
-			wantHandler: false,
-			wantBanner:  "bcc: api at http://127.0.0.1:54321/api/v1\n",
+			name:       "api only",
+			api:        true,
+			wantBanner: "bcc: api at http://127.0.0.1:54321/api/v1\n",
 		},
 		{
-			name:        "webui only",
-			webui:       true,
-			wantHandler: true,
-			wantBanner:  "bcc: dashboard at http://127.0.0.1:54321/?t=" + token + "\n",
+			name:       "webui only",
+			webui:      true,
+			wantBanner: "bcc: dashboard at http://127.0.0.1:54321/?t=" + token + "\n",
 		},
 		{
-			name:        "both",
-			api:         true,
-			webui:       true,
-			wantHandler: true,
-			wantBanner:  "bcc: dashboard at http://127.0.0.1:54321/?t=" + token + "\n",
+			name:       "both",
+			api:        true,
+			webui:      true,
+			wantBanner: "bcc: dashboard at http://127.0.0.1:54321/?t=" + token + "\n",
 		},
 	}
 
@@ -141,11 +135,8 @@ func TestResolveWebUIHandler_FourCombinations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := &config.Config{Webui: config.Webui{Enabled: tt.webui}}
-			h := resolveWebUIHandler(cfg, false)
-			gotHandler := h != nil
-			if gotHandler != tt.wantHandler {
-				t.Errorf("resolveWebUIHandler returned non-nil = %v, want %v", gotHandler, tt.wantHandler)
+			if h := resolveWebUIHandler(false); h == nil {
+				t.Errorf("resolveWebUIHandler returned nil; the dashboard handler must always be mounted")
 			}
 
 			// Banner: --webui implies --api at the banner level. Reflect
@@ -172,9 +163,8 @@ func TestResolveWebUIHandler_FourCombinations(t *testing.T) {
 // difference disambiguates them without coupling to internal types.
 func TestResolveWebUIHandler_DevSelectsProxy(t *testing.T) {
 	t.Parallel()
-	cfg := &config.Config{Webui: config.Webui{Enabled: true}}
-	prod := resolveWebUIHandler(cfg, false)
-	dev := resolveWebUIHandler(cfg, true)
+	prod := resolveWebUIHandler(false)
+	dev := resolveWebUIHandler(true)
 	if prod == nil || dev == nil {
 		t.Fatalf("expected non-nil handlers, prod=%v dev=%v", prod, dev)
 	}

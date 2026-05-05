@@ -141,6 +141,61 @@ func TestUpdate_MouseKeyTogglesCaptureAndViewMouseMode(t *testing.T) {
 	}
 }
 
+// TestUpdate_WebuiKeyInvokesOpenBrowser asserts the [w] keybinding
+// returns a tea.Cmd that calls the configured launcher with the
+// configured URL. The launcher must run in the cmd, not synchronously
+// in Update, so the alt-screen renderer is not blocked while the
+// browser process spawns.
+func TestUpdate_WebuiKeyInvokesOpenBrowser(t *testing.T) {
+	ts := newTestSvc(t)
+	const wantURL = "http://127.0.0.1:54321/?t=tok"
+	var (
+		gotURL string
+		called atomic.Int32
+	)
+	open := func(url string) error {
+		called.Add(1)
+		gotURL = url
+		return nil
+	}
+	m := New(Options{
+		Services:    ts.Svc,
+		SessionID:   ts.SessionID,
+		Cancel:      func() {},
+		Gate:        NewGate(),
+		SpecPath:    "spec.md",
+		Branch:      "feat/x",
+		MaxIter:     5,
+		WebUIURL:    wantURL,
+		OpenBrowser: open,
+	})
+
+	_, cmd := m.Update(keyPress("w"))
+	if cmd == nil {
+		t.Fatalf("expected tea.Cmd from [w] press; got nil")
+	}
+	if msg := cmd(); msg != nil {
+		t.Errorf("openWebuiCmd must return nil msg; got %v", msg)
+	}
+	if called.Load() != 1 {
+		t.Errorf("openBrowser called %d times, want 1", called.Load())
+	}
+	if gotURL != wantURL {
+		t.Errorf("openBrowser url = %q, want %q", gotURL, wantURL)
+	}
+}
+
+// TestUpdate_WebuiKeyNoOpWithoutLauncher confirms the binding is a
+// silent no-op when the host did not wire a URL or a launcher: the
+// returned cmd is nil and no panic surfaces.
+func TestUpdate_WebuiKeyNoOpWithoutLauncher(t *testing.T) {
+	m, _, _, _ := newTestModel(t)
+	_, cmd := m.Update(keyPress("w"))
+	if cmd != nil {
+		t.Errorf("[w] must be a no-op when WebUIURL/OpenBrowser are unset; got cmd %v", cmd)
+	}
+}
+
 func TestUpdate_SpinnerTickStopsWhenIdle(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	// No tool active and no planning pending: tick must not re-arm.

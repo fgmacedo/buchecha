@@ -88,6 +88,13 @@ type directorDeps struct {
 	// subscribes to for its event stream instead of a raw channel.
 	// Wired after services.New in runDirector; tests leave nil.
 	svc *services.Services
+	// webuiURL is the run-wide dashboard URL (with the session token)
+	// the TUI's [w] keybinding launches the browser at. Empty disables
+	// the binding; tests leave nil.
+	webuiURL string
+	// openBrowser is the platform-aware launcher the TUI's [w]
+	// keybinding calls. Nil disables the binding; tests leave nil.
+	openBrowser func(url string) error
 }
 
 // directorIO captures the I/O surface so tests can drive escalation
@@ -145,7 +152,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		LoopEvents:      serviceEvents,
 	})
 
-	webuiHandler := resolveWebUIHandler(cfg, runWebUIDev)
+	webuiHandler := resolveWebUIHandler(runWebUIDev)
 	listener, err := startRunListener(ctx, boot, svc, webuiHandler, runListenerBind())
 	if err != nil {
 		ExitCode = loop.ExitInvalid
@@ -178,6 +185,8 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 	deps.store = store
 	deps.serviceEvents = serviceEvents
 	deps.svc = svc
+	deps.webuiURL = dashboardURL(listener.addr, listener.sessionToken)
+	deps.openBrowser = openBrowser
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
 }
 
@@ -239,16 +248,15 @@ func teeLoopEvents(src <-chan loop.Event, transient chan<- loop.Event, persisten
 	}
 }
 
-// resolveWebUIHandler picks the http.Handler the run-wide listener
-// mounts at / based on the [webui] config block. cfg.Webui.Enabled
-// false returns nil so chi's default 404 stands. When Enabled is true,
-// the dev flag selects between the production embedded bundle handler
-// and the Vite reverse-proxy handler used during contributor work on
-// the SPA. The flag is hidden from --help; only contributors set it.
-func resolveWebUIHandler(cfg *config.Config, dev bool) http.Handler {
-	if cfg == nil || !cfg.Webui.Enabled {
-		return nil
-	}
+// resolveWebUIHandler returns the http.Handler the run-wide listener
+// mounts at /. The dashboard is always available so the user can reach
+// it on demand (TUI keybinding or by visiting the URL directly), even
+// when --webui / --webui-open were not passed; those flags now only
+// govern the startup banner and the auto-open behavior. The dev flag
+// (hidden from --help) selects between the production embedded bundle
+// handler and the Vite reverse-proxy handler used during contributor
+// work on the SPA.
+func resolveWebUIHandler(dev bool) http.Handler {
 	if dev {
 		return webui.NewDev()
 	}
@@ -836,6 +844,8 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		GitCtx:          ctx,
 		EscalationGate:  escalation,
 		PlanningPending: true,
+		WebUIURL:        deps.webuiURL,
+		OpenBrowser:     deps.openBrowser,
 	})
 	progOpts := []tea.ProgramOption{
 		tea.WithContext(ctx),
