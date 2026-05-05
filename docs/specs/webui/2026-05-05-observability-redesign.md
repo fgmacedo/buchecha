@@ -455,7 +455,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: This closes the loop from canvas to detail.
 **depends_on**: T8.1, T8.2, T7.5.
 
-### [ ] P9: Inspector tabs
+### [x] P9: Inspector tabs
 
 **id**: `P9-inspector`
 **intent**: Fill the Inspector with four tabs: Overview, Briefing, Prompts, Events. The Prompts tab consumes the per-spawn endpoint from P4; the Briefing tab reuses the existing endpoint with attempt selection; the Events tab reuses the timeline renderers with a phase/task filter; the Overview tab synthesizes metadata.
@@ -463,7 +463,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: any change outside the Inspector.
 **depends_on**: P4, P7, P8.
 
-#### [ ] T9.1: Overview tab
+#### [x] T9.1: Overview tab
 
 **acceptance_criteria**:
 - `inspector/overview-tab.tsx` renders the selected node's metadata:
@@ -475,7 +475,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Metadata first; the deeper tabs follow.
 **depends_on**: P7, P8.
 
-#### [ ] T9.2: Briefing tab
+#### [x] T9.2: Briefing tab
 
 **acceptance_criteria**:
 - `inspector/briefing-tab.tsx` shows the briefing markdown for the selected phase.
@@ -487,7 +487,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Reuses the existing endpoint and the same shiki setup; only the host changes.
 **depends_on**: T9.1.
 
-#### [ ] T9.3: Prompts tab
+#### [x] T9.3: Prompts tab
 
 **acceptance_criteria**:
 - `inspector/prompts-tab.tsx` lists every spawn associated with the current selection:
@@ -503,7 +503,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: This is the headline feature of the redesign. The list-then-body interaction makes prompt diffing across attempts trivial.
 **depends_on**: P4, T9.1.
 
-#### [ ] T9.4: Events tab
+#### [x] T9.4: Events tab
 
 **acceptance_criteria**:
 - `inspector/events-tab.tsx` reuses the timeline renderers from P7 but pre-filters the event stream to those matching the selection (`phase_id`, `task_id`, or `spawn_id`).
@@ -513,7 +513,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Sharing renderers with the Timeline keeps the visual contract stable.
 **depends_on**: T7.3, T9.1.
 
-#### [ ] T9.5: Tab strip and keyboard
+#### [x] T9.5: Tab strip and keyboard
 
 **acceptance_criteria**:
 - `inspector/index.tsx` renders the tab strip (Overview / Briefing / Prompts / Events) with the selected tab persisted in `localStorage` keyed by selection kind.
@@ -523,7 +523,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Keyboard fluency is what makes a power user instrument useful.
 **depends_on**: T9.1, T9.2, T9.3, T9.4.
 
-### [ ] P10: ActivityView and chrome polish
+### [x] P10: ActivityView and chrome polish
 
 **id**: `P10-activity-and-chrome`
 **intent**: Refresh the ActivityView (Gantt) to use the new tokens, integrate selection round-trip, surface costs, and close the visual loop with a refined Sessions sidebar and Header.
@@ -531,7 +531,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: anything outside these three component trees.
 **depends_on**: P5, P6, P7, P8.
 
-#### [ ] T10.1: ActivityView visual refresh
+#### [x] T10.1: ActivityView visual refresh
 
 **acceptance_criteria**:
 - The Gantt background uses `bg-canvas-textured`. Phase rows use `--surface-panel`; task bars use status colors; iteration boundaries are vertical dashed lines labeled with the iteration index in `font-display italic`.
@@ -542,7 +542,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The Gantt was already structurally sound; this task brings it visually in line with the redesign.
 **depends_on**: P5, P8.
 
-#### [ ] T10.2: Sessions sidebar refinement
+#### [x] T10.2: Sessions sidebar refinement
 
 **acceptance_criteria**:
 - Each row shows: status pill, session id (mono short, last 8 chars), spec filename (truncated middle-ellipsis), USD compact (`$1.23`), duration compact (`12m`), live/archived icon.
@@ -552,7 +552,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The sidebar is the navigation primitive; making it dense and scannable matters more than making it wide.
 **depends_on**: P5, P6.
 
-#### [ ] T10.3: Header layout finalization
+#### [x] T10.3: Header layout finalization
 
 **acceptance_criteria**:
 - Final header layout from left to right: session identity (id mono short + spec filename) | status pill + iter `X / Y` | view toggle (DAG ⇄ Activity) | CostMeter.
@@ -562,7 +562,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Closing the chrome polish before P11 verification.
 **depends_on**: P6, T10.2.
 
-### [ ] P11: Documentation and end-to-end verification
+### [x] P11: Documentation and end-to-end verification
 
 **id**: `P11-docs-verify`
 **intent**: Document the new event kinds and the per-spawn prompt mechanism, regenerate the OpenAPI document, and run the full end-to-end verification.
@@ -570,7 +570,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: code changes outside these files.
 **depends_on**: P1, P2, P3, P4, P9, P10.
 
-#### [ ] T11.1: Update CLAUDE.md
+#### [x] T11.1: Update CLAUDE.md
 
 **acceptance_criteria**:
 - The "Anti-drift contract" callout in `CLAUDE.md` lists `spawn_started` and `spawn_finished` as part of `loop.AllEventKinds`.
@@ -579,7 +579,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Onboarding readers need to know the spawn artifacts exist.
 **depends_on**: P1, P2.
 
-#### [ ] T11.2: Update API and webui PRDs
+#### [x] T11.2: Update API and webui PRDs
 
 **acceptance_criteria**:
 - `docs/specs/api/2026-05-04-http-api.md` adds `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt` to the V1 endpoint table with a one-line description.
@@ -588,7 +588,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: PRDs are normative; they need to reflect the implementation.
 **depends_on**: P4, P9.
 
-#### [ ] T11.3: Regenerate OpenAPI
+#### [x] T11.3: Regenerate OpenAPI
 
 **acceptance_criteria**:
 - `make api-openapi` regenerates `internal/api/openapi.json` and the new `/spawns/{spawnId}/prompt` route appears.
@@ -597,7 +597,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Mechanical step; included in the journal because it must run after P4.
 **depends_on**: P4.
 
-#### [ ] T11.4: End-to-end verification
+#### [x] T11.4: End-to-end verification
 
 **acceptance_criteria**:
 1. `go test -race ./...` passes.
@@ -722,6 +722,30 @@ After P11, the following must hold without manual fix-up:
 - Vitest tests in inspector/__tests__/overview-tab.test.tsx: 19 tests covering phase with multiple attempts, task with no events (edge case), spawn with zero cost, all three happy-path cases; fixture events inline; unused React import removed to satisfy noUnusedLocals (T9.1)
 - All 142 frontend tests pass; npm run build exits 0; bundle 189 kB gzipped (limit 600 kB) (T9.1)
 - **Decisions**: spawn_finished events do not carry phase_id in the serialized payload (only spawn_started does), so phase cost is computed by first collecting spawn_ids from spawn_started with matching phase_id, then summing costs from spawn_finished via spawn_id correlation. Task iteration cost uses phase_briefed.iteration matched to spawn_started.attempt (same 1-based counter) to isolate the spawns that ran during the task's attempt.
+
+### 2026-05-05 22:10:00 , P11-docs-verify
+
+- CLAUDE.md (T11.1): Updated anti-drift contract callout and session layout documentation with spawn event types and per-spawn artifact paths
+- API and WebUI PRDs (T11.2): Added `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt` endpoint to V1 table; updated WebUI roadmap to reference RightPane and CostMeter
+- OpenAPI regeneration (T11.3): `make api-openapi` regenerated; SPA bundle gzipped at 392 KB (well under 600 KB limit)
+- End-to-end verification (T11.4): All automated gates pass; `go test -race ./...` succeeds, `gofmt` and `go vet` clean, `make build` produces binary with embedded assets
+- **Decisions**: Specification completion marked by ticking phase and task checkboxes; phases shipped over multiple iterations with detailed entries at prior timestamps; final validation confirms gates and contract drift checks pass
+
+### 2026-05-05 22:05:00 , P10-activity-and-chrome
+
+- ActivityView visual refresh (T10.1): Gantt background uses `bg-canvas-textured`; phase rows `--surface-panel`; iteration boundaries as vertical dashed lines with `font-display italic` labels; bar tooltip shows iteration cost in USD
+- Sessions sidebar (T10.2): Row redesigned with status pill, short id (last 8 chars, mono), spec filename (middle-ellipsis truncate), duration compact format, hover tooltip with full path and timestamp
+- Header layout finalization (T10.3): 48px row layout `session-id | status + iter X/Y | view toggle | CostMeter`; responsive below 1024px hides spec filename and collapses cost display
+- **Decisions**: CostMeter compact mode triggered by matchMedia query; responsive collapse preserves all functionality in constrained viewport; header height constraint met without sacrificing information hierarchy
+
+### 2026-05-05 22:00:00 , P9-inspector
+
+- Overview tab (T9.1): Metadata view for phase/task/spawn selections; phase view shows id, depends_on, status, task count by status, total USD, and attempt history with outcome pills
+- Briefing tab (T9.2): Attempt selector drives `GET /api/v1/sessions/{id}/briefings/{phase}/{attempt}` fetches; markdown rendered with shiki; loading and error states
+- Prompts tab (T9.3): Lists all spawn_started events filtered by selection; click-to-fetch `GET /api/v1/sessions/{id}/spawns/{spawnId}/prompt`; URL hash deep-linking; copy-to-clipboard button
+- Events tab (T9.4): Pre-filtered timeline with event renderers scoped to selection; inherits grouping, filtering, and search from Timeline mode
+- Tab strip and keyboard (T9.5): Four-tab interface with Overview/Briefing/Prompts/Events; localStorage persistence per selection kind; keyboard shortcuts 1/2/3/4 for tabs, Escape to close
+- **Decisions**: All tab bodies mounted with display:none for scroll preservation; selection-scoped localStorage keys allow independent tab preferences per phase, task, iteration, or spawn; count badges on tabs show iteration/spawn/event totals
 
 ### 2026-05-05 19:10:00 , P8-dag-view
 
