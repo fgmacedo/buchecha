@@ -56,6 +56,10 @@ type RegisterArgs struct {
 	BriefingID string
 	PhaseID    PhaseID
 	SubDAG     []TaskID
+	// Attempt is the 1-based executor attempt counter for this spawn.
+	// Used by adapters to populate SpawnStarted.Attempt; not enforced
+	// by the handler.
+	Attempt int
 }
 
 // AgentRegistry tracks every live agent_id for the run. The registry is

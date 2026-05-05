@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fgmacedo/buchecha/internal/director"
+	"github.com/fgmacedo/buchecha/internal/loop"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -467,5 +469,228 @@ func TestRingBuffer_FillsThenWrapsAcrossWrites(t *testing.T) {
 	r.Write([]byte("fgh"))
 	if got := r.String(); got != "cdefgh" {
 		t.Errorf("after wrap = %q, want %q", got, "cdefgh")
+	}
+}
+
+// newTestStore creates a fresh director.Store in t.TempDir() for adapter
+// tests that need per-spawn prompt persistence.
+func newTestStore(t *testing.T) *director.Store {
+	t.Helper()
+	base := t.TempDir()
+	store, _, err := director.CreateSession(base, "/tmp/spec.md", "deadbeef",
+		time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return store
+}
+
+// collectLoopEvents drains a buffered loop.Event channel into a slice.
+func collectLoopEvents(ch <-chan loop.Event) []loop.Event {
+	var out []loop.Event
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return out
+			}
+			out = append(out, ev)
+		default:
+			return out
+		}
+	}
+}
+
+// TestBrief_WritesPromptAndEmitsSpawnStarted verifies that before the
+// subprocess starts Brief writes the resolved prompt to
+// <spawnsDir>/<spawnID>.md (mode 0o600) and emits loop.SpawnStarted on
+// the Events channel with matching fields.
+func TestBrief_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
+	store := newTestStore(t)
+	events := make(chan loop.Event, 8)
+	a := New(Config{
+		Binary:       fixture(t, "fake-claude-briefing.sh"),
+		SessionStore: store,
+		Events:       events,
+	})
+	_, err := a.Brief(context.Background(), director.BrieferInput{
+		AgentID:     "briefer-001",
+		Plan:        &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:    "/tmp/spec.md",
+		IterationID: "p1-01",
+		PhaseID:     "p1",
+		Attempt:     1,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Brief: %v", err)
+	}
+
+	evs := collectLoopEvents(events)
+	var started *loop.SpawnStarted
+	for i := range evs {
+		if ss, ok := evs[i].(loop.SpawnStarted); ok {
+			started = &ss
+			break
+		}
+	}
+	if started == nil {
+		t.Fatalf("no loop.SpawnStarted event emitted; got %v", evs)
+	}
+	if started.Role != "bcc-briefer" {
+		t.Errorf("Role = %q, want %q", started.Role, "bcc-briefer")
+	}
+	if started.PhaseID != "p1" {
+		t.Errorf("PhaseID = %q, want %q", started.PhaseID, "p1")
+	}
+	if started.IterationID != "p1-01" {
+		t.Errorf("IterationID = %q, want %q", started.IterationID, "p1-01")
+	}
+	if started.Attempt != 1 {
+		t.Errorf("Attempt = %d, want 1", started.Attempt)
+	}
+	if started.SpawnID == "" {
+		t.Fatalf("SpawnID is empty")
+	}
+	if started.PromptPath == "" {
+		t.Fatalf("PromptPath is empty")
+	}
+	// SpawnID must match file basename.
+	baseName := strings.TrimSuffix(filepath.Base(started.PromptPath), ".md")
+	if baseName != started.SpawnID {
+		t.Errorf("SpawnID %q != basename of PromptPath %q", started.SpawnID, started.PromptPath)
+	}
+	// File must exist and be non-empty.
+	info, err := os.Stat(started.PromptPath)
+	if err != nil {
+		t.Fatalf("prompt file not found at %q: %v", started.PromptPath, err)
+	}
+	if info.Size() == 0 {
+		t.Errorf("prompt file is empty: %q", started.PromptPath)
+	}
+}
+
+// TestPlan_WritesPromptAndEmitsSpawnStarted verifies the Planner path:
+// PhaseID and IterationID are empty because the Planner runs outside
+// any iteration.
+func TestPlan_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
+	store := newTestStore(t)
+	events := make(chan loop.Event, 8)
+	a := New(Config{
+		Binary:       fixture(t, "fake-claude-plan.sh"),
+		SessionStore: store,
+		Events:       events,
+	})
+	_, _, err := a.Plan(context.Background(), director.PlannerInput{
+		AgentID:  "planner-001",
+		SpecPath: "/tmp/spec.md",
+		SpecHash: "abc123",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+
+	evs := collectLoopEvents(events)
+	var started *loop.SpawnStarted
+	for i := range evs {
+		if ss, ok := evs[i].(loop.SpawnStarted); ok {
+			started = &ss
+			break
+		}
+	}
+	if started == nil {
+		t.Fatalf("no loop.SpawnStarted emitted; got %v", evs)
+	}
+	if started.Role != "bcc-planner" {
+		t.Errorf("Role = %q, want bcc-planner", started.Role)
+	}
+	if started.PhaseID != "" {
+		t.Errorf("PhaseID = %q, want empty (Planner has no phase)", started.PhaseID)
+	}
+	if started.IterationID != "" {
+		t.Errorf("IterationID = %q, want empty", started.IterationID)
+	}
+	if started.SpawnID == "" {
+		t.Fatalf("SpawnID is empty")
+	}
+	if _, err := os.Stat(started.PromptPath); err != nil {
+		t.Fatalf("prompt file not found: %v", err)
+	}
+}
+
+// TestReview_WritesPromptAndEmitsSpawnStarted verifies the Reviewer path.
+func TestReview_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
+	store := newTestStore(t)
+	events := make(chan loop.Event, 8)
+	a := New(Config{
+		Binary:       fixture(t, "fake-claude-verdict.sh"),
+		SessionStore: store,
+		Events:       events,
+	})
+	_, err := a.Review(context.Background(), director.ReviewerInput{
+		AgentID:     "reviewer-001",
+		IterationID: "p1-01",
+		PhaseID:     "p1",
+		SubDAG:      []string{"t1"},
+		Attempt:     2,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+
+	evs := collectLoopEvents(events)
+	var started *loop.SpawnStarted
+	for i := range evs {
+		if ss, ok := evs[i].(loop.SpawnStarted); ok {
+			started = &ss
+			break
+		}
+	}
+	if started == nil {
+		t.Fatalf("no loop.SpawnStarted emitted; got %v", evs)
+	}
+	if started.Role != "bcc-reviewer" {
+		t.Errorf("Role = %q, want bcc-reviewer", started.Role)
+	}
+	if started.PhaseID != "p1" {
+		t.Errorf("PhaseID = %q, want p1", started.PhaseID)
+	}
+	if started.Attempt != 2 {
+		t.Errorf("Attempt = %d, want 2", started.Attempt)
+	}
+	baseName := strings.TrimSuffix(filepath.Base(started.PromptPath), ".md")
+	if baseName != started.SpawnID {
+		t.Errorf("SpawnID %q != PromptPath basename %q", started.SpawnID, started.PromptPath)
+	}
+	if _, err := os.Stat(started.PromptPath); err != nil {
+		t.Fatalf("prompt file missing: %v", err)
+	}
+}
+
+// TestBrief_NoSpawnStartedWhenNoSessionStore verifies that when
+// Config.SessionStore is nil, no SpawnStarted event is emitted and no
+// file is written, preserving backward compatibility for callers that
+// do not opt into prompt persistence.
+func TestBrief_NoSpawnStartedWhenNoSessionStore(t *testing.T) {
+	events := make(chan loop.Event, 8)
+	a := New(Config{
+		Binary: fixture(t, "fake-claude-briefing.sh"),
+		Events: events,
+		// SessionStore intentionally nil.
+	})
+	_, err := a.Brief(context.Background(), director.BrieferInput{
+		AgentID:     "briefer-001",
+		Plan:        &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:    "/tmp/spec.md",
+		IterationID: "p1-01",
+		PhaseID:     "p1",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Brief: %v", err)
+	}
+	evs := collectLoopEvents(events)
+	for _, ev := range evs {
+		if _, ok := ev.(loop.SpawnStarted); ok {
+			t.Errorf("unexpected SpawnStarted event when SessionStore is nil")
+		}
 	}
 }

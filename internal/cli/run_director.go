@@ -279,6 +279,8 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	// text/json mode forward stderr verbatim so users see auth/quota
 	// errors as they happen.
 	subprocessStderr := directorSubprocessStderr()
+	// loopEvents is set later in runDirectorWith after session resolution;
+	// the adapter pointer is kept so bindDirectorAdapterSession can patch it.
 	adapter := directorclaude.New(directorclaude.Config{
 		Binary:       cfg.Director.Claude.Binary,
 		Model:        cfg.Director.Claude.Model,
@@ -468,6 +470,25 @@ func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
 	})
 }
 
+// bindDirectorAdapterSession wires the resolved session store and the
+// serviceEvents channel into the director claude adapter after session
+// resolution. This is a best-effort post-construction configuration: if
+// the planner is not a *directorclaude.Adapter (test fakes), the call
+// is a no-op.
+func bindDirectorAdapterSession(deps *directorDeps) {
+	if deps == nil || deps.store == nil {
+		return
+	}
+	a, ok := deps.planner.(*directorclaude.Adapter)
+	if !ok {
+		return
+	}
+	a.SetSessionStore(deps.store)
+	if deps.serviceEvents != nil {
+		a.SetEvents(deps.serviceEvents)
+	}
+}
+
 // directorSubprocessStderr returns the live stderr writer the adapters
 // tee subprocess output to. Mirrors the choice in defaultDirectorDeps
 // so debug capture, when re-wiring newExecutor, preserves the same TUI
@@ -528,6 +549,7 @@ func runDirectorWith(
 	}
 
 	enableDebugLogCapture(cfg, &deps)
+	bindDirectorAdapterSession(&deps)
 
 	if runOutput == OutputTUI {
 		return runDirectorTUI(ctx, cancel, specPath, hash, cfg, deps, dio)

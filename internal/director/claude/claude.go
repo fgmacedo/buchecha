@@ -27,7 +27,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,6 +40,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/executor/claude/streamjson"
+	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
@@ -159,6 +162,16 @@ type Config struct {
 	// for every MCP request. Required when MCPURL is set.
 	MCPToken string
 
+	// SessionStore, when non-nil, is used to derive the spawns directory
+	// for per-spawn prompt persistence. When nil, prompt persistence and
+	// SpawnStarted emission are skipped.
+	SessionStore *director.Store
+
+	// Events, when non-nil, receives loop-level events emitted by the
+	// adapter (SpawnStarted). The adapter never closes this channel; the
+	// caller owns it.
+	Events chan<- loop.Event
+
 	// now, when non-nil, replaces time.Now in tests for deterministic
 	// stats timing. Always nil in production.
 	now func() time.Time
@@ -190,6 +203,21 @@ func New(cfg Config) *Adapter {
 // once the session has been resolved.
 func (a *Adapter) SetStderrFactory(fn func(role, iterationID, agentID string) (io.WriteCloser, error)) {
 	a.cfg.StderrFactory = fn
+}
+
+// SetSessionStore installs the per-session store that supplies the
+// spawns directory for prompt persistence. Called by the cli after
+// session resolution so the adapter is not coupled to the session
+// lifecycle at construction time. nil disables prompt persistence.
+func (a *Adapter) SetSessionStore(store *director.Store) {
+	a.cfg.SessionStore = store
+}
+
+// SetEvents installs the loop-level events channel after construction.
+// The adapter emits SpawnStarted on it before each subprocess starts.
+// nil disables event emission.
+func (a *Adapter) SetEvents(ch chan<- loop.Event) {
+	a.cfg.Events = ch
 }
 
 // SetStdoutFactory installs a per-spawn stdout-tee factory after
@@ -243,7 +271,7 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 	if err != nil {
 		return nil, nil, fmt.Errorf("director/claude: compose plan prompt: %w", err)
 	}
-	stats, err := a.runRole(ctx, dag.RolePlanner, in.AgentID, "", prompt, events, "", "")
+	stats, err := a.runRole(ctx, dag.RolePlanner, in.AgentID, "", "", 0, prompt, events, "", "")
 	return nil, stats, err
 }
 
@@ -267,7 +295,7 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)
 	}
 	model, effort := assignmentOverride(in.Assignment)
-	return a.runRole(ctx, dag.RoleBriefer, in.AgentID, in.IterationID, prompt, events, model, effort)
+	return a.runRole(ctx, dag.RoleBriefer, in.AgentID, in.IterationID, in.PhaseID, in.Attempt, prompt, events, model, effort)
 }
 
 // Review implements director.Reviewer. The Reviewer's work is recorded
@@ -287,7 +315,7 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)
 	}
 	model, effort := assignmentOverride(in.Assignment)
-	return a.runRole(ctx, dag.RoleReviewer, in.AgentID, in.IterationID, prompt, events, model, effort)
+	return a.runRole(ctx, dag.RoleReviewer, in.AgentID, in.IterationID, in.PhaseID, in.Attempt, prompt, events, model, effort)
 }
 
 // assignmentOverride extracts the per-call (model, effort) pair from a
@@ -324,8 +352,9 @@ func composePrompt(promptTpl string, view any) (string, error) {
 // effortOverride, when non-empty, replace the adapter's configured
 // values for this single spawn so per-phase capability assignments
 // flow into the CLI flags. Empty strings preserve the configured
-// defaults.
-func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iterationID, prompt string, events chan<- agentcontract.AgentEvent, modelOverride, effortOverride string) (*director.DirectorCallStats, error) {
+// defaults. phaseID and attempt are forwarded into SpawnStarted;
+// both are empty/zero for the Planner which runs outside any iteration.
+func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iterationID, phaseID string, attempt int, prompt string, events chan<- agentcontract.AgentEvent, modelOverride, effortOverride string) (*director.DirectorCallStats, error) {
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -406,10 +435,53 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 	}
 	cmd.WaitDelay = a.cfg.CancelGrace
 
+	// Persist the resolved prompt and emit SpawnStarted before the subprocess
+	// starts so observers know exactly what each spawn received.
+	var spawnID string
+	if a.cfg.SessionStore != nil {
+		spawnID = director.NewSpawnID()
+		promptPath := filepath.Join(a.cfg.SessionStore.SpawnsDir(), spawnID+".md")
+		if mkdirErr := os.MkdirAll(filepath.Dir(promptPath), 0o755); mkdirErr != nil {
+			return nil, fmt.Errorf("director/claude: mkdir spawns: %w", mkdirErr)
+		}
+		if writeErr := os.WriteFile(promptPath, []byte(prompt), 0o600); writeErr != nil {
+			return nil, fmt.Errorf("director/claude: write prompt: %w", writeErr)
+		}
+		absPath, absErr := filepath.Abs(promptPath)
+		if absErr != nil {
+			absPath = promptPath
+		}
+		resolvedModel := a.cfg.Model
+		if modelOverride != "" {
+			resolvedModel = modelOverride
+		}
+		resolvedEffort := a.cfg.Effort
+		if effortOverride != "" {
+			resolvedEffort = effortOverride
+		}
+		if a.cfg.Events != nil {
+			select {
+			case a.cfg.Events <- loop.SpawnStarted{
+				SpawnID:     spawnID,
+				Role:        string(role),
+				PhaseID:     phaseID,
+				IterationID: iterationID,
+				Attempt:     attempt,
+				Model:       resolvedModel,
+				Effort:      resolvedEffort,
+				PromptPath:  absPath,
+				At:          a.timeNow().UTC(),
+			}:
+			default:
+			}
+		}
+	}
+
 	start := a.timeNow()
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("director/claude: run %s: %w", a.cfg.Binary, err)
 	}
+	_ = spawnID // populated for future P3 use
 
 	var (
 		mu     sync.Mutex

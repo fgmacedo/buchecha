@@ -130,6 +130,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			}
 			briefIn.AgentID = string(brieferID)
 			briefIn.Assignment = phase.AssignmentFor("briefer")
+			briefIn.Attempt = iteration
 			var brieferStats *director.DirectorCallStats
 			brierr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
 				stats, e := d.Briefer.Brief(ctx, *briefIn, agentEvents)
@@ -262,6 +263,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				BriefingID: briefing.IterationID,
 				PhaseID:    phaseID,
 				SubDAG:     actualSub,
+				Attempt:    attempt,
 			}
 			signal, execStats, execErr := runDirectorExecutor(ctx, d.NewExecutor(execArgs, renderSystem, phase.AssignmentFor("executor")), userPrompt, events, d.Handler, briefing.IterationID)
 			if execErr != nil {
@@ -334,6 +336,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 						PhaseID:     phaseID,
 						SubDAG:      actualSub,
 						Assignment:  phase.AssignmentFor("reviewer"),
+						Attempt:     attempt,
 					}, agentEvents)
 					reviewerStats = stats
 					return e

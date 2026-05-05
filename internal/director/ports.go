@@ -85,6 +85,9 @@ type BrieferInput struct {
 	// emits it on the Phase via briefer_assignment; the loop forwards
 	// it here. Empty fields fall back to the configured defaults.
 	Assignment *RoleAssignment
+	// Attempt is the 1-based phase iteration counter for this brief.
+	// Populated by the loop; adapters forward it into SpawnStarted.
+	Attempt int
 }
 
 // ReviewerInput is the request payload for Reviewer.Review. The
@@ -103,6 +106,9 @@ type ReviewerInput struct {
 	// configured model and effort for this single call. Same semantics
 	// as BrieferInput.Assignment.
 	Assignment *RoleAssignment
+	// Attempt is the 1-based executor attempt number for this review.
+	// Populated by the loop; adapters forward it into SpawnStarted.
+	Attempt int
 }
 
 // DirectorCallStats reports the cost and shape of a single Director
