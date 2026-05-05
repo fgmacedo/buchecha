@@ -74,7 +74,7 @@ These apply to every task:
 
 Eleven phases. Sequencing follows the dependency graph at the end of this section.
 
-### [ ] P1: Spawn events on the loop wire
+### [x] P1: Spawn events on the loop wire
 
 **id**: `P1-spawn-events`
 **intent**: Introduce `SpawnStarted` and `SpawnFinished` as new loop event kinds, with the JSON serialization, schema, and tests that every wire-level event in this codebase already has. No emission yet; the producers in adapters land in P2 and P3.
@@ -82,7 +82,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: any change in `internal/director/claude/`, `internal/executor/claude/`, `internal/services/`, `internal/api/handlers/`, or the SPA.
 **depends_on**: none.
 
-#### [ ] T1.1: `SpawnStarted` and `SpawnFinished` types
+#### [x] T1.1: `SpawnStarted` and `SpawnFinished` types
 
 **acceptance_criteria**:
 - `internal/loop/events.go` declares `SpawnStarted` and `SpawnFinished` with the `isLoopEvent()` marker. Fields:
@@ -97,7 +97,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The SpawnID model mirrors how the existing `agent_id` is used in the MCP registry, but lives at the event layer. The loop does not register spawn ids; it only forwards them.
 **depends_on**: none.
 
-#### [ ] T1.2: JSON serialization
+#### [x] T1.2: JSON serialization
 
 **acceptance_criteria**:
 - `internal/loop/eventjson.go` extends `MarshalJSONEvent` with cases for `SpawnStarted` and `SpawnFinished`. The wire payloads:
@@ -110,7 +110,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The anti-drift contract mandates that any new `Event` variant updates four places at once: the marshal switch, `AllEventKinds`, the schema enum, and the sample table. Two tests fail loudly when any drifts.
 **depends_on**: T1.1.
 
-#### [ ] T1.3: Event schema
+#### [x] T1.3: Event schema
 
 **acceptance_criteria**:
 - `internal/api/schemas/event.schema.json` adds `"spawn_started"` and `"spawn_finished"` to the `type` enum.
@@ -122,7 +122,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The SPA fetches this schema at runtime to discriminate event kinds. Drift here breaks the timeline silently in production.
 **depends_on**: T1.2.
 
-#### [ ] T1.4: Loop integration test
+#### [x] T1.4: Loop integration test
 
 **acceptance_criteria**:
 - `internal/loop/eventjson_test.go` adds a unit test that asserts `loop.AllEventKinds` matches the `type` enum in the embedded `event.schema.json` exactly (already covered by the existing drift test; extend to cover the two new kinds).
