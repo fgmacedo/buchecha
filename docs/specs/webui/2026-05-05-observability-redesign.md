@@ -674,6 +674,17 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
+### 2026-05-05 13:00:00 , P2-spawn-prompts
+
+- NewSpawnID (26-char lowercase ULID via crypto/rand) and ValidSpawnID added to internal/director/spawn_id.go
+- SpawnsDir() added to *Store returning <sessionDir>/spawns; directory is lazy (caller uses os.MkdirAll)
+- Attempt int added to BrieferInput, ReviewerInput, and dag.RegisterArgs; threaded through director_run loop
+- SpawnID string added to loop.ExecResult
+- Director claude adapter: SessionStore and Events added to Config; runRole writes prompt to <spawnsDir>/<spawnID>.md (0o600) and emits loop.SpawnStarted before cmd.Start; SetSessionStore/SetEvents setters added for post-construction wiring
+- Executor claude adapter: same pattern — SessionStore, Events, PhaseID, IterationID, Attempt added to Config; Run writes prompt file, emits SpawnStarted, returns SpawnID on ExecResult
+- CLI wiring: bindDirectorAdapterSession and bindExecutorSpawnContext called in runDirectorWith after session resolution; makeNewExecutor accepts store and loopEvents parameters
+- **Decisions**: Prompt file contains the user-facing prompt (positional arg or stdin briefing); for executor with SystemPromptFile set the system content is prepended so the file captures the full context. SpawnStarted emission is non-blocking (select with default) to avoid stalling the subprocess launch.
+
 ### 2026-05-05 12:15:00 , P1-spawn-events
 
 - SpawnCost, SpawnStarted, SpawnFinished types declared in internal/loop/events.go with isLoopEvent() markers
