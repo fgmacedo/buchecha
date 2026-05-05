@@ -270,7 +270,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This validates the wire-level auth flow before any business handler exists.
 **depends_on**: T2.3, T2.4.
 
-### [ ] P3: HTTP API V1 endpoints (read-only)
+### [x] P3: HTTP API V1 endpoints (read-only)
 
 **id**: `P3-api-v1-endpoints`
 **intent**: Implement every read-only `GET` endpoint listed in `docs/specs/api/2026-05-04-http-api.md` under `/api/v1/`.
@@ -376,7 +376,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the heart of the live dashboard. Most regressions in observability surface here first.
 **depends_on**: T1.3, T2.2.
 
-#### [ ] T3.10: Integration test suite
+#### [x] T3.10: Integration test suite
 
 **acceptance_criteria**:
 - `internal/api/integration_test.go` boots a real `Server` against fake `Services`, exercises every endpoint via `httptest`, asserts JSON shape against schemas.
@@ -386,7 +386,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the final gate before P4 changes the listener layout.
 **depends_on**: T3.1 through T3.9.
 
-### [ ] P4: Shared listener and MCP migration
+### [x] P4: Shared listener and MCP migration
 
 **id**: `P4-shared-listener`
 **intent**: One listener per `bcc run`. MCP is mounted at `/mcp/*` on the API listener; it does not own a listener. Agent vendors use URLs with the `/mcp/` prefix. Auth is path-scoped: `/mcp/*` validates against the agent registry, `/api/v1/*` and `/` validate against the session token.
@@ -394,7 +394,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: webui mount (P5).
 **depends_on**: P2.
 
-#### [ ] T4.1: MCP exposes `Routes() http.Handler`
+#### [x] T4.1: MCP exposes `Routes() http.Handler`
 
 **acceptance_criteria**:
 - `internal/mcp/server.go` exports `Routes() http.Handler` that returns the MCP request handler ready to mount at any prefix.
@@ -404,7 +404,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is a refactor; behavior is unchanged. The handler used to be wired via an internal `http.Server`; now it is just an `http.Handler`.
 **depends_on**: T2.2.
 
-#### [ ] T4.2: `mcp_boot.go` returns a handler instead of starting a listener
+#### [x] T4.2: `mcp_boot.go` returns a handler instead of starting a listener
 
 **acceptance_criteria**:
 - `internal/cli/mcp_boot.go` is renamed conceptually: it builds the MCP handler, the agent registry, and the dag handler, but does not start an HTTP listener.
@@ -414,7 +414,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The composition root, not `mcp_boot`, owns the listener.
 **depends_on**: T4.1.
 
-#### [ ] T4.3: Composition root mounts everything on one listener
+#### [x] T4.3: Composition root mounts everything on one listener
 
 **acceptance_criteria**:
 - `internal/cli/run.go` constructs the `internal/api/Server` with `Mounts{MCP: mcpHandler, WebUI: webuiHandler}`.
@@ -425,7 +425,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This task collapses the previous two-listener layout into one.
 **depends_on**: T4.2, T2.2.
 
-#### [ ] T4.4: Agent vendor URL update
+#### [x] T4.4: Agent vendor URL update
 
 **acceptance_criteria**:
 - `internal/director/claude/` constructs the `--mcp-config` URL with prefix `/mcp/`. Example: `http://127.0.0.1:54321/mcp/`.
@@ -435,7 +435,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Agents are transparent to the prefix change as long as the adapter sets the right URL.
 **depends_on**: T4.3.
 
-#### [ ] T4.5: Stderr banner unified
+#### [x] T4.5: Stderr banner unified
 
 **acceptance_criteria**:
 - Banner format on startup: `bcc: dashboard at http://127.0.0.1:<port>/?t=<token>` (when webui is enabled) or `bcc: api at http://127.0.0.1:<port>/api/v1` (when only api is enabled).
@@ -445,7 +445,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Users see one URL. The MCP being a sub-path is an implementation detail they do not need.
 **depends_on**: T4.3.
 
-#### [ ] T4.6: Path-scoped auth
+#### [x] T4.6: Path-scoped auth
 
 **acceptance_criteria**:
 - `internal/api/server.go` registers two auth middlewares scoped by path: `/mcp/*` uses the agent-registry token check (existing MCP logic, lifted into a middleware); `/api/v1/*` and `/` use the session-token check from T2.3.
@@ -455,7 +455,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the security guarantee that justifies sharing one listener.
 **depends_on**: T4.3, T2.3.
 
-#### [ ] T4.7: End-to-end smoke test
+#### [x] T4.7: End-to-end smoke test
 
 **acceptance_criteria**:
 - A test boots `bcc run` against a tiny fixture spec, waits for the listener, hits `/api/v1/sessions`, hits `/mcp/` with a fake agent token, asserts both succeed and isolation holds.
@@ -464,7 +464,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Final gate of the listener migration.
 **depends_on**: T4.4, T4.5, T4.6.
 
-### [ ] P5: WebUI Go-side handler
+### [x] P5: WebUI Go-side handler
 
 **id**: `P5-webui-go`
 **intent**: `internal/webui/` produces an `http.Handler` that serves the embedded SPA. The composition root mounts it at `/` on the API listener.
@@ -472,7 +472,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: Any frontend tooling or panel (P6, P7).
 **depends_on**: P2, P4.
 
-#### [ ] T5.1: `New() http.Handler`
+#### [x] T5.1: `New() http.Handler`
 
 **acceptance_criteria**:
 - `internal/webui/handler.go` exports `New() http.Handler` returning a handler that serves `/` and `/assets/*` from the embedded bundle.
@@ -482,7 +482,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The handler is mountable on any router; it does not assume chi or huma.
 **depends_on**: T5.2.
 
-#### [ ] T5.2: Embedded bundle
+#### [x] T5.2: Embedded bundle
 
 **acceptance_criteria**:
 - `internal/webui/embed.go` declares `//go:embed web/dist/*` into `var BundleFS embed.FS`.
@@ -492,7 +492,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The stub is the placeholder until P6 produces a real bundle. Vite always writes `index.html` on every build (the entry chunk is the only stable filename), so an explicit `.gitkeep` is unnecessary; `index.html` alone satisfies the embed pattern.
 **depends_on**: none.
 
-#### [ ] T5.3: Vite dev proxy for `--webui-dev`
+#### [x] T5.3: Vite dev proxy for `--webui-dev`
 
 **acceptance_criteria**:
 - `internal/webui/proxy.go` exports a function that returns an `http.Handler` reverse-proxying everything except `/api/v1/*` to `http://127.0.0.1:5173`.
@@ -502,7 +502,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Dev mode preserves same-origin discipline; the API still serves `/api/v1/*` from in-process state.
 **depends_on**: T5.1.
 
-#### [ ] T5.4: `--webui` and `--webui-open` flags
+#### [x] T5.4: `--webui` and `--webui-open` flags
 
 **acceptance_criteria**:
 - `internal/cli/` registers boolean flags `--webui` (short `-w`) and `--webui-open` (short `-W`) on the `run` command.
@@ -513,7 +513,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Both flags are presented in `bcc run --help`. `--webui-dev` is documented in the contributor guide only, not in `--help`.
 **depends_on**: T5.1.
 
-#### [ ] T5.5: `[webui]` config block
+#### [x] T5.5: `[webui]` config block
 
 **acceptance_criteria**:
 - `internal/config/config.go` adds a `Webui` struct with `Enabled bool` and `Open bool`. Default both false.
@@ -524,7 +524,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The TOML block has no `bind` field. Bind belongs to `[api]`.
 **depends_on**: T5.4.
 
-#### [ ] T5.6: Composition root: `--webui` implies `--api`
+#### [x] T5.6: Composition root: `--webui` implies `--api`
 
 **acceptance_criteria**:
 - If `--webui` is set (or `[webui].enabled = true`) and the API is not explicitly enabled, the API auto-enables on default bind (`127.0.0.1:0`).
@@ -534,7 +534,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Same-origin between SPA and API depends on this implication.
 **depends_on**: T4.3, T5.4, T5.5.
 
-### [ ] P6: SPA stack and build pipeline
+### [x] P6: SPA stack and build pipeline
 
 **id**: `P6-spa-stack`
 **intent**: Initialize the Vite + React 19 + TypeScript project, configure Tailwind v4, generate the TypeScript client from `internal/api/openapi.json`, set up the build pipeline, pin Node in mise.
@@ -542,7 +542,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: V1 panels (P7).
 **depends_on**: P3 (real `openapi.json` available).
 
-#### [ ] T6.1: Vite + React 19 + TypeScript scaffold
+#### [x] T6.1: Vite + React 19 + TypeScript scaffold
 
 **acceptance_criteria**:
 - `internal/webui/web/` contains `package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`, `src/main.tsx`, `src/app.tsx`.
@@ -552,7 +552,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Vanilla scaffold. No state, no routes, just a header that says "bcc dashboard".
 **depends_on**: none.
 
-#### [ ] T6.2: Tailwind v4 with design tokens
+#### [x] T6.2: Tailwind v4 with design tokens
 
 **acceptance_criteria**:
 - Tailwind v4 configured in `tailwind.config.ts`.
@@ -562,7 +562,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Dark only in V1.
 **depends_on**: T6.1.
 
-#### [ ] T6.3: Generated TypeScript API client
+#### [x] T6.3: Generated TypeScript API client
 
 **acceptance_criteria**:
 - A Vite plugin (or a separate `npm run gen-client` step run by `npm run build`) reads `../../api/openapi.json` and generates `src/lib/api-client.ts` with typed functions for every endpoint.
@@ -572,7 +572,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Hand-written request/response types are forbidden. Generator choice (`openapi-typescript-codegen`, `openapi-fetch`, or similar) is left to the implementer; the criterion is that `tsc` fails when the API contract drifts.
 **depends_on**: T6.1, T3.x (any endpoint to generate against).
 
-#### [ ] T6.4: Layout shell
+#### [x] T6.4: Layout shell
 
 **acceptance_criteria**:
 - `src/app.tsx` renders a layout shell: top header band, left sidebar, central main area, collapsible bottom drawer, right panel.
@@ -582,7 +582,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: P7 fills each region. The shell is the geometric scaffold.
 **depends_on**: T6.2.
 
-#### [ ] T6.5: Self-hosted fonts
+#### [x] T6.5: Self-hosted fonts
 
 **acceptance_criteria**:
 - `internal/webui/web/public/fonts/` contains Geist Sans, Geist Mono, and Instrument Serif (or Fraunces) WOFF2 files with permissive licenses.
@@ -592,7 +592,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: No CDN dependency at runtime.
 **depends_on**: T6.2.
 
-#### [ ] T6.6: Makefile target
+#### [x] T6.6: Makefile target
 
 **acceptance_criteria**:
 - `Makefile` has the chain `api-openapi → webui → build` already established in P2.7.
@@ -602,7 +602,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is also exercised in CI.
 **depends_on**: T6.3.
 
-#### [ ] T6.7: Node pin in mise
+#### [x] T6.7: Node pin in mise
 
 **acceptance_criteria**:
 - `.mise.toml` pins Node to a specific LTS version (e.g., `node = "22.x"`).
@@ -612,7 +612,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The Go pin is already in `.mise.toml`. Node is added next to it.
 **depends_on**: none.
 
-#### [ ] T6.8: Bundle size CI gate
+#### [x] T6.8: Bundle size CI gate
 
 **acceptance_criteria**:
 - A CI step (or a Makefile sub-target) computes the gzipped size of all files in `internal/webui/web/dist/`.
@@ -622,7 +622,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This guards against accidental dependency bloat in P7.
 **depends_on**: T6.6.
 
-### [ ] P7: SPA V1 panels
+### [x] P7: SPA V1 panels
 
 **id**: `P7-spa-panels`
 **intent**: Implement every V1 panel listed in `docs/specs/webui/2026-05-04-embedded-web-dashboard.md`.
@@ -630,7 +630,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: V2 mutation UIs.
 **depends_on**: P6.
 
-#### [ ] T7.1: Header
+#### [x] T7.1: Header
 
 **acceptance_criteria**:
 - Header renders left (session title, id, spec path with copy-to-clipboard), center (status pill, iteration counter, elapsed time), right (sparkline of throughput, view toggle DAG | Activity, settings menu).
@@ -674,7 +674,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Both views observe the same session state; only rendering differs. Stable chunk names mirror the vendor-side policy (`vendor-react`, `vendor-xyflow`, etc.) so the dist tree is predictable across builds and easy to map in DevTools.
 **depends_on**: T7.2, T7.3.
 
-#### [ ] T7.5: Right panel timeline
+#### [x] T7.5: Right panel timeline
 
 **acceptance_criteria**:
 - `src/components/timeline-panel/` renders an editorial list of `loop.Event` records received via SSE, grouped by iteration, newest at top.
@@ -686,7 +686,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: Events arrive via the `useEvents` hook (T7.8).
 **depends_on**: T7.1, T7.8.
 
-#### [ ] T7.6: Bottom drawer briefings and prompts
+#### [x] T7.6: Bottom drawer briefings and prompts
 
 **acceptance_criteria**:
 - `src/components/briefing-panel/` renders a collapsible drawer with three tabs: Briefing, Prompts, Reviewer notes.
@@ -697,7 +697,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: All three tabs use the generated API client (T6.3).
 **depends_on**: T7.1.
 
-#### [ ] T7.7: Left sidebar sessions
+#### [x] T7.7: Left sidebar sessions
 
 **acceptance_criteria**:
 - `src/components/sessions-sidebar/` lists sessions returned by `GET /api/v1/sessions`.
@@ -708,7 +708,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The archived route uses the same data flow; only the SSE stream is the replay flavor.
 **depends_on**: T7.1.
 
-#### [ ] T7.8: Hooks `use-snapshot` and `use-events`
+#### [x] T7.8: Hooks `use-snapshot` and `use-events`
 
 **acceptance_criteria**:
 - `src/hooks/use-snapshot.ts` fetches `/api/v1/sessions/{id}/snapshot` on mount, exposes `{snapshot, error, refetch}`.
@@ -903,3 +903,9 @@ The following are explicitly out of scope here and ride a later spec built on th
 ## Execution Journal
 
 <!-- Filled in by the agent during execution per the bcc-markdown contract. -->
+
+2026-05-05 HK-P3: marked P3 phase header and T3.10 shipped (commit 7c41087).
+2026-05-05 HK-P4: marked P4 phase header and T4.1-T4.7 shipped (commits 17d93ad..c4064f5).
+2026-05-05 HK-P5: marked P5 phase header and T5.1-T5.6 shipped (commits fcc33be..120e703).
+2026-05-05 HK-P6: marked P6 phase header and T6.1-T6.8 shipped (commits 539a521..a3dfb07).
+2026-05-05 HK-P7: marked P7 phase header and T7.1,T7.5-T7.8 shipped (commits 15aeb42..112b778).
