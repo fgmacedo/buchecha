@@ -25,6 +25,8 @@
             "phase_planned",
             "phase_briefed",
             "phase_reviewed",
+            "spawn_finished",
+            "spawn_started",
             "task_started",
             "task_completed",
             "task_approved",

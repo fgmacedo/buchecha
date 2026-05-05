@@ -25,6 +25,8 @@ var AllEventKinds = []string{
 	"phase_planned",
 	"phase_briefed",
 	"phase_reviewed",
+	"spawn_finished",
+	"spawn_started",
 	"task_started",
 	"task_completed",
 	"task_approved",
@@ -173,6 +175,53 @@ func jsonPayload(ev Event) map[string]any {
 			out["note"] = e.Note
 		}
 		return out
+	case SpawnStarted:
+		out := map[string]any{
+			"type":     "spawn_started",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"spawn_id": e.SpawnID,
+			"role":     e.Role,
+		}
+		if e.PhaseID != "" {
+			out["phase_id"] = e.PhaseID
+		}
+		if e.TaskID != "" {
+			out["task_id"] = e.TaskID
+		}
+		if e.IterationID != "" {
+			out["iteration_id"] = e.IterationID
+		}
+		if e.Attempt != 0 {
+			out["attempt"] = e.Attempt
+		}
+		if e.Model != "" {
+			out["model"] = e.Model
+		}
+		if e.Effort != "" {
+			out["effort"] = e.Effort
+		}
+		if e.PromptPath != "" {
+			out["prompt_path"] = e.PromptPath
+		}
+		return out
+	case SpawnFinished:
+		return map[string]any{
+			"type":        "spawn_finished",
+			"at":          formatAt(e.At),
+			"level":       level,
+			"spawn_id":    e.SpawnID,
+			"role":        e.Role,
+			"exit_code":   e.ExitCode,
+			"duration_ms": e.DurationMS,
+			"cost": map[string]any{
+				"input_tokens":                e.Cost.InputTokens,
+				"output_tokens":               e.Cost.OutputTokens,
+				"cache_read_input_tokens":     e.Cost.CacheReadTokens,
+				"cache_creation_input_tokens": e.Cost.CacheCreateTokens,
+				"usd":                         e.Cost.USD,
+			},
+		}
 	default:
 		// A new Event variant landed without an arm here. Log loudly so
 		// the gap is visible in production, then synthesize a payload that

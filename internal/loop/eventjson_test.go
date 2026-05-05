@@ -381,6 +381,93 @@ func TestMarshalJSONEvent_AgentInit(t *testing.T) {
 	}
 }
 
+func TestMarshalJSONEvent_SpawnStartedFull(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.SpawnStarted{
+		SpawnID:     "01arya0000000000000001",
+		Role:        "executor",
+		PhaseID:     "P1",
+		TaskID:      "T1.1",
+		IterationID: "P1-iter1",
+		Attempt:     1,
+		Model:       "claude-opus-4-7",
+		Effort:      "high",
+		PromptPath:  "/tmp/spawns/01arya0000000000000001.md",
+		At:          at,
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:00:00Z","attempt":1,"effort":"high","iteration_id":"P1-iter1","level":"info","model":"claude-opus-4-7","phase_id":"P1","prompt_path":"/tmp/spawns/01arya0000000000000001.md","role":"executor","spawn_id":"01arya0000000000000001","task_id":"T1.1","type":"spawn_started"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_SpawnStartedMinimal(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.SpawnStarted{
+		SpawnID: "01arya0000000000000002",
+		Role:    "planner",
+		At:      at,
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:00:00Z","level":"info","role":"planner","spawn_id":"01arya0000000000000002","type":"spawn_started"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_SpawnFinished(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 5, 0, 0, time.UTC)
+	ev := loop.SpawnFinished{
+		SpawnID:    "01arya0000000000000001",
+		Role:       "executor",
+		ExitCode:   0,
+		DurationMS: 5000,
+		Cost: loop.SpawnCost{
+			InputTokens:       12000,
+			OutputTokens:      2300,
+			CacheReadTokens:   800,
+			CacheCreateTokens: 200,
+			USD:               0.34,
+		},
+		At: at,
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:05:00Z","cost":{"cache_creation_input_tokens":200,"cache_read_input_tokens":800,"input_tokens":12000,"output_tokens":2300,"usd":0.34},"duration_ms":5000,"exit_code":0,"level":"info","role":"executor","spawn_id":"01arya0000000000000001","type":"spawn_finished"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_SpawnFinishedZeroCost(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 5, 0, 0, time.UTC)
+	ev := loop.SpawnFinished{
+		SpawnID:    "01arya0000000000000001",
+		Role:       "executor",
+		ExitCode:   1,
+		DurationMS: 1000,
+		Cost:       loop.SpawnCost{},
+		At:         at,
+	}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:05:00Z","cost":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":0,"output_tokens":0,"usd":0},"duration_ms":1000,"exit_code":1,"level":"info","role":"executor","spawn_id":"01arya0000000000000001","type":"spawn_finished"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
 // TestMarshalJSONEvent_AllKindsCovered locks the contract between the
 // loop.Event union, MarshalJSONEvent, and loop.AllEventKinds. Adding a
 // new Event variant requires:
@@ -400,6 +487,8 @@ func TestMarshalJSONEvent_AllKindsCovered(t *testing.T) {
 		loop.PhasePlanned{At: at},
 		loop.PhaseBriefed{PhaseID: "P1", Iteration: 1, At: at},
 		loop.PhaseReviewed{PhaseID: "P1", Attempt: 1, At: at},
+		loop.SpawnStarted{SpawnID: "spawn123", Role: "executor", PhaseID: "P1", TaskID: "T1.1", IterationID: "iter1", Attempt: 1, Model: "claude-opus", Effort: "high", PromptPath: "/path/to/prompt.md", At: at},
+		loop.SpawnFinished{SpawnID: "spawn123", Role: "executor", ExitCode: 0, DurationMS: 5000, Cost: loop.SpawnCost{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheCreateTokens: 0, USD: 0.05}, At: at},
 		loop.TaskStarted{PhaseID: "P1", TaskID: "T1.1", At: at},
 		loop.TaskCompleted{PhaseID: "P1", TaskID: "T1.1", At: at},
 		loop.TaskApproved{PhaseID: "P1", TaskID: "T1.1", At: at},
