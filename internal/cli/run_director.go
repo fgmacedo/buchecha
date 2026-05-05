@@ -183,6 +183,11 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	)
 	if boot != nil && boot.handler != nil {
 		boot.handler.SetCapabilityRegistry(&registry)
+		boot.handler.SetPlanDefaults(director.PlanDefaults{
+			Briefer:  director.RoleAssignment{Model: cfg.Director.Claude.Model, Effort: cfg.Director.Claude.Effort},
+			Executor: director.RoleAssignment{Model: cfg.Agent.Claude.Model, Effort: cfg.Agent.Claude.Effort},
+			Reviewer: director.RoleAssignment{Model: cfg.Director.Claude.Model, Effort: cfg.Director.Claude.Effort},
+		})
 	}
 	return directorDeps{
 		planner:     adapter,

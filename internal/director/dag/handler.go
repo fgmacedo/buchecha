@@ -104,6 +104,7 @@ type Handler struct {
 	dagStore      DAGSnapshotPersister
 
 	capabilityRegistry *director.CapabilityRegistry
+	planDefaults       director.PlanDefaults
 
 	mu             sync.Mutex
 	plan           *director.Plan
@@ -325,6 +326,19 @@ func (h *Handler) SetCapabilityRegistry(reg *director.CapabilityRegistry) {
 	h.capabilityRegistry = reg
 }
 
+// SetPlanDefaults installs the per-role model and effort defaults the
+// handler stamps onto each Phase at bcc_plan_emit time when the
+// Planner left an assignment nil. Filling at emit makes the persisted
+// plan.json self-describing: every Phase carries the routing it
+// actually ran with. Empty (zero) defaults are accepted and skipped
+// per role; the assignment stays nil and the loop's runtime fallback
+// applies.
+func (h *Handler) SetPlanDefaults(defaults director.PlanDefaults) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.planDefaults = defaults
+}
+
 // CapabilityRegistry returns the registry the handler validates
 // bcc_plan_emit assignments against, or nil when none was attached.
 func (h *Handler) CapabilityRegistry() *director.CapabilityRegistry {
@@ -532,6 +546,7 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	if err := director.ValidatePlan(&plan, h.capabilityRegistry); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
+	director.FillPlanDefaults(&plan, h.planDefaults)
 	newState := NewStateFromPlan(&plan)
 
 	h.mu.Lock()
