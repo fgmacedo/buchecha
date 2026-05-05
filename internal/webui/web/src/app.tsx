@@ -1,12 +1,12 @@
-import { useState, lazy, Suspense } from 'react'
+import { lazy, Suspense } from 'react'
 import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
 import { useEvents } from './hooks/use-events'
 import { useView } from './hooks/use-view'
+import { SelectionProvider } from './hooks/use-selection'
 import { Header } from './components/header'
-import { TimelinePanel } from './components/timeline-panel'
-import { BriefingPanel } from './components/briefing-panel'
+import { RightPane } from './components/right-pane'
 import { SessionsSidebar } from './components/sessions-sidebar'
 
 // Both views are lazy-loaded so the DAG and Gantt bundles (xyflow, dagre,
@@ -42,79 +42,78 @@ interface AppShellProps {
 }
 
 function AppShell({ sessionId }: AppShellProps) {
-  const [drawerOpen, setDrawerOpen] = useState(true)
   const [view, setView] = useView()
 
   const { snapshot, refetch } = useSnapshot(sessionId)
   const { events } = useEvents(sessionId, { onSeqGone: refetch })
 
   return (
-    <div
-      className="grid h-screen w-screen bg-background text-foreground font-sans"
-      style={{
-        gridTemplateRows: `auto minmax(0, 1fr) auto`,
-      }}
-    >
-      <Header
-        snapshot={snapshot}
-        events={events}
-        view={view}
-        onViewChange={setView}
-      />
+    <SelectionProvider sessionId={sessionId}>
       <div
-        className="grid min-h-0"
+        className="grid h-screen w-screen bg-background text-foreground font-sans"
         style={{
-          gridTemplateColumns: `clamp(14rem, 18vw, 20rem) minmax(0, 1fr) clamp(18rem, 22vw, 28rem)`,
+          gridTemplateRows: `auto minmax(0, 1fr)`,
         }}
       >
-        <div className="border-r border-border bg-muted overflow-hidden">
-          <SessionsSidebar activeSessionId={snapshot?.session.id ?? null} />
-        </div>
-        <main
-          aria-label="Main"
-          className="flex min-w-0 flex-col overflow-hidden"
-          style={{ position: 'relative' }}
+        <Header
+          snapshot={snapshot}
+          events={events}
+          view={view}
+          onViewChange={setView}
+        />
+        <div
+          className="grid min-h-0"
+          style={{
+            gridTemplateColumns: `clamp(14rem, 18vw, 20rem) minmax(0, 1fr) clamp(18rem, 22vw, 28rem)`,
+          }}
         >
-          {/* Both views mount once on first load; display toggles between
-              them so there is no remount penalty on view switch (T7.4 A2). */}
-          <Suspense
-            fallback={
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                Loading...
-              </div>
-            }
+          <div className="border-r border-border bg-muted overflow-hidden">
+            <SessionsSidebar activeSessionId={snapshot?.session.id ?? null} />
+          </div>
+          <main
+            aria-label="Main"
+            className="flex min-w-0 flex-col overflow-hidden"
+            style={{ position: 'relative' }}
           >
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: view === 'dag' ? 'block' : 'none',
-              }}
+            {/* Both views mount once on first load; display toggles between
+                them so there is no remount penalty on view switch. */}
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  Loading...
+                </div>
+              }
             >
-              <DAGView snapshot={snapshot} sessionId={snapshot?.session.id ?? 'live'} />
-            </div>
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: view === 'activity' ? 'block' : 'none',
-              }}
-            >
-              <ActivityView snapshot={snapshot} events={events} />
-            </div>
-          </Suspense>
-        </main>
-        <div className="border-l border-border bg-muted overflow-hidden">
-          <TimelinePanel events={events} />
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: view === 'dag' ? 'block' : 'none',
+                }}
+              >
+                <DAGView snapshot={snapshot} sessionId={snapshot?.session.id ?? 'live'} />
+              </div>
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: view === 'activity' ? 'block' : 'none',
+                }}
+              >
+                <ActivityView snapshot={snapshot} events={events} />
+              </div>
+            </Suspense>
+          </main>
+          <div className="border-l border-border overflow-hidden" style={{ backgroundColor: 'var(--surface-panel)' }}>
+            <RightPane
+              events={events}
+              snapshot={snapshot}
+              sessionId={sessionId}
+            />
+          </div>
         </div>
       </div>
-      <BriefingPanel
-        snapshot={snapshot}
-        events={events}
-        open={drawerOpen}
-        onToggle={() => setDrawerOpen((o) => !o)}
-      />
-    </div>
+    </SelectionProvider>
   )
 }
 
