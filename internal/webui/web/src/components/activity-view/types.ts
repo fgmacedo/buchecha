@@ -3,7 +3,8 @@ export type BarStatus = 'completed' | 'approved' | 'needs_fix' | 'running'
 
 // Bar represents one (task, attempt) entry in the Gantt chart. Width is
 // the duration between the task_started and its terminal event; in-flight
-// tasks have endMs=null.
+// tasks have endMs=null. iterationIndex is the global iteration counter
+// from the iter_started event that was active when this bar opened.
 export interface Bar {
   phaseId: string
   taskId: string
@@ -11,6 +12,7 @@ export interface Bar {
   startMs: number
   endMs: number | null
   status: BarStatus
+  iterationIndex: number
 }
 
 // IterBoundary marks an iteration start or end on the time axis.

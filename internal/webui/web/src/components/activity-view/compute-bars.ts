@@ -30,6 +30,7 @@ interface OpenBar {
   startMs: number
   phaseId: string
   taskId: string
+  iterationIndex: number
 }
 
 // computeGanttData derives bars, iteration boundaries, and retry markers
@@ -59,6 +60,8 @@ export function computeGanttData(events: SeqEvent[]): GanttData {
   const attemptCount = new Map<string, number>()
   // Tracks task_needs_fix events per key, to later detect if they become retries.
   const needsFixMs = new Map<string, number[]>()
+  // Current global iteration index, updated on iter_started events.
+  let currentIterationIndex = 0
 
   for (const { event } of events) {
     const p = event as EventPayload & Record<string, unknown>
@@ -68,6 +71,7 @@ export function computeGanttData(events: SeqEvent[]): GanttData {
       case 'iter_started': {
         if (at !== null) {
           const index = asNumber(p['index']) ?? 0
+          currentIterationIndex = index
           boundaries.push({ ms: at, kind: 'start', index })
         }
         break
@@ -98,7 +102,7 @@ export function computeGanttData(events: SeqEvent[]): GanttData {
           needsFixMs.set(key, [])
         }
 
-        open.set(key, { attempt: count, startMs: at, phaseId, taskId })
+        open.set(key, { attempt: count, startMs: at, phaseId, taskId, iterationIndex: currentIterationIndex })
         break
       }
       case 'task_completed': {
@@ -150,7 +154,7 @@ export function computeGanttData(events: SeqEvent[]): GanttData {
 
   // Close any bars still running at the last known event time.
   for (const ob of open.values()) {
-    bars.push({ ...ob, endMs: null, status: 'running' })
+    bars.push({ ...ob, endMs: null, status: 'running' as BarStatus })
   }
 
   // Compute time axis bounds across all bars and boundaries.

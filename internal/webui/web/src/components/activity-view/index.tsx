@@ -4,11 +4,13 @@ import { axisBottom } from 'd3-axis'
 import { select, type Selection } from 'd3-selection'
 import type { SeqEvent } from '../../hooks/use-events'
 import type { Snapshot } from '../../hooks/use-snapshot'
+import { useCostAggregator, type CostAgg } from '../../hooks/use-cost-aggregator'
+import { useSelection } from '../../hooks/use-selection'
 import { computeGanttData } from './compute-bars'
 import type { Bar, GanttData } from './types'
 
 // Margin around the SVG plot area.
-const MARGIN = { top: 16, right: 24, bottom: 36, left: 140 }
+const MARGIN = { top: 28, right: 24, bottom: 36, left: 140 }
 const ROW_PAD = 0.2
 const BAR_RADIUS = 3
 
@@ -90,12 +92,14 @@ interface GanttPlotProps {
   width: number
   height: number
   snapshot: Snapshot | null
+  costAgg: CostAgg
   onHover: (state: TooltipState | null) => void
+  onBarClick: (bar: Bar) => void
 }
 
 // GanttPlot renders the SVG plot area: phase lanes, bars, iteration
-// boundary rules, retry markers, and the time axis.
-function GanttPlot({ data, width, height, snapshot, onHover }: GanttPlotProps) {
+// boundary rules with index labels, retry markers, and the time axis.
+function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, onBarClick }: GanttPlotProps) {
   const plotW = width - MARGIN.left - MARGIN.right
   const plotH = height - MARGIN.top - MARGIN.bottom
 
@@ -150,7 +154,8 @@ function GanttPlot({ data, width, height, snapshot, onHover }: GanttPlotProps) {
                 y={y}
                 width={plotW}
                 height={bandwidth}
-                fill={i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent'}
+                fill={i % 2 === 0 ? 'var(--surface-panel)' : 'transparent'}
+                fillOpacity={i % 2 === 0 ? 0.6 : 1}
               />
               <text
                 x={-10}
@@ -167,24 +172,37 @@ function GanttPlot({ data, width, height, snapshot, onHover }: GanttPlotProps) {
           )
         })}
 
-        {/* Iteration boundary rules */}
-        {data.boundaries.map((b, i) => (
-          <line
-            key={i}
-            x1={xScale(new Date(b.ms))}
-            x2={xScale(new Date(b.ms))}
-            y1={0}
-            y2={plotH}
-            stroke={
-              b.kind === 'start'
-                ? 'var(--color-accent)'
-                : 'var(--color-border)'
-            }
-            strokeOpacity={0.3}
-            strokeWidth={1}
-            strokeDasharray={b.kind === 'end' ? '3,3' : undefined}
-          />
-        ))}
+        {/* Iteration boundary rules: vertical dashed lines with index labels */}
+        {data.boundaries.map((b, i) => {
+          const x = xScale(new Date(b.ms))
+          return (
+            <g key={i}>
+              <line
+                x1={x}
+                x2={x}
+                y1={0}
+                y2={plotH}
+                stroke={b.kind === 'start' ? 'var(--color-accent)' : 'var(--color-border)'}
+                strokeOpacity={0.35}
+                strokeWidth={1}
+                strokeDasharray="4,4"
+              />
+              {b.kind === 'start' && (
+                <text
+                  x={x + 3}
+                  y={-8}
+                  fontSize={11}
+                  fontFamily="var(--font-display)"
+                  fontStyle="italic"
+                  fill="var(--color-muted-foreground)"
+                  fillOpacity={0.8}
+                >
+                  {`iter ${b.index}`}
+                </text>
+              )}
+            </g>
+          )
+        })}
 
         {/* Task bars */}
         {data.bars.map((bar, i) => {
@@ -210,6 +228,7 @@ function GanttPlot({ data, width, height, snapshot, onHover }: GanttPlotProps) {
               strokeWidth={1}
               strokeOpacity={0.9}
               style={{ cursor: 'pointer' }}
+              data-testid={`gantt-bar-${bar.phaseId}-${bar.taskId}`}
               onMouseEnter={(e) => {
                 const svgEl = (e.target as SVGElement).ownerSVGElement
                 if (!svgEl) return
@@ -221,6 +240,7 @@ function GanttPlot({ data, width, height, snapshot, onHover }: GanttPlotProps) {
                 })
               }}
               onMouseLeave={() => onHover(null)}
+              onClick={() => onBarClick(bar)}
             />
           )
         })}
@@ -259,8 +279,10 @@ export interface ActivityViewProps {
 // ActivityView renders a horizontal Gantt chart derived from the session
 // event stream. X axis is wall-clock time; Y axis is phases as lanes.
 // One bar per (task, attempt). Iteration boundaries appear as vertical
-// rules; retry markers appear as vertical ticks at task_needs_fix
-// timestamps that preceded a retry.
+// dashed rules labeled with the iteration index in font-display italic;
+// retry markers appear as vertical ticks at task_needs_fix timestamps.
+// Clicking a bar invokes select({ kind: "task", phaseId, taskId }) via
+// the shared SelectionProvider context.
 //
 // Bar geometry is sourced from IterationStarted, IterationFinished,
 // TaskStarted, TaskCompleted, TaskApproved, TaskNeedsFix, and
@@ -269,6 +291,8 @@ export function ActivityView({ snapshot, events }: ActivityViewProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerSize, setContainerSize] = useState({ width: 800, height: 400 })
+  const { select } = useSelection()
+  const costAgg = useCostAggregator(events)
 
   // Track container dimensions so the SVG fills the available area.
   useEffect(() => {
@@ -291,9 +315,14 @@ export function ActivityView({ snapshot, events }: ActivityViewProps) {
 
   const hasData = ganttData.bars.length > 0 || ganttData.boundaries.length > 0
 
+  function handleBarClick(bar: Bar) {
+    select({ kind: 'task', phaseId: bar.phaseId, taskId: bar.taskId })
+  }
+
   return (
     <div
       ref={containerRef}
+      className="bg-canvas-textured"
       style={{
         width: '100%',
         height: '100%',
@@ -321,7 +350,9 @@ export function ActivityView({ snapshot, events }: ActivityViewProps) {
           width={containerSize.width}
           height={containerSize.height}
           snapshot={snapshot}
+          costAgg={costAgg}
           onHover={setTooltip}
+          onBarClick={handleBarClick}
         />
       )}
 
@@ -333,8 +364,8 @@ export function ActivityView({ snapshot, events }: ActivityViewProps) {
             left: tooltip.x + 12,
             top: tooltip.y - 8,
             zIndex: 50,
-            backgroundColor: 'var(--color-background)',
-            border: '1px solid var(--color-border)',
+            backgroundColor: 'var(--surface-elevated)',
+            border: '1px solid var(--border-default)',
             borderRadius: 8,
             padding: '10px 14px',
             boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
@@ -344,7 +375,7 @@ export function ActivityView({ snapshot, events }: ActivityViewProps) {
             minWidth: 200,
           }}
         >
-          <TooltipContent bar={tooltip.bar} snapshot={snapshot} />
+          <TooltipContent bar={tooltip.bar} snapshot={snapshot} costAgg={costAgg} />
         </div>
       )}
     </div>
@@ -354,15 +385,14 @@ export function ActivityView({ snapshot, events }: ActivityViewProps) {
 interface TooltipContentProps {
   bar: Bar
   snapshot: Snapshot | null
+  costAgg: CostAgg
 }
 
-function TooltipContent({ bar, snapshot }: TooltipContentProps) {
+function TooltipContent({ bar, snapshot, costAgg }: TooltipContentProps) {
   const duration = bar.endMs !== null ? formatDuration(bar.endMs - bar.startMs) : 'running'
   const color = barColor(bar.status)
 
   // Look up role/model/effort from the snapshot's dag phase-level data.
-  // The plan keeps executor_assignment per phase; task-level assignments
-  // are not separately tracked in the DAG state payload.
   const phaseData = useMemo(() => {
     const dag = snapshot?.dag as unknown as {
       phases?: Array<{
@@ -375,6 +405,12 @@ function TooltipContent({ bar, snapshot }: TooltipContentProps) {
 
   const model = phaseData?.executor_assignment?.model ?? 'default'
   const effort = phaseData?.executor_assignment?.effort ?? 'default'
+
+  // Look up USD attributable to the iteration this bar ran in.
+  const iterUSD = useMemo(() => {
+    const entry = costAgg.perIteration.find((x) => x.iterationIndex === bar.iterationIndex)
+    return entry ? `$${entry.usd.toFixed(3)}` : null
+  }, [costAgg.perIteration, bar.iterationIndex])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -400,6 +436,12 @@ function TooltipContent({ bar, snapshot }: TooltipContentProps) {
       <TooltipRow label="Effort" value={effort} />
       <TooltipRow label="Duration" value={duration} />
       <TooltipRow label="Started" value={formatTime(bar.startMs)} />
+      {bar.endMs !== null && (
+        <TooltipRow label="Ended" value={formatTime(bar.endMs)} />
+      )}
+      {iterUSD !== null && (
+        <TooltipRow label="Iter USD" value={iterUSD} />
+      )}
     </div>
   )
 }
@@ -407,7 +449,7 @@ function TooltipContent({ bar, snapshot }: TooltipContentProps) {
 function TooltipRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', gap: 8 }}>
-      <span style={{ color: 'var(--color-muted-foreground)', minWidth: 60, flexShrink: 0 }}>
+      <span style={{ color: 'var(--color-muted-foreground)', minWidth: 64, flexShrink: 0 }}>
         {label}
       </span>
       <span style={{ color: 'var(--color-foreground)' }}>{value}</span>
