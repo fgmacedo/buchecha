@@ -481,12 +481,12 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("director/claude: run %s: %w", a.cfg.Binary, err)
 	}
-	_ = spawnID // populated for future P3 use
 
 	var (
-		mu     sync.Mutex
-		stats  director.DirectorCallStats
-		latest *agentcontract.ResultSummaryInfo
+		mu           sync.Mutex
+		stats        director.DirectorCallStats
+		latest       *agentcontract.ResultSummaryInfo
+		parsedEvents []agentcontract.AgentEvent
 	)
 
 	parseDone := make(chan struct{})
@@ -501,12 +501,13 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 		for sc.Scan() {
 			line := slices.Clone(sc.Bytes())
 			for _, ev := range streamjson.ParseLine(line, a.timeNow()) {
+				mu.Lock()
+				parsedEvents = append(parsedEvents, ev)
 				if ev.Kind == agentcontract.KindResultSummary && ev.Done != nil {
-					mu.Lock()
 					done := *ev.Done
 					latest = &done
-					mu.Unlock()
 				}
+				mu.Unlock()
 				if events != nil {
 					select {
 					case events <- ev:
@@ -526,6 +527,32 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 		stats.CostUSD = latest.TotalCostUSD
 		stats.InputTokens = latest.InputTokens
 		stats.OutputTokens = latest.OutputTokens
+	}
+
+	if spawnID != "" && a.cfg.Events != nil {
+		cost, _ := streamjson.LastResultSummary(parsedEvents)
+		spawnCost := loop.SpawnCost{
+			InputTokens:       cost.InputTokens,
+			OutputTokens:      cost.OutputTokens,
+			CacheReadTokens:   cost.CacheReadTokens,
+			CacheCreateTokens: cost.CacheCreateTokens,
+			USD:               cost.USD,
+		}
+		exitCode := 0
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		select {
+		case a.cfg.Events <- loop.SpawnFinished{
+			SpawnID:    spawnID,
+			Role:       string(role),
+			ExitCode:   exitCode,
+			DurationMS: stats.DurationMS,
+			Cost:       spawnCost,
+			At:         a.timeNow().UTC(),
+		}:
+		default:
+		}
 	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {

@@ -666,6 +666,131 @@ func TestReview_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
 	}
 }
 
+// TestBrief_EmitsSpawnFinishedWithCost verifies that after Brief returns,
+// a loop.SpawnFinished is emitted on the Events channel with the USD cost
+// extracted from the result_summary in the fixture stdout and a SpawnID
+// that matches the preceding SpawnStarted.
+func TestBrief_EmitsSpawnFinishedWithCost(t *testing.T) {
+	store := newTestStore(t)
+	events := make(chan loop.Event, 16)
+	a := New(Config{
+		Binary:       fixture(t, "fake-claude-briefing.sh"),
+		SessionStore: store,
+		Events:       events,
+	})
+	_, err := a.Brief(context.Background(), director.BrieferInput{
+		AgentID:     "briefer-001",
+		Plan:        &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:    "/tmp/spec.md",
+		IterationID: "p1-01",
+		PhaseID:     "p1",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Brief: %v", err)
+	}
+
+	evs := collectLoopEvents(events)
+	var started *loop.SpawnStarted
+	var finished *loop.SpawnFinished
+	for i := range evs {
+		if ss, ok := evs[i].(loop.SpawnStarted); ok {
+			started = &ss
+		}
+		if sf, ok := evs[i].(loop.SpawnFinished); ok {
+			finished = &sf
+		}
+	}
+	if started == nil {
+		t.Fatalf("no loop.SpawnStarted emitted")
+	}
+	if finished == nil {
+		t.Fatalf("no loop.SpawnFinished emitted")
+	}
+	if finished.SpawnID != started.SpawnID {
+		t.Errorf("SpawnFinished.SpawnID %q != SpawnStarted.SpawnID %q", finished.SpawnID, started.SpawnID)
+	}
+	if finished.Cost.USD != 0.002 {
+		t.Errorf("Cost.USD = %v, want 0.002 (from fake-claude-briefing.sh result line)", finished.Cost.USD)
+	}
+	if finished.DurationMS <= 0 {
+		t.Errorf("DurationMS = %d, want > 0", finished.DurationMS)
+	}
+	if finished.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", finished.ExitCode)
+	}
+}
+
+// TestBrief_EmitsSpawnFinishedZeroCostWhenNoResult verifies that SpawnFinished
+// is still emitted with Cost{} when the subprocess exits without emitting a
+// result_summary line.
+func TestBrief_EmitsSpawnFinishedZeroCostWhenNoResult(t *testing.T) {
+	store := newTestStore(t)
+	events := make(chan loop.Event, 16)
+	a := New(Config{
+		Binary:       fixture(t, "fake-claude-no-result.sh"),
+		SessionStore: store,
+		Events:       events,
+	})
+	// Brief will error because the fake emits no result event, but the
+	// important thing is SpawnFinished is still emitted before return.
+	a.Brief(context.Background(), director.BrieferInput{ //nolint:errcheck
+		AgentID:     "briefer-001",
+		Plan:        &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:    "/tmp/spec.md",
+		IterationID: "p1-01",
+		PhaseID:     "p1",
+	}, nil)
+
+	evs := collectLoopEvents(events)
+	var finished *loop.SpawnFinished
+	for i := range evs {
+		if sf, ok := evs[i].(loop.SpawnFinished); ok {
+			finished = &sf
+		}
+	}
+	if finished == nil {
+		t.Fatalf("no loop.SpawnFinished emitted when no result_summary present")
+	}
+	if finished.Cost != (loop.SpawnCost{}) {
+		t.Errorf("Cost = %+v, want zero Cost{} when no result_summary", finished.Cost)
+	}
+}
+
+// TestBrief_EmitsSpawnFinishedOnNonZeroExit verifies that SpawnFinished is
+// emitted even when the subprocess exits non-zero, carrying the actual exit
+// code.
+func TestBrief_EmitsSpawnFinishedOnNonZeroExit(t *testing.T) {
+	store := newTestStore(t)
+	events := make(chan loop.Event, 16)
+	a := New(Config{
+		Binary:       fixture(t, "fake-claude-fail.sh"),
+		SessionStore: store,
+		Events:       events,
+	})
+	// Non-zero exit returns an error; we only care about the event.
+	a.Brief(context.Background(), director.BrieferInput{ //nolint:errcheck
+		AgentID:     "briefer-001",
+		Plan:        &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:    "/tmp/spec.md",
+		IterationID: "p1-01",
+		PhaseID:     "p1",
+	}, nil)
+
+	evs := collectLoopEvents(events)
+	var finished *loop.SpawnFinished
+	for i := range evs {
+		if sf, ok := evs[i].(loop.SpawnFinished); ok {
+			finished = &sf
+		}
+	}
+	if finished == nil {
+		t.Fatalf("no loop.SpawnFinished emitted on non-zero exit")
+	}
+	if finished.ExitCode != 7 {
+		t.Errorf("ExitCode = %d, want 7", finished.ExitCode)
+	}
+}
+
 // TestBrief_NoSpawnStartedWhenNoSessionStore verifies that when
 // Config.SessionStore is nil, no SpawnStarted event is emitted and no
 // file is written, preserving backward compatibility for callers that
