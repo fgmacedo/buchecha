@@ -565,13 +565,17 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.header.onAny(e.At)
 	case loop.TaskStarted:
 		m.director.onTaskStarted(e.TaskID)
-		m.progress.onTaskStarted()
-		m.risk.onTaskStarted()
+		if !isPseudoTaskID(e.TaskID) {
+			m.progress.onTaskStarted()
+			m.risk.onTaskStarted()
+		}
 		m.header.onAny(e.At)
 	case loop.TaskCompleted:
 		m.director.onTaskCompleted(e.TaskID)
-		m.progress.onTaskCompleted()
-		m.risk.onTaskCompleted()
+		if !isPseudoTaskID(e.TaskID) {
+			m.progress.onTaskCompleted()
+			m.risk.onTaskCompleted()
+		}
 		m.header.onAny(e.At)
 	}
 	return m, tea.Batch(cmds...)

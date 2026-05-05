@@ -97,6 +97,7 @@ type directorPanel struct {
 	currentAttempt   int
 	latestOutcome    string
 	cumulativeCost   float64
+	briefingActive   bool
 
 	// planningStatus tracks the well-known "planning" task on the
 	// timeline. The Planner task is not part of the DAG; the loop emits a
@@ -198,26 +199,50 @@ func (d *directorPanel) onPhasePlanned(p *director.Plan) {
 }
 
 // onTaskStarted updates the planning track when the loop emits a
-// TaskStarted("planning") synthetic event at run boot. Per-task events
-// for non-planning ids are recorded as informational only; the existing
-// phase-level rows continue to drive the active highlight.
+// TaskStarted("planning") synthetic event at run boot, and surfaces
+// briefing as a transient role state when the Briefer signals start.
+// Per-task events for non-pseudo ids are recorded as informational
+// only; the existing phase-level rows continue to drive the active
+// highlight.
 func (d *directorPanel) onTaskStarted(taskID string) {
-	if taskID == planningTaskID {
+	switch taskID {
+	case planningTaskID:
 		d.planningStatus = phaseInProgress
+	case briefingTaskID:
+		d.briefingActive = true
 	}
 }
 
-// onTaskCompleted closes the planning task on the timeline. Non-planning
-// ids are no-ops here; the per-phase mark already covers them.
+// onTaskCompleted closes the planning task on the timeline and clears
+// the briefing flag. Non-pseudo ids are no-ops here; the per-phase
+// mark already covers them.
 func (d *directorPanel) onTaskCompleted(taskID string) {
-	if taskID == planningTaskID {
+	switch taskID {
+	case planningTaskID:
 		d.planningStatus = phaseApproved
+	case briefingTaskID:
+		d.briefingActive = false
 	}
 }
 
-// planningTaskID mirrors dag.PlanningTaskID without taking a dag
-// dependency from the TUI package.
-const planningTaskID = "planning"
+// planningTaskID and briefingTaskID mirror dag.PlanningTaskID and
+// dag.BriefingTaskID without taking a dag dependency from the TUI
+// package. Both are role bookkeeping pseudo-tasks (planning runs
+// once at the start of the run, briefing runs at the start of every
+// iteration where a Briefer agent is invoked); they are not real
+// DAG tasks and must not inflate per-task progress counters.
+const (
+	planningTaskID = "planning"
+	briefingTaskID = "briefing"
+)
+
+// isPseudoTaskID reports whether the well-known task id corresponds
+// to a role bookkeeping pseudo-task (planning, briefing) rather than
+// a real DAG task. Progress and risk panels skip these so the
+// per-iteration "X/Y tasks" ratio reflects DAG work only.
+func isPseudoTaskID(id string) bool {
+	return id == planningTaskID || id == briefingTaskID
+}
 
 // onPhaseBriefed marks the phase as in-progress and points the active
 // cursor at it. iteration is the 1-based index of this brief→execute→
@@ -230,6 +255,7 @@ func (d *directorPanel) onPhaseBriefed(phaseID string, iteration int, b *directo
 	d.currentPhaseID = phaseID
 	d.currentIteration = iteration
 	d.currentAttempt = 0
+	d.briefingActive = false
 	if d.phaseStatus[phaseID] != phaseApproved {
 		d.phaseStatus[phaseID] = phaseInProgress
 	}
@@ -446,6 +472,8 @@ func (d directorPanel) view(width int) string {
 		if ph.ID == d.currentPhaseID {
 			var active string
 			switch {
+			case d.briefingActive:
+				active = " (briefing...)"
 			case d.currentIteration > 0 && d.currentAttempt > 0:
 				active = fmt.Sprintf(" (iter %d · attempt %d)", d.currentIteration, d.currentAttempt)
 			case d.currentIteration > 0:

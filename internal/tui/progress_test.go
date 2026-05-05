@@ -6,6 +6,21 @@ import (
 	"time"
 )
 
+func TestIsPseudoTaskID(t *testing.T) {
+	if !isPseudoTaskID(planningTaskID) {
+		t.Errorf("planning must be classified as pseudo")
+	}
+	if !isPseudoTaskID(briefingTaskID) {
+		t.Errorf("briefing must be classified as pseudo")
+	}
+	if isPseudoTaskID("real-task-id") {
+		t.Errorf("real task id must not be classified as pseudo")
+	}
+	if isPseudoTaskID("") {
+		t.Errorf("empty id must not be classified as pseudo")
+	}
+}
+
 func TestProgress_View_NoEvents(t *testing.T) {
 	p := progressPanel{bar: newProgressBar()}
 	got := p.view(80)

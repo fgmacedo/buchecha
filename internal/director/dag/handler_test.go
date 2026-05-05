@@ -575,6 +575,51 @@ func TestHandleTaskStarted_PlannerPlanningOnly(t *testing.T) {
 	}
 }
 
+func TestHandleTaskStarted_BrieferBriefingOnly(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	bid, _ := h.Registry().Register(RoleBriefer, RegisterArgs{PhaseID: "P1"})
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskStarted, map[string]any{
+		"agent_id": string(bid),
+		"id":       BriefingTaskID,
+	}); err != nil {
+		t.Fatalf("briefer briefing: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskCompleted, map[string]any{
+		"agent_id": string(bid),
+		"id":       BriefingTaskID,
+	}); err != nil {
+		t.Fatalf("briefer briefing complete: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskStarted, map[string]any{
+		"agent_id": string(bid),
+		"id":       PlanningTaskID,
+	}); err == nil {
+		t.Fatal("briefer using planning id must be rejected")
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskStarted, map[string]any{
+		"agent_id": string(bid),
+		"id":       "t1",
+	}); err == nil {
+		t.Fatal("briefer using a real task id must be rejected")
+	}
+}
+
+func TestIsPseudoTaskID(t *testing.T) {
+	if !IsPseudoTaskID(PlanningTaskID) {
+		t.Errorf("PlanningTaskID should be pseudo")
+	}
+	if !IsPseudoTaskID(BriefingTaskID) {
+		t.Errorf("BriefingTaskID should be pseudo")
+	}
+	if IsPseudoTaskID("t1") {
+		t.Errorf("real task id must not be classified as pseudo")
+	}
+	if IsPseudoTaskID("") {
+		t.Errorf("empty id must not be classified as pseudo")
+	}
+}
+
 func TestHandleTaskCompleted_ExecutorScopeEnforced(t *testing.T) {
 	h := NewHandler(nil, NewAgentRegistry(nil))
 	emitSamplePlan(t, h)
