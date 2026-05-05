@@ -1,0 +1,121 @@
+version: 2
+
+project_name: bcc
+
+before:
+  hooks:
+    - go mod tidy
+    - make webui-size
+
+builds:
+  - id: bcc
+    main: ./cmd/bcc
+    binary: bcc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/fgmacedo/buchecha/internal/cli.version={{.Version}}
+
+archives:
+  - id: bcc
+    ids:
+      - bcc
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+nfpms:
+  - id: bcc
+    package_name: bcc
+    ids:
+      - bcc
+    vendor: Fernando Macedo
+    homepage: https://github.com/fgmacedo/buchecha
+    maintainer: Fernando Macedo <fgmacedo@gmail.com>
+    description: |-
+      Director-driven coding pipeline for autonomous agent loops.
+    license: MIT
+    formats:
+      - deb
+    bindir: /usr/bin
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ .Tag }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Director
+      regexp: '^director:'
+      order: 0
+    - title: Loop
+      regexp: '^loop:'
+      order: 1
+    - title: Executor
+      regexp: '^executor:'
+      order: 2
+    - title: TUI
+      regexp: '^tui:'
+      order: 3
+    - title: CLI
+      regexp: '^(cli|cmd):'
+      order: 4
+    - title: Spec & Docs
+      regexp: '^(spec|docs):'
+      order: 5
+    - title: Refactors
+      regexp: '^refac:'
+      order: 6
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: bcc
+    ids:
+      - bcc
+    repository:
+      owner: fgmacedo
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/fgmacedo/buchecha
+    description: Director-driven coding pipeline for autonomous agent loops.
+    license: MIT
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    install: |
+      bin.install "bcc"
+    test: |
+      system "#{bin}/bcc", "--version"
+
+release:
+  github:
+    owner: fgmacedo
+    name: buchecha
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
