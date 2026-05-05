@@ -84,6 +84,10 @@ type directorDeps struct {
 	// event onto it (non-blocking) so /api/v1/sessions/{id}/events
 	// subscribers see the live stream. Tests leave nil to opt out.
 	serviceEvents chan<- loop.Event
+	// svc, when non-nil, is the application services aggregator the TUI
+	// subscribes to for its event stream instead of a raw channel.
+	// Wired after services.New in runDirector; tests leave nil.
+	svc *services.Services
 }
 
 // directorIO captures the I/O surface so tests can drive escalation
@@ -173,6 +177,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 	deps.boot = listener.boot
 	deps.store = store
 	deps.serviceEvents = serviceEvents
+	deps.svc = svc
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
 }
 
@@ -753,13 +758,24 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// raw is the writer-side channel: loop.Loop.Run and the planner
-	// orchestrator both publish onto it. tuiCh is the read-side the
-	// bubbletea Model consumes. The tee goroutine in between forwards
-	// every event to tuiCh AND to deps.serviceEvents so the live SSE
-	// stream sees the same flow as the dashboard.
+	// orchestrator both publish onto it. A forwarding goroutine copies
+	// every event from raw to deps.serviceEvents (non-blocking, keepalive
+	// semantics: raw closing does not close serviceEvents so subscriber
+	// lifetimes are decoupled from any single l.Run invocation). The TUI
+	// reads from deps.svc.Events.Subscribe rather than a dedicated channel.
 	raw := make(chan loop.Event, 256)
-	tuiCh := make(chan loop.Event, 256)
-	go teeLoopEvents(raw, tuiCh, deps.serviceEvents)
+	go func() {
+		for ev := range raw {
+			if deps.serviceEvents == nil {
+				continue
+			}
+			select {
+			case deps.serviceEvents <- ev:
+			default:
+				slog.Warn("cli: serviceEvents channel full; dropping event")
+			}
+		}
+	}()
 
 	type runResult struct {
 		code int
@@ -775,24 +791,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		latest = r
 	}
 
-	// resolvedPlan is the plan the orchestrator latched on the first
-	// run; the session-menu Resume factory reuses it so [r] does not
-	// re-run the planner. Captured by the orchestrator goroutine, read
-	// by the factory closure on subsequent UI events.
-	var (
-		planMu       sync.Mutex
-		resolvedPlan *director.Plan
-	)
-	setResolvedPlan := func(p *director.Plan) {
-		planMu.Lock()
-		defer planMu.Unlock()
-		resolvedPlan = p
-	}
-	currentPlan := func() *director.Plan {
-		planMu.Lock()
-		defer planMu.Unlock()
-		return resolvedPlan
-	}
 
 	// runLoopOn spins up loop.Loop.Run against a freshly built events
 	// channel. Used by both the first-run orchestrator and the session
@@ -827,29 +825,8 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		setLatest(runResult{code: code, err: err})
 	}
 
-	// newEvents is the host's Resume factory: the user pressed [r] in
-	// the session menu after the loop terminated. Build a fresh channel,
-	// spawn the loop on it (reusing the latched plan), tee it into a
-	// fresh TUI read channel plus the long-lived serviceEvents, and hand
-	// the read channel back to the Model so panels live-update against
-	// the new run.
-	newEvents := func() <-chan loop.Event {
-		plan := currentPlan()
-		if plan == nil {
-			ch := make(chan loop.Event, 1)
-			emitLoopFinished(ch, "no plan to resume", loop.ExitInvalid)
-			close(ch)
-			return ch
-		}
-		runCh := make(chan loop.Event, 256)
-		tuiCh := make(chan loop.Event, 256)
-		go teeLoopEvents(runCh, tuiCh, deps.serviceEvents)
-		go runLoopOn(plan, runCh)
-		return tuiCh
-	}
-
 	model := tui.New(tui.Options{
-		Events:          tuiCh,
+		Services:        deps.svc,
 		Cancel:          cancel,
 		Gate:            gate,
 		SpecPath:        specPath,
@@ -860,7 +837,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		GitCtx:          ctx,
 		EscalationGate:  escalation,
 		PlanningPending: true,
-		NewEvents:       newEvents,
 	})
 	progOpts := []tea.ProgramOption{
 		tea.WithContext(ctx),
@@ -936,7 +912,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		// planning placeholder, and start the loop straight away.
 		// bcc is autonomous by design: there is no user gate here.
 		model.SignalPlanReady(plan)
-		setResolvedPlan(plan)
 		runLoopOn(plan, raw)
 		// loop.Loop.Run owns raw for the duration of Run: it emits a
 		// final LoopFinished and closes the channel via its own defer,

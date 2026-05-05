@@ -19,6 +19,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/director/fake"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/services"
 )
 
 // scriptedPlan returns a Plan with two phases that pass ValidatePlan,
@@ -1161,5 +1162,93 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), a.Session().ID) || !strings.Contains(err.Error(), b.Session().ID) {
 		t.Errorf("error message missing both candidate ids: %v", err)
+	}
+}
+
+// TestServiceEventsSameOrderForTUIAndAPI asserts that the TUI host and
+// the API server observe the same SeqEvent ordering when subscribing to
+// the same *services.Services instance. Both subscribers are simulated
+// as goroutines draining services.Events.Subscribe; the test pumps N
+// events through the shared loop events channel and verifies count and
+// last-seq parity across both consumers.
+func TestServiceEventsSameOrderForTUIAndAPI(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+	store := mkSessionStore(t, tmp, specPath)
+
+	loopEvents := make(chan loop.Event, 32)
+	svc := services.New(services.Deps{
+		LoopEvents:   loopEvents,
+		SessionStore: store,
+	})
+
+	ctx := t.Context()
+	sessID := store.Session().ID
+	const eventCount = 8
+
+	// Subscribe two consumers: one simulating the TUI, one the API server.
+	tuiSub, err := svc.Events.Subscribe(ctx, sessID, 0)
+	if err != nil {
+		t.Fatalf("TUI Subscribe: %v", err)
+	}
+	apiSub, err := svc.Events.Subscribe(ctx, sessID, 0)
+	if err != nil {
+		t.Fatalf("API Subscribe: %v", err)
+	}
+
+	// Drain both subscriptions concurrently and collect Seq values.
+	var (
+		mu     sync.Mutex
+		tuiSeq []int64
+		apiSeq []int64
+	)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for se := range tuiSub {
+			mu.Lock()
+			tuiSeq = append(tuiSeq, se.Seq)
+			mu.Unlock()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for se := range apiSub {
+			mu.Lock()
+			apiSeq = append(apiSeq, se.Seq)
+			mu.Unlock()
+		}
+	}()
+
+	// Pump N-1 regular events then LoopFinished as the terminal event.
+	for i := range eventCount - 1 {
+		loopEvents <- loop.IterationStarted{Index: i + 1, MaxIter: eventCount}
+	}
+	loopEvents <- loop.LoopFinished{Reason: "done", ExitCode: 0}
+
+	wg.Wait()
+
+	if len(tuiSeq) != eventCount {
+		t.Errorf("TUI received %d events, want %d", len(tuiSeq), eventCount)
+	}
+	if len(apiSeq) != eventCount {
+		t.Errorf("API received %d events, want %d", len(apiSeq), eventCount)
+	}
+	if len(tuiSeq) == 0 || len(apiSeq) == 0 {
+		return
+	}
+	lastTUI := tuiSeq[len(tuiSeq)-1]
+	lastAPI := apiSeq[len(apiSeq)-1]
+	if lastTUI != lastAPI {
+		t.Errorf("last seq mismatch: TUI=%d API=%d", lastTUI, lastAPI)
+	}
+	// Verify seqs are monotonically increasing on the TUI side.
+	for i := 1; i < len(tuiSeq); i++ {
+		if tuiSeq[i] <= tuiSeq[i-1] {
+			t.Errorf("TUI seq not monotonic at index %d: %v", i, tuiSeq)
+			break
+		}
 	}
 }
