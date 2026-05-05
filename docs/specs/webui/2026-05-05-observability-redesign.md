@@ -131,7 +131,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: This is the canary that catches the schema/code drift when one place is updated without the other.
 **depends_on**: T1.2, T1.3.
 
-### [ ] P2: Per-spawn prompt persistence
+### [x] P2: Per-spawn prompt persistence
 
 **id**: `P2-spawn-prompts`
 **intent**: Every role spawn writes its resolved prompt to disk before the subprocess starts, under `.bcc/sessions/<id>/spawns/<spawn_id>.md`. The path is recorded in `SpawnStarted.PromptPath`. This makes "what prompt did this exact spawn receive" answerable from the SPA without reaching into the agent CLI.
@@ -139,7 +139,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: `internal/loop/`, `internal/services/`, `internal/api/`, the SPA.
 **depends_on**: P1.
 
-#### [ ] T2.1: Spawn directory contract
+#### [x] T2.1: Spawn directory contract
 
 **acceptance_criteria**:
 - `internal/director/session.go` (or the closest existing helper) exposes `SpawnsDir() string` returning `<sessionDir>/spawns`. Created lazily by the first spawn that writes there.
@@ -150,7 +150,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Centralizing the path under the session keeps `bcc sessions show <id>` discoverable.
 **depends_on**: P1.
 
-#### [ ] T2.2: Director adapter writes prompts and emits `spawn_started`
+#### [x] T2.2: Director adapter writes prompts and emits `spawn_started`
 
 **acceptance_criteria**:
 - `internal/director/claude/claude.go` `runRole` (around line 317) generates a SpawnID, writes the resolved prompt bytes to `<spawnsDir>/<spawn_id>.md` before the agent process starts, and emits `loop.SpawnStarted` on the events channel with the populated fields.
@@ -162,7 +162,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: The Director adapter already gets a `stderrFactory` per spawn. Adding a prompt write at the same hook is mechanically similar.
 **depends_on**: T2.1.
 
-#### [ ] T2.3: Executor adapter writes prompts and emits `spawn_started`
+#### [x] T2.3: Executor adapter writes prompts and emits `spawn_started`
 
 **acceptance_criteria**:
 - `internal/executor/claude/claude.go` `Run` writes the resolved system+user prompt bytes to `<spawnsDir>/<spawn_id>.md` before the subprocess starts, and emits `loop.SpawnStarted` with `Role: "executor"`, `IterationID`, `PhaseID`, `Attempt` populated from the briefing context.
@@ -172,7 +172,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Executor spawns are the heaviest cost contributor; making their prompts inspectable is the highest-value half of P2.
 **depends_on**: T2.1.
 
-### [ ] P3: Per-spawn cost emission
+### [x] P3: Per-spawn cost emission
 
 **id**: `P3-spawn-cost`
 **intent**: Every role spawn emits `SpawnFinished` with the cost extracted from the agent's `result_summary` (or zero values if the agent exited before reporting one). For the Executor adapter, the data already flows through the stream-json parser and surfaces in `agent_event.result_summary`; this phase wires the same parse output into a typed `SpawnFinished`. For Director adapters, the parser is reused.
@@ -180,7 +180,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **scope_out**: `internal/services/`, `internal/api/`, the SPA, `internal/tui/` (TUI keeps consuming `agent_event.result_summary` for now; SPA aggregator uses the new events).
 **depends_on**: P1, P2.
 
-#### [ ] T3.1: Stream-json result extraction helper
+#### [x] T3.1: Stream-json result extraction helper
 
 **acceptance_criteria**:
 - `internal/executor/claude/streamjson/` (existing package) exports a typed helper `LastResultSummary(events []AgentEvent) (Cost, bool)` returning the cost values plus a `found` flag. The helper does not modify the parser; it scans the parsed events.
@@ -190,7 +190,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Pulling the helper into the streamjson package keeps both adapters using the same extraction logic.
 **depends_on**: P2.
 
-#### [ ] T3.2: Director adapter emits `spawn_finished`
+#### [x] T3.2: Director adapter emits `spawn_finished`
 
 **acceptance_criteria**:
 - `internal/director/claude/claude.go` `runRole` emits `loop.SpawnFinished` after `cmd.Wait` returns, with `SpawnID` matching the `SpawnStarted` from T2.2, `Role`, `ExitCode` from the process, `DurationMS` measured around the spawn, and `Cost` populated from `streamjson.LastResultSummary` over the parsed agent events the adapter already reads.
@@ -200,7 +200,7 @@ Eleven phases. Sequencing follows the dependency graph at the end of this sectio
 **context**: Director spawns are short and currently invisible in cost dashboards; this closes the gap.
 **depends_on**: T2.2, T3.1.
 
-#### [ ] T3.3: Executor adapter emits `spawn_finished`
+#### [x] T3.3: Executor adapter emits `spawn_finished`
 
 **acceptance_criteria**:
 - `internal/executor/claude/claude.go` `Run` emits `loop.SpawnFinished` after the subprocess exits, with `SpawnID` matching `ExecResult.SpawnID` and the same fields as T3.2.
@@ -673,6 +673,15 @@ After P11, the following must hold without manual fix-up:
 - `CLAUDE.md`
 
 ## Execution Journal
+
+### 2026-05-05 14:00:00 , P3-spawn-cost
+
+- streamjson.LastResultSummary helper added with table-driven tests covering empty, no-result, single, multiple, nil-Done, and parsed-fixture cases (T3.1)
+- Director claude adapter accumulates parsed events and emits loop.SpawnFinished after cmd.Wait with SpawnID matching SpawnStarted, Cost extracted via LastResultSummary, exit code from cmd.ProcessState (T3.2)
+- Executor claude adapter inlines the streamjson scan loop to retain parsed events and emits loop.SpawnFinished before any return path so observers always see the closing event paired with SpawnStarted (T3.3)
+- agent_event.result_summary continues to be forwarded on the agent events channel for TUI backward compatibility
+- New fixtures fake-claude-fail.sh and fake-claude-no-result.sh cover the non-zero-exit and zero-cost branches
+- Decision: chose inline scan loop in executor over reusing streamjson.Stream so parsedEvents accumulation lives next to forwarding without changing Stream's public signature
 
 ### 2026-05-05 13:00:00 , P2-spawn-prompts
 
