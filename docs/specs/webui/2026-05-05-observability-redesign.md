@@ -681,8 +681,8 @@ After P11, the following must hold without manual fix-up:
 - Task selection: renders task id, status, retry budget from snapshot, depends_on chips, started/ended timestamps from task_started/task_completed events, iteration cost (inferred from preceding phase_briefed to get iteration number, then matched to spawn_started/spawn_finished by phase_id + attempt) (T9.1)
 - Spawn selection: renders spawn id, role pill, model, effort, prompt path, phase, task, attempt from spawn_started event; exit code, duration from spawn_finished; full cost breakdown (USD, input/output/cache tokens) with type-guarded access on cost fields (T9.1)
 - inspector-mode.tsx updated: placeholder body replaced with OverviewTab; tab strip header added showing "Overview" as active tab; remaining tabs land in T9.2-T9.5 (T9.1)
-- Vitest tests in inspector/__tests__/overview-tab.test.tsx: 19 tests covering phase with multiple attempts, task with no events (edge case), spawn with zero cost, all three happy-path cases; fixture events inline (T9.1)
-- All 142 frontend tests pass; pnpm build exits 0; bundle 188 kB gzipped (limit 600 kB) (T9.1)
+- Vitest tests in inspector/__tests__/overview-tab.test.tsx: 19 tests covering phase with multiple attempts, task with no events (edge case), spawn with zero cost, all three happy-path cases; fixture events inline; unused React import removed to satisfy noUnusedLocals (T9.1)
+- All 142 frontend tests pass; npm run build exits 0; bundle 189 kB gzipped (limit 600 kB) (T9.1)
 - **Decisions**: spawn_finished events do not carry phase_id in the serialized payload (only spawn_started does), so phase cost is computed by first collecting spawn_ids from spawn_started with matching phase_id, then summing costs from spawn_finished via spawn_id correlation. Task iteration cost uses phase_briefed.iteration matched to spawn_started.attempt (same 1-based counter) to isolate the spawns that ran during the task's attempt.
 
 ### 2026-05-05 19:10:00 , P8-dag-view

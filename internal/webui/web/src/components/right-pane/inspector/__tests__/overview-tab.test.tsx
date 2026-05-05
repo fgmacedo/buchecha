@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import React from 'react'
 import { OverviewTab } from '../overview-tab'
 import type { SeqEvent } from '../../../../hooks/use-events'
 import type { Snapshot } from '../../../../hooks/use-snapshot'
