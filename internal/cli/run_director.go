@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -73,6 +74,10 @@ type directorDeps struct {
 	// without re-constructing the boot. Tests leave this nil and skip
 	// the bind step.
 	boot *mcpBoot
+	// stats, when non-nil, persists per-role spawn telemetry to
+	// stats.jsonl in the session directory. Bound after session
+	// resolution; tests typically leave nil to opt out.
+	stats *director.StatsLog
 }
 
 // directorIO captures the I/O surface so tests can drive escalation
@@ -401,6 +406,9 @@ func runDirectorWith(
 		}
 		deps.boot.bindSession(deps.store, cfg.Director.IsMCPAuditEnabled(), gitProvider, director.JournalDeltaProvider{})
 	}
+	if deps.store != nil && deps.stats == nil {
+		deps.stats = director.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
+	}
 
 	enableDebugLogCapture(cfg, &deps)
 
@@ -435,6 +443,7 @@ func runDirectorWith(
 			NewExecutor: deps.newExecutor,
 			Handler:     directorEffectiveHandler(deps),
 			Escalation:  escalation,
+			Stats:       deps.stats,
 		},
 	}
 
@@ -694,6 +703,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 				NewExecutor: deps.newExecutor,
 				Handler:     directorEffectiveHandler(deps),
 				Escalation:  escalation,
+				Stats:       deps.stats,
 			},
 		}
 		code, err := l.Run(ctx, ch)
@@ -1017,7 +1027,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 			plannerRegistry = *reg
 		}
 	}
-	plan, _, runErr := deps.planner.Plan(ctx, director.PlannerInput{
+	plan, plannerStats, runErr := deps.planner.Plan(ctx, director.PlannerInput{
 		AgentID:  agentID,
 		SpecPath: specPath,
 		SpecHash: hash,
@@ -1027,6 +1037,18 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		close(agentEvents)
 	}
 	<-pumpDone
+	if plannerStats != nil && deps.stats != nil {
+		if err := deps.stats.Append(director.StatsEntry{
+			At:           deps.now(),
+			Role:         string(dag.RolePlanner),
+			DurationMS:   plannerStats.DurationMS,
+			CostUSD:      plannerStats.CostUSD,
+			InputTokens:  plannerStats.InputTokens,
+			OutputTokens: plannerStats.OutputTokens,
+		}); err != nil {
+			slog.Warn("director stats append planner", "err", err)
+		}
+	}
 
 	// The Plan flows through the MCP handler via bcc_plan_emit; the
 	// adapter return is nil by design. Handler state is authoritative:
