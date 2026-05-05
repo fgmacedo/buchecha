@@ -634,7 +634,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 
 **acceptance_criteria**:
 - Header renders left (session title, id, spec path with copy-to-clipboard), center (status pill, iteration counter, elapsed time), right (sparkline of throughput, view toggle DAG | Activity, settings menu).
-- Throughput sparkline uses Visx (`@visx/scale`, `@visx/shape`).
+- Throughput sparkline uses `d3-scale` (`scaleLinear`) and `d3-shape` (`line`) rendered as a plain SVG `<path>`.
 - The view toggle persists to `localStorage`.
 
 **context**: Status pill uses status-palette CSS variables from T6.2.
@@ -656,7 +656,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 #### [ ] T7.3: Activity Gantt
 
 **acceptance_criteria**:
-- `src/components/activity-view/` renders a horizontal Gantt with Visx primitives.
+- `src/components/activity-view/` renders a horizontal Gantt as plain SVG using `d3-scale` (`scaleLinear`, `scaleBand` or `scaleTime`), `d3-shape` where useful, and `d3-axis` for tick rendering.
 - X axis: wall-clock time. Y axis: phases as lanes. Bars: one per (task, attempt) with width = duration. Iteration boundaries drawn as light vertical rules. Retry markers as vertical ticks.
 - Hover tooltip shows phase, task, attempt, role, model and effort, duration, status.
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { scaleLinear } from '@visx/scale'
-import { LinePath } from '@visx/shape'
+import { scaleLinear } from 'd3-scale'
+import { line as d3Line, curveLinear } from 'd3-shape'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { SeqEvent } from '../../hooks/use-events'
 import type { ViewMode } from '../../hooks/use-view'
@@ -37,11 +37,11 @@ interface SparklineProps {
   events: SeqEvent[]
 }
 
-// ThroughputSparkline renders a 30-second sliding window of event counts as a
-// Visx LinePath. The x-axis is bucketed seconds (0=oldest, 29=newest);
+// ThroughputSparkline renders a 30-second sliding window of event counts as
+// an SVG path. The x-axis is bucketed seconds (0=oldest, 29=newest);
 // the y-axis is the event count in that second, scaled to the sparkline height.
 function ThroughputSparkline({ events }: SparklineProps) {
-  const buckets = useMemo(() => {
+  const path = useMemo(() => {
     const now = Date.now()
     const counts = new Array<number>(SPARKLINE_WINDOW).fill(0)
     for (const { event } of events) {
@@ -51,28 +51,24 @@ function ThroughputSparkline({ events }: SparklineProps) {
         counts[SPARKLINE_WINDOW - 1 - ageSeconds]++
       }
     }
-    return counts
+
+    const maxCount = Math.max(...counts, 1)
+    const xScale = scaleLinear().domain([0, SPARKLINE_WINDOW - 1]).range([0, SPARKLINE_W])
+    const yScale = scaleLinear().domain([0, maxCount]).range([SPARKLINE_H, 2])
+
+    const generator = d3Line<{ x: number; y: number }>()
+      .x((d) => xScale(d.x))
+      .y((d) => yScale(d.y))
+      .curve(curveLinear)
+
+    return generator(counts.map((count, i) => ({ x: i, y: count }))) ?? ''
   }, [events])
-
-  const maxCount = Math.max(...buckets, 1)
-
-  const xScale = scaleLinear({
-    domain: [0, SPARKLINE_WINDOW - 1],
-    range: [0, SPARKLINE_W],
-  })
-  const yScale = scaleLinear({
-    domain: [0, maxCount],
-    range: [SPARKLINE_H, 2],
-  })
-
-  const data = buckets.map((count, i) => ({ x: i, y: count }))
 
   return (
     <svg width={SPARKLINE_W} height={SPARKLINE_H} aria-hidden="true">
-      <LinePath
-        data={data}
-        x={(d) => xScale(d.x)}
-        y={(d) => yScale(d.y)}
+      <path
+        d={path}
+        fill="none"
         stroke="var(--color-accent)"
         strokeWidth={1.5}
         strokeLinecap="round"
