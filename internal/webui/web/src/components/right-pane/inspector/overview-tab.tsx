@@ -125,7 +125,7 @@ const ROLE_CSS_VAR: Record<string, string> = {
 
 // -- Primitive UI pieces --
 
-function StatusPill({ status }: { status: string }) {
+export function StatusPill({ status }: { status: string }) {
   const color = statusCSSVar(status)
   return (
     <span
@@ -147,7 +147,7 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-function RolePill({ role }: { role: string }) {
+export function RolePill({ role }: { role: string }) {
   const color = ROLE_CSS_VAR[role] ?? 'var(--color-muted-foreground)'
   return (
     <span
@@ -168,7 +168,7 @@ function RolePill({ role }: { role: string }) {
   )
 }
 
-function DepChip({ dep }: { dep: string }) {
+export function DepChip({ dep }: { dep: string }) {
   return (
     <span
       style={{
@@ -186,7 +186,7 @@ function DepChip({ dep }: { dep: string }) {
   )
 }
 
-function MetaRow({ label, children }: { label: string; children: ReactNode }) {
+export function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div
       style={{
@@ -226,7 +226,7 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <p

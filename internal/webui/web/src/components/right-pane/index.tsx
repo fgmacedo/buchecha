@@ -2,7 +2,7 @@ import type { SeqEvent } from '../../hooks/use-events'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import { useSelection } from '../../hooks/use-selection'
 import { TimelineMode } from './timeline-mode'
-import { InspectorMode } from './inspector-mode'
+import { Inspector } from './inspector'
 
 export interface RightPaneProps {
   events: SeqEvent[]
@@ -44,10 +44,11 @@ export function RightPane({ events, snapshot, sessionId }: RightPaneProps) {
         }}
       >
         {selection !== null && (
-          <InspectorMode
+          <Inspector
             selection={selection}
             events={events}
             snapshot={snapshot}
+            sessionId={sessionId}
             onClose={() => select(null)}
           />
         )}
