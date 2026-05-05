@@ -1,10 +1,10 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
 import { useEvents } from './hooks/use-events'
 import { useView } from './hooks/use-view'
-import { SelectionProvider } from './hooks/use-selection'
+import { SelectionProvider, useSelection } from './hooks/use-selection'
 import { Header } from './components/header'
 import { RightPane } from './components/right-pane'
 import { SessionsSidebar } from './components/sessions-sidebar'
@@ -41,6 +41,26 @@ interface AppShellProps {
   sessionId: string
 }
 
+// EscapeHandler clears the active selection when the Escape key is pressed.
+// Mounted once inside SelectionProvider so it has access to useSelection.
+function EscapeHandler() {
+  const { select } = useSelection()
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        select(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [select])
+
+  return null
+}
+
 function AppShell({ sessionId }: AppShellProps) {
   const [view, setView] = useView()
 
@@ -49,6 +69,7 @@ function AppShell({ sessionId }: AppShellProps) {
 
   return (
     <SelectionProvider sessionId={sessionId}>
+      <EscapeHandler />
       <div
         className="grid h-screen w-screen bg-background text-foreground font-sans"
         style={{
@@ -91,7 +112,7 @@ function AppShell({ sessionId }: AppShellProps) {
                   display: view === 'dag' ? 'block' : 'none',
                 }}
               >
-                <DAGView snapshot={snapshot} sessionId={snapshot?.session.id ?? 'live'} />
+                <DAGView snapshot={snapshot} sessionId={snapshot?.session.id ?? 'live'} events={events} />
               </div>
               <div
                 style={{
