@@ -74,6 +74,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 	globalIter := 0
 	priorFeedback := ""
 	pendingHint := ""
+	phaseIterations := map[string]int{}
 
 	for state.HasPending() {
 		eligible := state.EligiblePhases()
@@ -97,7 +98,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			budget = l.Config.Director.RetryBudget
 		}
 
-		iterationID := fmt.Sprintf("%s-%d", phaseID, 1)
+		phaseIterations[phaseID]++
+		iteration := phaseIterations[phaseID]
+		iterationID := fmt.Sprintf("%s-%02d", phaseID, iteration)
 		var briefing *director.Briefing
 		if phase.PreparedBriefing != nil {
 			synthetic := director.Briefing{
@@ -122,7 +125,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				return l.terminate(events, "fatal", ExitInvalid),
 					fmt.Errorf("director: register briefer: %w", err)
 			}
-			briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, 1, subDAG, priorFeedback)
+			briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, iteration, subDAG, priorFeedback)
 			if err != nil {
 				registry.Deregister(brieferID)
 				return l.terminate(events, "fatal", ExitInvalid),
@@ -201,7 +204,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		brieferSkipped := phase.PreparedBriefing != nil
 		reviewSkipped := phase.SkipReview
 		emit(events, PhaseBriefed{
-			PhaseID: phaseID, Attempt: 1,
+			PhaseID: phaseID, Iteration: iteration,
 			Briefing:       briefing,
 			BrieferModel:   brieferModel,
 			BrieferEffort:  brieferEffort,

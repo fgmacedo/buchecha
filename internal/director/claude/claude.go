@@ -212,7 +212,6 @@ type briefView struct {
 	SpecPath    string
 	IterationID string
 	PhaseID     string
-	Attempt     int
 }
 
 type reviewView struct {
@@ -259,7 +258,6 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 		SpecPath:    in.SpecPath,
 		IterationID: in.IterationID,
 		PhaseID:     in.PhaseID,
-		Attempt:     in.Attempt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)

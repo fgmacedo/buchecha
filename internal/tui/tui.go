@@ -546,7 +546,7 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.director.onPhasePlanned(e.Plan)
 		m.header.onAny(e.At)
 	case loop.PhaseBriefed:
-		m.director.onPhaseBriefed(e.PhaseID, e.Attempt, e.Briefing, phaseCapability{
+		m.director.onPhaseBriefed(e.PhaseID, e.Iteration, e.Briefing, phaseCapability{
 			BrieferModel:   e.BrieferModel,
 			BrieferEffort:  e.BrieferEffort,
 			ExecutorModel:  e.ExecutorModel,

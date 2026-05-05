@@ -91,11 +91,12 @@ func (m *Model) SignalPlanReady(plan *director.Plan) {
 // The panel is hidden when the run is not Director-driven (plan == nil),
 // keeping the MVP layout intact for the legacy path.
 type directorPanel struct {
-	plan           *director.Plan
-	currentPhaseID string
-	currentAttempt int
-	latestOutcome  string
-	cumulativeCost float64
+	plan             *director.Plan
+	currentPhaseID   string
+	currentIteration int
+	currentAttempt   int
+	latestOutcome    string
+	cumulativeCost   float64
 
 	// planningStatus tracks the well-known "planning" task on the
 	// timeline. The Planner task is not part of the DAG; the loop emits a
@@ -186,6 +187,7 @@ func (d *directorPanel) onPhasePlanned(p *director.Plan) {
 	d.plan = p
 	d.phaseStatus = make(map[string]phaseMark, len(p.Phases))
 	d.currentPhaseID = ""
+	d.currentIteration = 0
 	d.currentAttempt = 0
 	d.latestOutcome = ""
 	d.escalation = false
@@ -218,13 +220,16 @@ func (d *directorPanel) onTaskCompleted(taskID string) {
 const planningTaskID = "planning"
 
 // onPhaseBriefed marks the phase as in-progress and points the active
-// cursor at it.
-func (d *directorPanel) onPhaseBriefed(phaseID string, attempt int, b *director.Briefing, cap phaseCapability) {
+// cursor at it. iteration is the 1-based index of this brief→execute→
+// review cycle within the phase; the executor retry counter is tracked
+// separately and updated by onPhaseReviewed.
+func (d *directorPanel) onPhaseBriefed(phaseID string, iteration int, b *director.Briefing, cap phaseCapability) {
 	if d.phaseStatus == nil {
 		d.phaseStatus = map[string]phaseMark{}
 	}
 	d.currentPhaseID = phaseID
-	d.currentAttempt = attempt
+	d.currentIteration = iteration
+	d.currentAttempt = 0
 	if d.phaseStatus[phaseID] != phaseApproved {
 		d.phaseStatus[phaseID] = phaseInProgress
 	}
@@ -439,8 +444,18 @@ func (d directorPanel) view(width int) string {
 		}
 		row := fmt.Sprintf("  %s %s", styled, title)
 		if ph.ID == d.currentPhaseID {
-			active := fmt.Sprintf(" (attempt %d)", d.currentAttempt)
-			row += theme.subtle.Render(active)
+			var active string
+			switch {
+			case d.currentIteration > 0 && d.currentAttempt > 0:
+				active = fmt.Sprintf(" (iter %d · attempt %d)", d.currentIteration, d.currentAttempt)
+			case d.currentIteration > 0:
+				active = fmt.Sprintf(" (iter %d)", d.currentIteration)
+			case d.currentAttempt > 0:
+				active = fmt.Sprintf(" (attempt %d)", d.currentAttempt)
+			}
+			if active != "" {
+				row += theme.subtle.Render(active)
+			}
 			row = lipgloss.NewStyle().Bold(true).Render(row)
 		}
 		if cap, ok := d.phaseCapability[ph.ID]; ok {

@@ -57,7 +57,6 @@ func TestBrief_RunsAndReportsStats(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-1",
 		PhaseID:     "p1",
-		Attempt:     1,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -106,7 +105,6 @@ func TestRunRole_BudgetExceeded(t *testing.T) {
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
-		Attempt:  1,
 	}, nil)
 	if err == nil {
 		t.Fatalf("expected ErrBudgetExceeded")
@@ -138,7 +136,6 @@ func TestArgs_PassedToBinary(t *testing.T) {
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
-		Attempt:  1,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -203,7 +200,6 @@ func TestBrief_AssignmentOverridesModelAndEffort(t *testing.T) {
 		Plan:       &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath:   "/tmp/spec.md",
 		PhaseID:    "p1",
-		Attempt:    1,
 		Assignment: &director.RoleAssignment{Model: "override-model", Effort: "high"},
 	}, nil)
 	if err != nil {
@@ -240,7 +236,6 @@ func TestBrief_NoAssignmentKeepsConfiguredDefaults(t *testing.T) {
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
-		Attempt:  1,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -295,7 +290,7 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 		view any
 	}{
 		{"plan", director.PlanPromptTemplate(), planView{AgentID: "planner-001", SpecPath: "/tmp/spec.md"}},
-		{"brief", director.BriefPromptTemplate(), briefView{AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1", Attempt: 1}},
+		{"brief", director.BriefPromptTemplate(), briefView{AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"}},
 		{"review", director.ReviewPromptTemplate(), reviewView{AgentID: "reviewer-001", SpecPath: "/tmp/spec.md"}},
 	}
 	for _, tc := range cases {

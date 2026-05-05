@@ -68,11 +68,11 @@ func jsonPayload(ev Event) map[string]any {
 		return out
 	case PhaseBriefed:
 		out := map[string]any{
-			"type":     "phase_briefed",
-			"at":       formatAt(e.At),
-			"level":    level,
-			"phase_id": e.PhaseID,
-			"attempt":  e.Attempt,
+			"type":      "phase_briefed",
+			"at":        formatAt(e.At),
+			"level":     level,
+			"phase_id":  e.PhaseID,
+			"iteration": e.Iteration,
 		}
 		assignments := map[string]any{}
 		if a := assignmentJSON(e.BrieferModel, e.BrieferEffort, e.BrieferSkipped); a != nil {

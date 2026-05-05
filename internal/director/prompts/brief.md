@@ -33,10 +33,9 @@ Briefing
 
 ## Iteration context
 
-- `iteration_id` (provided): `{{.IterationID}}`.
+- `iteration_id` (provided): `{{.IterationID}}`. Format `<phase_id>-<NN>`; the suffix is the 1-based iteration index within the phase. A phase may have multiple iterations when an earlier briefing covered only a subset of pending tasks, or when an escalation resumed the phase.
 - `phase_id` (suggested): `{{.PhaseID}}`. Override with another eligible phase only if the snapshot says this one is no longer the right choice.
-- `attempt`: {{.Attempt}}.
-- `prior_feedback` (when {{.Attempt}} > 1): summarize previous verdict feedback as prose so the Executor reads ranked, actionable corrections.
+- `prior_feedback` (when present in the briefer input): summarize previous verdict feedback as prose so the Executor reads ranked, actionable corrections. Its presence is the signal that this is a follow-up iteration on the same phase.
 
 ## Constraints
 

@@ -105,8 +105,34 @@ func TestDirectorPanel_PhaseInProgress_HighlightsActive(t *testing.T) {
 		t.Errorf("p1 status = %v, want phaseInProgress", d.phaseStatus["p1"])
 	}
 	out := d.view(80)
-	if !strings.Contains(out, "attempt 1") {
-		t.Errorf("active phase row missing 'attempt 1'\n%s", out)
+	if !strings.Contains(out, "iter 1") {
+		t.Errorf("active phase row missing 'iter 1'\n%s", out)
+	}
+}
+
+func TestDirectorPanel_PhaseBriefed_SecondIterationRendersIter2(t *testing.T) {
+	d := directorPanel{}
+	d.onPhasePlanned(samplePlan())
+	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-01", PhaseID: "p1"}, phaseCapability{})
+	d.onPhaseBriefed("p1", 2, &director.Briefing{IterationID: "p1-02", PhaseID: "p1"}, phaseCapability{})
+	if d.currentIteration != 2 || d.currentAttempt != 0 {
+		t.Errorf("after second brief: iteration=%d attempt=%d, want 2/0",
+			d.currentIteration, d.currentAttempt)
+	}
+	out := d.view(80)
+	if !strings.Contains(out, "iter 2") {
+		t.Errorf("active phase row missing 'iter 2'\n%s", out)
+	}
+}
+
+func TestDirectorPanel_PhaseReviewed_AfterBriefShowsIterAndAttempt(t *testing.T) {
+	d := directorPanel{}
+	d.onPhasePlanned(samplePlan())
+	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-01", PhaseID: "p1"}, phaseCapability{})
+	d.onPhaseReviewed("p1", 2, "revise")
+	out := d.view(80)
+	if !strings.Contains(out, "iter 1 · attempt 2") {
+		t.Errorf("active phase row should combine iteration and attempt; got\n%s", out)
 	}
 }
 
@@ -262,7 +288,7 @@ func TestUpdate_DirectorEventsFlowToPanel(t *testing.T) {
 	}
 
 	got, _ = mm.Update(eventMsg{ev: loop.PhaseBriefed{
-		PhaseID: "p1", Attempt: 1,
+		PhaseID: "p1", Iteration: 1,
 		Briefing: &director.Briefing{IterationID: "p1-1", PhaseID: "p1"},
 		At:       at.Add(time.Second),
 	}})

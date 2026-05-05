@@ -471,16 +471,16 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 		}, true
 	case "phase_briefed":
 		var body struct {
-			PhaseID string `json:"phase_id"`
-			Attempt int    `json:"attempt"`
+			PhaseID   string `json:"phase_id"`
+			Iteration int    `json:"iteration"`
 		}
 		if err := json.Unmarshal(raw, &body); err != nil {
 			return nil, false
 		}
 		return loop.PhaseBriefed{
-			PhaseID: body.PhaseID,
-			Attempt: body.Attempt,
-			At:      at,
+			PhaseID:   body.PhaseID,
+			Iteration: body.Iteration,
+			At:        at,
 		}, true
 	case "phase_reviewed":
 		var body struct {

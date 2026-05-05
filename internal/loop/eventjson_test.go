@@ -255,7 +255,7 @@ func TestMarshalJSONEvent_PhaseBriefed_WithAssignments(t *testing.T) {
 	at := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 	ev := loop.PhaseBriefed{
 		PhaseID:        "p1",
-		Attempt:        1,
+		Iteration:      1,
 		At:             at,
 		ExecutorModel:  "claude-opus-4-7",
 		ExecutorEffort: "high",
@@ -290,7 +290,7 @@ func TestMarshalJSONEvent_PhaseBriefed_WithAssignments(t *testing.T) {
 
 func TestMarshalJSONEvent_PhaseBriefed_OmitsEmptyAssignments(t *testing.T) {
 	at := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
-	ev := loop.PhaseBriefed{PhaseID: "p1", Attempt: 1, At: at}
+	ev := loop.PhaseBriefed{PhaseID: "p1", Iteration: 1, At: at}
 	got, err := loop.MarshalJSONEvent(ev)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
