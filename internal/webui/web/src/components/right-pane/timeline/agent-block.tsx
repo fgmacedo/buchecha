@@ -161,7 +161,7 @@ export function AgentBlock({ event, pairedResult }: AgentBlockProps) {
             expanded ? '' : 'line-clamp-3'
           }`}
         >
-          {primaryText || '—'}
+          {primaryText || '-'}
         </span>
 
         {/* Chevron */}
