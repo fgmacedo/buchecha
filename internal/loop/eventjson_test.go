@@ -300,6 +300,70 @@ func TestMarshalJSONEvent_PhaseBriefed_OmitsEmptyAssignments(t *testing.T) {
 	}
 }
 
+func TestMarshalJSONEvent_TaskStarted(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.TaskStarted{PhaseID: "P1", TaskID: "T1.1", At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:00:00Z","level":"info","phase_id":"P1","task_id":"T1.1","type":"task_started"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_TaskCompleted(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.TaskCompleted{PhaseID: "P1", TaskID: "T1.1", At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:00:00Z","level":"info","phase_id":"P1","task_id":"T1.1","type":"task_completed"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_TaskApproved(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.TaskApproved{PhaseID: "P1", TaskID: "T1.1", At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:00:00Z","level":"info","phase_id":"P1","task_id":"T1.1","type":"task_approved"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_TaskNeedsFixWithNote(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.TaskNeedsFix{PhaseID: "P1", TaskID: "T1.1", Note: "missing assertion", At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-05T12:00:00Z","level":"info","note":"missing assertion","phase_id":"P1","task_id":"T1.1","type":"task_needs_fix"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_TaskNeedsFixOmitsEmptyNote(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.TaskNeedsFix{PhaseID: "P1", TaskID: "T1.1", At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(got), "note") {
+		t.Errorf("payload should omit note when empty: %s", got)
+	}
+}
+
 func TestMarshalJSONEvent_AgentInit(t *testing.T) {
 	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
 	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
@@ -314,5 +378,69 @@ func TestMarshalJSONEvent_AgentInit(t *testing.T) {
 	want := `{"at":"2026-04-29T14:32:00Z","init":{"cwd":"/tmp","model":"claude-sonnet-4","session_id":"s1"},"kind":"init","level":"debug","type":"agent_event"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestMarshalJSONEvent_AllKindsCovered locks the contract between the
+// loop.Event union, MarshalJSONEvent, and loop.AllEventKinds. Adding a
+// new Event variant requires:
+//
+//  1. an arm in MarshalJSONEvent's switch,
+//  2. an entry in loop.AllEventKinds,
+//  3. a sample below.
+//
+// Skipping any of those breaks this test, which is the point.
+func TestMarshalJSONEvent_AllKindsCovered(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	samples := []loop.Event{
+		loop.IterationStarted{Index: 1, MaxIter: 1, At: at},
+		loop.IterationFinished{Index: 1, At: at},
+		loop.LoopFinished{Reason: "done", ExitCode: 0, At: at},
+		loop.AgentEventReceived{Event: agentcontract.AgentEvent{Kind: agentcontract.KindInit, At: at}},
+		loop.PhasePlanned{At: at},
+		loop.PhaseBriefed{PhaseID: "P1", Iteration: 1, At: at},
+		loop.PhaseReviewed{PhaseID: "P1", Attempt: 1, At: at},
+		loop.TaskStarted{PhaseID: "P1", TaskID: "T1.1", At: at},
+		loop.TaskCompleted{PhaseID: "P1", TaskID: "T1.1", At: at},
+		loop.TaskApproved{PhaseID: "P1", TaskID: "T1.1", At: at},
+		loop.TaskNeedsFix{PhaseID: "P1", TaskID: "T1.1", At: at},
+		loop.DirectorEscalation{PhaseID: "P1", Attempt: 1, At: at},
+	}
+
+	gotKinds := make(map[string]bool, len(samples))
+	for _, ev := range samples {
+		raw, err := loop.MarshalJSONEvent(ev)
+		if err != nil {
+			t.Fatalf("marshal %T: %v", ev, err)
+		}
+		var head struct {
+			Type   string `json:"type"`
+			GoType string `json:"go_type"`
+		}
+		if err := json.Unmarshal(raw, &head); err != nil {
+			t.Fatalf("parse %T: %v", ev, err)
+		}
+		if head.Type == "" || head.Type == "unknown" {
+			t.Errorf("%T marshaled as type=%q (go_type=%q): missing case in MarshalJSONEvent",
+				ev, head.Type, head.GoType)
+			continue
+		}
+		gotKinds[head.Type] = true
+	}
+
+	wantKinds := make(map[string]bool, len(loop.AllEventKinds))
+	for _, k := range loop.AllEventKinds {
+		wantKinds[k] = true
+	}
+
+	for k := range wantKinds {
+		if !gotKinds[k] {
+			t.Errorf("loop.AllEventKinds lists %q but no sample maps to it (add to samples or remove from AllEventKinds)", k)
+		}
+	}
+	for k := range gotKinds {
+		if !wantKinds[k] {
+			t.Errorf("MarshalJSONEvent emits %q but loop.AllEventKinds does not list it", k)
+		}
 	}
 }

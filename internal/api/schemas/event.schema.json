@@ -21,12 +21,15 @@
             "iter_started",
             "iter_finished",
             "loop_finished",
+            "agent_event",
+            "phase_planned",
             "phase_briefed",
             "phase_reviewed",
             "task_started",
             "task_completed",
             "task_approved",
-            "task_needs_fix"
+            "task_needs_fix",
+            "director_escalation"
           ]
         },
         "at": {

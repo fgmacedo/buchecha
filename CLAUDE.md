@@ -215,6 +215,7 @@ Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sam
 - `go test -race ./...` always passes. Race conditions in TUI/handler code are the #1 risk; the race detector catches most.
 - No flaky tests. If a test depends on time, inject a `Clock` interface; if on filesystem, use `t.TempDir()`.
 - Coverage is not a target. We do not chase percentages. We cover what would hurt us if it broke.
+- **Anti-drift contract: `loop.AllEventKinds` and `internal/api/schemas/event.schema.json`.** The wire-level enum the SPA fetches at runtime mirrors the canonical `loop.AllEventKinds` slice. Adding an `Event` variant requires updating the `MarshalJSONEvent` switch, `AllEventKinds`, the schema enum, and the sample table in `TestMarshalJSONEvent_AllKindsCovered`. Two tests fail loudly if any of these drift. See [`docs/how-to/event-stream-troubleshooting.md`](docs/how-to/event-stream-troubleshooting.md).
 
 ### Fixtures
 
@@ -295,3 +296,5 @@ The absolute restrictions embedded in [`internal/loop/agentcontract/absolute_res
 ## Open knowledge
 
 The state of the project is in [`docs/specs/director/index.md`](docs/specs/director/index.md), with the normative model in [`docs/specs/director/2026-05-02-executable-plan-dag.md`](docs/specs/director/2026-05-02-executable-plan-dag.md) and the implemented migration captured by [`docs/specs/director/2026-05-02-reviewed-execution-corrections.md`](docs/specs/director/2026-05-02-reviewed-execution-corrections.md). Read those first.
+
+How-to: troubleshoot the SSE event stream end to end (cooperative-spec methodology, wire contract, common pitfalls) in [`docs/how-to/event-stream-troubleshooting.md`](docs/how-to/event-stream-troubleshooting.md).

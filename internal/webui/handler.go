@@ -25,6 +25,12 @@ const indexPath = distRoot + "/index.html"
 // guarantees content-hashed filenames.
 const assetsPrefix = "/assets/"
 
+// fontsPrefix is the request-path prefix Vite copies the public/fonts
+// tree to during the build. Filenames are stable across builds (the
+// woff2 files are vendored from upstream font packages) so the same
+// long-lived cache policy applies.
+const fontsPrefix = "/fonts/"
+
 // New returns an http.Handler that serves the embedded SPA bundle
 // rooted at web/dist/. It is mounted at "/" by the api server via
 // Mounts.WebUI. The handler is self-contained: it routes against
@@ -35,6 +41,8 @@ const assetsPrefix = "/assets/"
 //
 //   - GET  /            -> serves web/dist/index.html
 //   - GET  /assets/...  -> serves web/dist/assets/...
+//   - GET  /fonts/...   -> serves web/dist/fonts/... (woff2 + LICENSE)
+//   - GET  /favicon.ico -> 204 No Content (no favicon shipped in V1)
 //   - GET  /healthz     -> 200 OK liveness probe
 //   - any other path    -> 404 plain text
 //
@@ -72,11 +80,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serveHealthz(w, r)
 	case r.URL.Path == "/" || r.URL.Path == "/index.html":
 		serveIndex(w, r)
-	case strings.HasPrefix(r.URL.Path, assetsPrefix):
+	case r.URL.Path == "/favicon.ico":
+		serveNoFavicon(w)
+	case strings.HasPrefix(r.URL.Path, assetsPrefix),
+		strings.HasPrefix(r.URL.Path, fontsPrefix):
 		serveAsset(w, r)
 	default:
 		notFound(w)
 	}
+}
+
+// serveNoFavicon answers /favicon.ico with 204 No Content so browsers
+// stop probing without filling the console with 404 noise. The SPA
+// V1 ships no favicon; the route exists purely to silence the request.
+func serveNoFavicon(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // serveHealthz answers liveness probes without consulting the embed

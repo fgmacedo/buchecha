@@ -78,6 +78,28 @@ func TestHandler_Routes(t *testing.T) {
 			wantBodyContains: "not found",
 		},
 		{
+			name:             "font served from /fonts",
+			method:           http.MethodGet,
+			path:             "/fonts/geist/geist-latin-400-normal.woff2",
+			wantStatus:       http.StatusOK,
+			wantContentType:  "font/woff2",
+			wantCacheControl: "public, max-age=31536000, immutable",
+		},
+		{
+			name:             "missing font is 404",
+			method:           http.MethodGet,
+			path:             "/fonts/missing-font.woff2",
+			wantStatus:       http.StatusNotFound,
+			wantContentType:  "text/plain; charset=utf-8",
+			wantBodyContains: "not found",
+		},
+		{
+			name:       "favicon returns 204 No Content",
+			method:     http.MethodGet,
+			path:       "/favicon.ico",
+			wantStatus: http.StatusNoContent,
+		},
+		{
 			name:       "post is 405",
 			method:     http.MethodPost,
 			path:       "/",

@@ -2,13 +2,17 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/services"
 )
 
@@ -59,6 +63,45 @@ func TestSchemaFS_AllParseAsJSONSchema(t *testing.T) {
 				t.Fatalf("compiled schema for %s is nil", name)
 			}
 		})
+	}
+}
+
+// TestEventSchemaEnumMatchesLoopAllEventKinds locks the SSE wire kind
+// enum to the canonical loop.AllEventKinds list. The SPA fetches this
+// schema at startup and uses the enum to register one
+// addEventListener per kind; a kind in the loop union but missing from
+// the schema would be silently dropped at the browser. A kind in the
+// schema but missing from the union would cause the SPA to register a
+// listener for an event the server never emits.
+func TestEventSchemaEnumMatchesLoopAllEventKinds(t *testing.T) {
+	t.Parallel()
+
+	raw, err := LoadSchema("event.schema.json")
+	if err != nil {
+		t.Fatalf("load event.schema.json: %v", err)
+	}
+	var doc struct {
+		Properties struct {
+			Event struct {
+				Properties struct {
+					Type struct {
+						Enum []string `json:"enum"`
+					} `json:"type"`
+				} `json:"properties"`
+			} `json:"event"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse event.schema.json: %v", err)
+	}
+	gotEnum := slices.Clone(doc.Properties.Event.Properties.Type.Enum)
+	sort.Strings(gotEnum)
+
+	wantEnum := slices.Clone(loop.AllEventKinds)
+	sort.Strings(wantEnum)
+
+	if strings.Join(gotEnum, ",") != strings.Join(wantEnum, ",") {
+		t.Errorf("event.schema.json enum drift\n got: %v\nwant: %v", gotEnum, wantEnum)
 	}
 }
 

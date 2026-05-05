@@ -1,7 +1,36 @@
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { useEvents } from '../use-events'
+import { useEvents, __resetEventKindsCache } from '../use-events'
 import type { SeqEvent } from '../use-events'
+
+// SCHEMA_FIXTURE matches the structure of the embedded
+// internal/api/schemas/event.schema.json that the production hook fetches
+// on first mount. Only the type enum is exercised by the hook, so the
+// stub omits sibling properties.
+const SCHEMA_FIXTURE = {
+  properties: {
+    event: {
+      properties: {
+        type: {
+          enum: [
+            'iter_started',
+            'iter_finished',
+            'loop_finished',
+            'agent_event',
+            'phase_planned',
+            'phase_briefed',
+            'phase_reviewed',
+            'task_started',
+            'task_completed',
+            'task_approved',
+            'task_needs_fix',
+            'director_escalation',
+          ],
+        },
+      },
+    },
+  },
+}
 
 // FakeEventSource is an in-test stub that replaces the browser EventSource.
 // It exposes helpers used by tests to simulate opens, messages, and errors.
@@ -65,13 +94,21 @@ class FakeEventSource {
   }
 
   simulateMessage(data: SeqEvent): void {
-    const ev = Object.assign(new MessageEvent('message', { data: JSON.stringify(data) }), {})
-    // The hook attaches onmessage directly.
-    if (typeof (this as unknown as Record<string, unknown>)['onmessage'] === 'function') {
-      ;(this as unknown as Record<string, (e: MessageEvent) => void>)['onmessage'](
-        ev as MessageEvent,
-      )
-    }
+    // Browser EventSource dispatches to listeners registered via
+    // addEventListener under the same name as the SSE `event:` field.
+    // The server emits one record as:
+    //   id: <seq>\n
+    //   event: <kind>\n
+    //   data: <event payload as JSON>\n
+    // so the listener is keyed by event.type, the data field carries
+    // only the event payload (NOT the {seq,event} envelope), and seq
+    // arrives via MessageEvent.lastEventId.
+    const kind = data.event.type
+    const ev = new MessageEvent(kind, {
+      data: JSON.stringify(data.event),
+      lastEventId: String(data.seq),
+    })
+    this.dispatchEvent(ev)
   }
 
   simulateError(closed = false): void {
@@ -85,7 +122,7 @@ class FakeEventSource {
 
 // Build a minimal SeqEvent fixture.
 function makeEvent(seq: number, type = 'iter_started'): SeqEvent {
-  return { seq, event: { type: type as SeqEvent['event']['type'], at: '2026-01-01T00:00:00Z' } }
+  return { seq, event: { type, at: '2026-01-01T00:00:00Z' } }
 }
 
 describe('useEvents', () => {
@@ -93,8 +130,22 @@ describe('useEvents', () => {
 
   beforeEach(() => {
     FakeEventSource.instances = []
+    __resetEventKindsCache()
     vi.stubGlobal('EventSource', FakeEventSource)
-    fetchMock = vi.fn()
+    // Default fetch mock answers the schema URL with the embedded fixture
+    // and falls through with a 200/ok stub for any other URL (the seq-gone
+    // probe and similar). Tests that need different probe behaviour
+    // override fetchMock locally.
+    fetchMock = vi.fn((url: string) => {
+      if (typeof url === 'string' && url.includes('event.schema.json')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(SCHEMA_FIXTURE),
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200 })
+    })
     vi.stubGlobal('fetch', fetchMock)
   })
 
@@ -102,16 +153,27 @@ describe('useEvents', () => {
     vi.unstubAllGlobals()
   })
 
-  it('starts with connecting status and empty events', () => {
+  // EventSource creation is gated on the schema fetch; this helper
+  // resolves once the hook has finished bootstrapping the underlying
+  // connection so tests can drive simulateOpen/simulateMessage without
+  // racing the kinds promise.
+  async function awaitConnection(index = 0): Promise<FakeEventSource> {
+    await waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(index))
+    return FakeEventSource.instances[index]
+  }
+
+  it('starts with connecting status and empty events', async () => {
     renderHook(() => useEvents('sess-01'))
+    await awaitConnection()
     expect(FakeEventSource.instances).toHaveLength(1)
   })
 
   it('transitions to open status when the connection opens', async () => {
     const { result } = renderHook(() => useEvents('sess-01'))
+    const es = await awaitConnection()
 
     act(() => {
-      FakeEventSource.instances[0].simulateOpen()
+      es.simulateOpen()
     })
 
     await waitFor(() => expect(result.current.status).toBe('open'))
@@ -119,7 +181,7 @@ describe('useEvents', () => {
 
   it('delivers events in order and tracks lastSeq', async () => {
     const { result } = renderHook(() => useEvents('sess-01'))
-    const es = FakeEventSource.instances[0]
+    const es = await awaitConnection()
 
     act(() => {
       es.simulateOpen()
@@ -136,9 +198,24 @@ describe('useEvents', () => {
     expect(result.current.lastSeq).toBe(3)
   })
 
+  it('delivers events for every kind in the schema enum', async () => {
+    const { result } = renderHook(() => useEvents('sess-01'))
+    const es = await awaitConnection()
+
+    const kinds = SCHEMA_FIXTURE.properties.event.properties.type.enum
+    act(() => {
+      es.simulateOpen()
+      kinds.forEach((kind, i) => es.simulateMessage(makeEvent(i + 1, kind)))
+    })
+
+    await waitFor(() => expect(result.current.events).toHaveLength(kinds.length))
+    const gotKinds = result.current.events.map((e) => e.event.type)
+    expect(gotKinds).toEqual(kinds)
+  })
+
   it('sets status to error on transient reconnect (readyState CONNECTING)', async () => {
     const { result } = renderHook(() => useEvents('sess-01'))
-    const es = FakeEventSource.instances[0]
+    const es = await awaitConnection()
 
     act(() => {
       es.simulateOpen()
@@ -153,13 +230,22 @@ describe('useEvents', () => {
   it('calls onSeqGone when the server returns 410', async () => {
     const onSeqGone = vi.fn()
 
-    // Probe returns 410.
-    fetchMock.mockResolvedValue({ status: 410, ok: false })
+    // Probe returns 410; schema fetch still resolves with the fixture.
+    fetchMock.mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('event.schema.json')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(SCHEMA_FIXTURE),
+        })
+      }
+      return Promise.resolve({ status: 410, ok: false })
+    })
 
     const { result } = renderHook(() =>
       useEvents('sess-01', { fromSeq: 5, onSeqGone }),
     )
-    const es = FakeEventSource.instances[0]
+    const es = await awaitConnection()
 
     act(() => {
       es.simulateOpen()
@@ -173,10 +259,8 @@ describe('useEvents', () => {
   })
 
   it('sets status to closed when probe returns non-410', async () => {
-    fetchMock.mockResolvedValue({ status: 200, ok: true })
-
     const { result } = renderHook(() => useEvents('sess-01'))
-    const es = FakeEventSource.instances[0]
+    const es = await awaitConnection()
 
     act(() => {
       es.simulateOpen()
@@ -186,9 +270,9 @@ describe('useEvents', () => {
     await waitFor(() => expect(result.current.status).toBe('closed'))
   })
 
-  it('closes the EventSource on unmount', () => {
+  it('closes the EventSource on unmount', async () => {
     const { unmount } = renderHook(() => useEvents('sess-01'))
-    const es = FakeEventSource.instances[0]
+    const es = await awaitConnection()
 
     unmount()
 
@@ -201,7 +285,7 @@ describe('useEvents', () => {
       { initialProps: { id: 'sess-A' } },
     )
 
-    expect(FakeEventSource.instances).toHaveLength(1)
+    await awaitConnection(0)
 
     rerender({ id: 'sess-B' })
 
@@ -209,5 +293,25 @@ describe('useEvents', () => {
     // Old instance should be closed.
     expect(FakeEventSource.instances[0].readyState).toBe(FakeEventSource.CLOSED)
     expect(FakeEventSource.instances[1].url).toContain('sess-B')
+  })
+
+  it('falls back to the bundled kinds list when schema fetch fails', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('event.schema.json')) {
+        return Promise.reject(new Error('network down'))
+      }
+      return Promise.resolve({ ok: true, status: 200 })
+    })
+
+    const { result } = renderHook(() => useEvents('sess-01'))
+    const es = await awaitConnection()
+
+    act(() => {
+      es.simulateOpen()
+      es.simulateMessage(makeEvent(1, 'task_started'))
+      es.simulateMessage(makeEvent(2, 'agent_event'))
+    })
+
+    await waitFor(() => expect(result.current.events).toHaveLength(2))
   })
 })

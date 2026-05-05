@@ -9,9 +9,26 @@ import type { SeqEvent, EventKind } from '../../hooks/use-events'
 import { getHighlighter, SHIKI_THEME } from '../../lib/shiki'
 
 // summarizeEvent builds a compact one-line description for an event row.
+// agent_event records are special-cased: their kind discriminator and
+// (for tool_use) the tool name carry the salient info; without that,
+// every agent_event row would render as a bare "agent_event" tag.
 function summarizeEvent(event: SeqEvent['event']): string {
+  if (event.type === 'agent_event') {
+    const kind = typeof event.kind === 'string' ? event.kind : 'agent_event'
+    if (kind === 'tool_use') {
+      const tool = event.tool as { name?: string } | undefined
+      return tool?.name ? `${kind} ${tool.name}` : kind
+    }
+    if (kind === 'tool_result') {
+      const tool = event.tool as { is_error?: boolean } | undefined
+      return tool?.is_error ? `${kind} (error)` : kind
+    }
+    return kind
+  }
   const fields: string[] = []
-  if (typeof event.phase_id === 'string') fields.push(`phase=${event.phase_id}`)
+  if (typeof event.phase_id === 'string' && event.phase_id !== '') {
+    fields.push(`phase=${event.phase_id}`)
+  }
   if (typeof event.task_id === 'string') fields.push(`task=${event.task_id}`)
   if (typeof event.signal === 'string') fields.push(`signal=${event.signal}`)
   if (typeof event.iteration_id === 'string') fields.push(`iter=${event.iteration_id}`)
@@ -42,17 +59,26 @@ function relativeTime(isoStr: string | undefined): string {
   return rtf.format(Math.round(diffMin / 60), 'hour')
 }
 
-// ALL_KINDS is the complete set of event kinds, used for the type filter UI.
+// ALL_KINDS is the canonical set of event kinds the filter UI exposes.
+// Mirrors loop.AllEventKinds (Go) and FALLBACK_KINDS (use-events.ts);
+// the schema test on the Go side guarantees alignment between the schema
+// and the loop union, and the hook now consumes the schema dynamically,
+// so any new kind on the server propagates into the events array even
+// without an entry here. Adding it to this list only adds the matching
+// filter button.
 const ALL_KINDS: EventKind[] = [
   'iter_started',
   'iter_finished',
   'loop_finished',
+  'agent_event',
+  'phase_planned',
   'phase_briefed',
   'phase_reviewed',
   'task_started',
   'task_completed',
   'task_approved',
   'task_needs_fix',
+  'director_escalation',
 ]
 
 interface ExpandedRowProps {

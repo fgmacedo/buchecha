@@ -1,20 +1,39 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-// EventKind is the closed set of loop event types the server sends over SSE.
-// Values match the "type" enum in internal/api/schemas/event.schema.json.
-export type EventKind =
-  | 'iter_started'
-  | 'iter_finished'
-  | 'loop_finished'
-  | 'phase_briefed'
-  | 'phase_reviewed'
-  | 'task_started'
-  | 'task_completed'
-  | 'task_approved'
-  | 'task_needs_fix'
+// EventKind is the runtime-known set of loop event types the server sends
+// over SSE. The canonical list is sourced from the embedded
+// event.schema.json the server exposes; FALLBACK_KINDS below mirrors the
+// list as of authoring time and is used only when the schema fetch fails
+// (offline dev, broken endpoint). The server's loop.AllEventKinds is the
+// source of truth; api.TestEventSchemaEnumMatchesLoopAllEventKinds locks
+// the schema to that list. Adding a new kind on the server propagates here
+// automatically once the schema is updated; the hook starts listening
+// without code changes.
+export type EventKind = string
+
+// FALLBACK_KINDS is the bootstrap list used when /api/v1/schemas/event.schema.json
+// is unreachable. Keep it in sync with loop.AllEventKinds as a defence in
+// depth; the test on the Go side guarantees the schema enum matches that
+// canonical list, so under normal operation the SPA never relies on this
+// constant.
+const FALLBACK_KINDS: readonly EventKind[] = [
+  'iter_started',
+  'iter_finished',
+  'loop_finished',
+  'agent_event',
+  'phase_planned',
+  'phase_briefed',
+  'phase_reviewed',
+  'task_started',
+  'task_completed',
+  'task_approved',
+  'task_needs_fix',
+  'director_escalation',
+]
 
 // EventPayload is the loop event object embedded in each SSE message.
-// additionalProperties: true in the schema; consumers pattern-match on type.
+// additionalProperties: true in the schema; consumers pattern-match on type
+// (and on kind for type === 'agent_event').
 export type EventPayload = {
   type: EventKind
   at?: string
@@ -50,9 +69,58 @@ function eventsUrl(sessionId: string): string {
   return `/api/v1/sessions/${sessionId}/events`
 }
 
+// SCHEMA_URL is the path the server publishes the event schema at; the
+// hook fetches it once per page load and caches the parsed kind list.
+const SCHEMA_URL = '/api/v1/schemas/event.schema.json'
+
+// kindsPromise is the module-level cache holding the resolved kind list.
+// Lazily populated on first useEvents call so a Vitest page that never
+// uses events does not pay the network round-trip. Subsequent calls share
+// the same promise and therefore the same listener set.
+let kindsPromise: Promise<readonly EventKind[]> | null = null
+
+// __resetEventKindsCache clears the module-level promise so the next
+// useEvents call re-fetches the schema. Test-only; the production code
+// relies on the cache living for the page's lifetime.
+export function __resetEventKindsCache(): void {
+  kindsPromise = null
+}
+
+function loadEventKinds(): Promise<readonly EventKind[]> {
+  if (kindsPromise) return kindsPromise
+  kindsPromise = fetch(SCHEMA_URL)
+    .then((res) => {
+      if (!res.ok) throw new Error(`schema fetch ${res.status}`)
+      return res.json() as Promise<{
+        properties?: {
+          event?: { properties?: { type?: { enum?: unknown } } }
+        }
+      }>
+    })
+    .then((doc) => {
+      const enumVal = doc.properties?.event?.properties?.type?.enum
+      if (!Array.isArray(enumVal) || enumVal.length === 0) {
+        throw new Error('schema enum missing or empty')
+      }
+      return enumVal.filter((v): v is string => typeof v === 'string')
+    })
+    .catch((err) => {
+      console.warn('useEvents: failed to load event schema, falling back to hardcoded kinds', err)
+      return FALLBACK_KINDS
+    })
+  return kindsPromise
+}
+
 // useEvents opens a server-sent-events stream against
 // GET /api/v1/sessions/{id}/events and maintains an ordered list of
 // SeqEvents plus the connection status and the last delivered seq.
+//
+// The server frames every record with `event: <kind>`; named SSE events
+// only fire on listeners registered for that exact name (the default
+// `onmessage` would silently drop them). The hook fetches the kind list
+// from the embedded schema once and registers an addEventListener per
+// kind, so adding a new kind on the server (and to the schema enum)
+// propagates here without code changes.
 //
 // Transient connection failures trigger browser-native SSE reconnect
 // (the server sends "retry: 5000"). Ring-buffer overflow (HTTP 410)
@@ -110,49 +178,86 @@ export function useEvents(
   useEffect(() => {
     const cancelled = { current: false }
     const url = eventsUrl(sessionId)
-
-    // Build EventSource; send Last-Event-ID on the initial request when
-    // fromSeq is set so the server replays from that point.
-    // The standard EventSource constructor does not accept custom headers,
-    // so we rely on the server reading Last-Event-ID from reconnect headers
-    // that the browser sends automatically after the first connection.
-    // For the very first connection with a non-zero fromSeq, we pass it as
-    // a query param that the server reads as a fallback.
-    const connectUrl =
-      fromSeq > 0 ? `${url}?last_event_id=${fromSeq}` : url
-    const es = new EventSource(connectUrl)
+    let es: EventSource | null = null
+    const listeners = new Map<string, (ev: MessageEvent<string>) => void>()
 
     setStatus('connecting')
 
-    es.onopen = () => {
-      if (!cancelled.current) setStatus('open')
-    }
-
-    es.onmessage = (ev: MessageEvent<string>) => {
+    void loadEventKinds().then((kinds) => {
       if (cancelled.current) return
-      const parsed = JSON.parse(ev.data) as SeqEvent
-      lastSeqRef.current = parsed.seq
-      setLastSeq(parsed.seq)
-      setEvents((prev) => [...prev, parsed])
-    }
 
-    es.onerror = () => {
-      if (cancelled.current) return
-      if (es.readyState === EventSource.CLOSED) {
-        // Connection closed permanently (browser will not retry).
-        // Probe the endpoint to check whether the server returned 410.
-        probeForSeqGone(lastSeqRef.current, cancelled)
-      } else {
-        // readyState CONNECTING: browser is attempting to reconnect.
-        // Surface as 'error' while reconnecting so the UI can show a
-        // transient indicator; onopen will clear it to 'open'.
-        setStatus('error')
+      // Build EventSource; send Last-Event-ID on the initial request when
+      // fromSeq is set so the server replays from that point. The standard
+      // EventSource constructor does not accept custom headers, so we rely
+      // on the server reading Last-Event-ID from reconnect headers that
+      // the browser sends automatically after the first connection. For
+      // the very first connection with a non-zero fromSeq, we pass it as
+      // a query param that the server reads as a fallback.
+      const connectUrl =
+        fromSeq > 0 ? `${url}?last_event_id=${fromSeq}` : url
+      const source = new EventSource(connectUrl)
+      es = source
+
+      source.onopen = () => {
+        if (!cancelled.current) setStatus('open')
       }
-    }
+
+      const handleSeqEvent = (ev: MessageEvent<string>) => {
+        if (cancelled.current) return
+        try {
+          // Wire format per services.MarshalEvent + SSEWriter.WriteEvent:
+          //   id: <seq>\n
+          //   event: <kind>\n
+          //   data: <event payload as JSON>\n\n
+          // The data field carries only the event payload (with its own
+          // type/at/level fields). Seq comes from the id line, which
+          // surfaces as MessageEvent.lastEventId.
+          const event = JSON.parse(ev.data) as EventPayload
+          const seq = parseInt(ev.lastEventId, 10)
+          if (!Number.isFinite(seq) || seq <= 0) {
+            console.warn('useEvents: SSE record missing valid id', ev.lastEventId, ev.data)
+            return
+          }
+          const parsed: SeqEvent = { seq, event }
+          lastSeqRef.current = seq
+          setLastSeq(seq)
+          setEvents((prev) => [...prev, parsed])
+        } catch (err) {
+          console.warn('useEvents: failed to parse SSE payload', err, ev.data)
+        }
+      }
+
+      // Register one listener per kind. The server emits
+      // `event: <kind>\n` on every record so the browser dispatches to
+      // these named handlers; onmessage would never fire.
+      for (const kind of kinds) {
+        source.addEventListener(kind, handleSeqEvent as EventListener)
+        listeners.set(kind, handleSeqEvent)
+      }
+
+      source.onerror = () => {
+        if (cancelled.current) return
+        if (source.readyState === EventSource.CLOSED) {
+          // Connection closed permanently (browser will not retry).
+          // Probe the endpoint to check whether the server returned 410.
+          probeForSeqGone(lastSeqRef.current, cancelled)
+        } else {
+          // readyState CONNECTING: browser is attempting to reconnect.
+          // Surface as 'error' while reconnecting so the UI can show a
+          // transient indicator; onopen will clear it to 'open'.
+          setStatus('error')
+        }
+      }
+    })
 
     return () => {
       cancelled.current = true
-      es.close()
+      if (es) {
+        for (const [kind, handler] of listeners) {
+          es.removeEventListener(kind, handler as EventListener)
+        }
+        es.close()
+      }
     }
   }, [sessionId, fromSeq, probeForSeqGone])
 
