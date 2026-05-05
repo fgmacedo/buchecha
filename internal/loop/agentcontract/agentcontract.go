@@ -78,6 +78,9 @@ var absoluteRestrictionsMD string
 //go:embed working_tree.md
 var workingTreeMD string
 
+//go:embed what_bcc_is.md
+var whatBccIsMD string
+
 // Partials returns a *template.Template containing the format-neutral
 // markdown blocks every agent contract should compose. Format adapters
 // extend this template with their own definitions and invoke the
@@ -86,13 +89,19 @@ var workingTreeMD string
 //	{{template "wire_protocol" .}}
 //	{{template "absolute_restrictions" .}}
 //	{{template "working_tree" .}}
+//	{{template "what_bcc_is" .}}
 //
-// Partials are body-only (no heading); the parent template provides
-// the heading at whatever level fits.
+// Partials are body-only (no heading) except `what_bcc_is`, which
+// includes its own `## What bcc is` heading because every per-role
+// prompt opens with it. The view passed when invoking `what_bcc_is`
+// must expose a `.Role` field set to one of "planner", "briefer",
+// "executor", "reviewer"; the partial highlights the matching bullet
+// with "(you)".
 func Partials() *template.Template {
 	t := template.New("partials")
 	template.Must(t.New("wire_protocol").Parse(wireProtocolMD))
 	template.Must(t.New("absolute_restrictions").Parse(absoluteRestrictionsMD))
 	template.Must(t.New("working_tree").Parse(workingTreeMD))
+	template.Must(t.New("what_bcc_is").Parse(whatBccIsMD))
 	return t
 }

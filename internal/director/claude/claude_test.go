@@ -289,9 +289,9 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 		tpl  string
 		view any
 	}{
-		{"plan", director.PlanPromptTemplate(), planView{AgentID: "planner-001", SpecPath: "/tmp/spec.md"}},
-		{"brief", director.BriefPromptTemplate(), briefView{AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"}},
-		{"review", director.ReviewPromptTemplate(), reviewView{AgentID: "reviewer-001", SpecPath: "/tmp/spec.md"}},
+		{"plan", director.PlanPromptTemplate(), planView{Role: "planner", AgentID: "planner-001", SpecPath: "/tmp/spec.md"}},
+		{"brief", director.BriefPromptTemplate(), briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"}},
+		{"review", director.ReviewPromptTemplate(), reviewView{Role: "reviewer", AgentID: "reviewer-001", SpecPath: "/tmp/spec.md"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,6 +306,58 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 			}
 			if !strings.Contains(out, "agent_id") {
 				t.Errorf("agent_id marker missing in %s prompt", tc.name)
+			}
+		})
+	}
+}
+
+// TestComposePrompt_EmbedsWhatBccIs guards the "what bcc is" partial:
+// every per-role prompt must carry the shared product description, and
+// the role's bullet must be marked with "(you)" so the agent knows
+// which one of the four it is. Review is not asserted because the
+// review prompt has not adopted the partial yet.
+func TestComposePrompt_EmbedsWhatBccIs(t *testing.T) {
+	cases := []struct {
+		name       string
+		tpl        string
+		view       any
+		youMarker  string
+		otherRoles []string
+	}{
+		{
+			"plan",
+			director.PlanPromptTemplate(),
+			planView{Role: "planner", AgentID: "planner-001", SpecPath: "/tmp/spec.md"},
+			"**Planner** (you)",
+			[]string{"**Briefer** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+		},
+		{
+			"brief",
+			director.BriefPromptTemplate(),
+			briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"},
+			"**Briefer** (you)",
+			[]string{"**Planner** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := composePrompt(tc.tpl, tc.view)
+			if err != nil {
+				t.Fatalf("compose: %v", err)
+			}
+			if !strings.Contains(out, "## What bcc is") {
+				t.Errorf("what_bcc_is heading missing from %s prompt", tc.name)
+			}
+			if !strings.Contains(out, "format-agnostic") {
+				t.Errorf("what_bcc_is body marker missing from %s prompt", tc.name)
+			}
+			if !strings.Contains(out, tc.youMarker) {
+				t.Errorf("expected %q to mark the active role in %s prompt", tc.youMarker, tc.name)
+			}
+			for _, other := range tc.otherRoles {
+				if strings.Contains(out, other) {
+					t.Errorf("%s prompt should not mark %q as (you); rendered:\n%s", tc.name, other, out)
+				}
 			}
 		})
 	}

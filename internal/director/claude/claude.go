@@ -202,12 +202,14 @@ func (a *Adapter) SetStdoutFactory(fn func(role, iterationID, agentID string) (i
 // templates render against. They are kept narrow so a future template
 // edit cannot accidentally surface fields the role should not see.
 type planView struct {
+	Role     string
 	AgentID  string
 	SpecPath string
 	Registry director.CapabilityRegistry
 }
 
 type briefView struct {
+	Role        string
 	AgentID     string
 	SpecPath    string
 	IterationID string
@@ -215,6 +217,7 @@ type briefView struct {
 }
 
 type reviewView struct {
+	Role     string
 	AgentID  string
 	SpecPath string
 }
@@ -233,6 +236,7 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 		return nil, nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.PlanPromptTemplate(), planView{
+		Role:     "planner",
 		AgentID:  in.AgentID,
 		SpecPath: in.SpecPath,
 		Registry: in.Registry,
@@ -254,6 +258,7 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 		return nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.BriefPromptTemplate(), briefView{
+		Role:        "briefer",
 		AgentID:     in.AgentID,
 		SpecPath:    in.SpecPath,
 		IterationID: in.IterationID,
@@ -276,6 +281,7 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 		return nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.ReviewPromptTemplate(), reviewView{
+		Role:     "reviewer",
 		AgentID:  in.AgentID,
 		SpecPath: "",
 	})
