@@ -94,7 +94,7 @@ changelog:
       - Merge branch
 
 brews:
-  - name: bcc
+  - name: buchecha
     ids:
       - bcc
     repository:
