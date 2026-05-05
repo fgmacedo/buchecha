@@ -2,10 +2,35 @@ package loop
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
+
+// AllEventKinds is the canonical, exhaustive list of "type" values
+// MarshalJSONEvent emits for the closed Event union. Order matches the
+// MarshalJSONEvent switch arms. The api package's event.schema.json
+// enum mirrors this list; TestAllEventKindsMatchSchema enforces the
+// match. Adding a new Event variant requires updating this slice, the
+// MarshalJSONEvent switch, the schema enum, and the sample registry in
+// the eventjson_test sample table; the corresponding tests fail loudly
+// when any of those drift.
+var AllEventKinds = []string{
+	"iter_started",
+	"iter_finished",
+	"loop_finished",
+	"agent_event",
+	"phase_planned",
+	"phase_briefed",
+	"phase_reviewed",
+	"task_started",
+	"task_completed",
+	"task_approved",
+	"task_needs_fix",
+	"director_escalation",
+}
 
 // MarshalJSONEvent serialises ev into one NDJSON line per the schema
 // documented in the Phase 2 spec. The returned bytes do NOT include a
@@ -68,11 +93,11 @@ func jsonPayload(ev Event) map[string]any {
 		return out
 	case PhaseBriefed:
 		out := map[string]any{
-			"type":     "phase_briefed",
-			"at":       formatAt(e.At),
-			"level":    level,
-			"phase_id": e.PhaseID,
-			"attempt":  e.Attempt,
+			"type":      "phase_briefed",
+			"at":        formatAt(e.At),
+			"level":     level,
+			"phase_id":  e.PhaseID,
+			"iteration": e.Iteration,
 		}
 		assignments := map[string]any{}
 		if a := assignmentJSON(e.BrieferModel, e.BrieferEffort, e.BrieferSkipped); a != nil {
@@ -112,10 +137,55 @@ func jsonPayload(ev Event) map[string]any {
 			"attempt":   e.Attempt,
 			"reasoning": e.Reasoning,
 		}
-	default:
+	case TaskStarted:
 		return map[string]any{
-			"type":  "unknown",
-			"level": level,
+			"type":     "task_started",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"phase_id": e.PhaseID,
+			"task_id":  e.TaskID,
+		}
+	case TaskCompleted:
+		return map[string]any{
+			"type":     "task_completed",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"phase_id": e.PhaseID,
+			"task_id":  e.TaskID,
+		}
+	case TaskApproved:
+		return map[string]any{
+			"type":     "task_approved",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"phase_id": e.PhaseID,
+			"task_id":  e.TaskID,
+		}
+	case TaskNeedsFix:
+		out := map[string]any{
+			"type":     "task_needs_fix",
+			"at":       formatAt(e.At),
+			"level":    level,
+			"phase_id": e.PhaseID,
+			"task_id":  e.TaskID,
+		}
+		if e.Note != "" {
+			out["note"] = e.Note
+		}
+		return out
+	default:
+		// A new Event variant landed without an arm here. Log loudly so
+		// the gap is visible in production, then synthesize a payload that
+		// preserves the Go type name so an operator can grep the source.
+		// The companion test TestMarshalJSONEvent_AllKindsCovered also
+		// guards this at build time.
+		slog.Error("loop: MarshalJSONEvent missing case for event type",
+			"go_type", fmt.Sprintf("%T", ev),
+		)
+		return map[string]any{
+			"type":    "unknown",
+			"level":   level,
+			"go_type": fmt.Sprintf("%T", ev),
 		}
 	}
 }

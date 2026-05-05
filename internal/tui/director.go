@@ -91,11 +91,14 @@ func (m *Model) SignalPlanReady(plan *director.Plan) {
 // The panel is hidden when the run is not Director-driven (plan == nil),
 // keeping the MVP layout intact for the legacy path.
 type directorPanel struct {
-	plan           *director.Plan
-	currentPhaseID string
-	currentAttempt int
-	latestOutcome  string
-	cumulativeCost float64
+	plan             *director.Plan
+	currentPhaseID   string
+	currentIteration int
+	currentAttempt   int
+	latestOutcome    string
+	cumulativeCost   float64
+	briefingActive   bool
+	reviewingActive  bool
 
 	// planningStatus tracks the well-known "planning" task on the
 	// timeline. The Planner task is not part of the DAG; the loop emits a
@@ -186,45 +189,83 @@ func (d *directorPanel) onPhasePlanned(p *director.Plan) {
 	d.plan = p
 	d.phaseStatus = make(map[string]phaseMark, len(p.Phases))
 	d.currentPhaseID = ""
+	d.currentIteration = 0
 	d.currentAttempt = 0
 	d.latestOutcome = ""
 	d.escalation = false
 	d.currentSubDAG = nil
+	d.briefingActive = false
+	d.reviewingActive = false
 	if d.planningStatus == phasePending {
 		d.planningStatus = phaseApproved
 	}
 }
 
 // onTaskStarted updates the planning track when the loop emits a
-// TaskStarted("planning") synthetic event at run boot. Per-task events
-// for non-planning ids are recorded as informational only; the existing
-// phase-level rows continue to drive the active highlight.
+// TaskStarted("planning") synthetic event at run boot, and surfaces
+// briefing/reviewing as transient role states when the Briefer or
+// Reviewer signals start. Per-task events for non-pseudo ids are
+// recorded as informational only; the existing phase-level rows
+// continue to drive the active highlight.
 func (d *directorPanel) onTaskStarted(taskID string) {
-	if taskID == planningTaskID {
+	switch taskID {
+	case planningTaskID:
 		d.planningStatus = phaseInProgress
+	case briefingTaskID:
+		d.briefingActive = true
+	case reviewingTaskID:
+		d.reviewingActive = true
 	}
 }
 
-// onTaskCompleted closes the planning task on the timeline. Non-planning
-// ids are no-ops here; the per-phase mark already covers them.
+// onTaskCompleted closes the planning task on the timeline and clears
+// the transient briefing/reviewing flags. Non-pseudo ids are no-ops
+// here; the per-phase mark already covers them.
 func (d *directorPanel) onTaskCompleted(taskID string) {
-	if taskID == planningTaskID {
+	switch taskID {
+	case planningTaskID:
 		d.planningStatus = phaseApproved
+	case briefingTaskID:
+		d.briefingActive = false
+	case reviewingTaskID:
+		d.reviewingActive = false
 	}
 }
 
-// planningTaskID mirrors dag.PlanningTaskID without taking a dag
-// dependency from the TUI package.
-const planningTaskID = "planning"
+// planningTaskID, briefingTaskID, and reviewingTaskID mirror the
+// constants in the dag package without taking a dag dependency from
+// the TUI package. All three are role bookkeeping pseudo-tasks
+// (planning runs once at the start of the run; briefing runs at the
+// start of every iteration where a Briefer agent is invoked;
+// reviewing runs at the start of every iteration's review pass);
+// they are not real DAG tasks and must not inflate per-task progress
+// counters.
+const (
+	planningTaskID  = "planning"
+	briefingTaskID  = "briefing"
+	reviewingTaskID = "reviewing"
+)
+
+// isPseudoTaskID reports whether the well-known task id corresponds
+// to a role bookkeeping pseudo-task rather than a real DAG task.
+// Progress and risk panels skip these so the per-iteration "X/Y
+// tasks" ratio reflects DAG work only.
+func isPseudoTaskID(id string) bool {
+	return id == planningTaskID || id == briefingTaskID || id == reviewingTaskID
+}
 
 // onPhaseBriefed marks the phase as in-progress and points the active
-// cursor at it.
-func (d *directorPanel) onPhaseBriefed(phaseID string, attempt int, b *director.Briefing, cap phaseCapability) {
+// cursor at it. iteration is the 1-based index of this brief→execute→
+// review cycle within the phase; the executor retry counter is tracked
+// separately and updated by onPhaseReviewed.
+func (d *directorPanel) onPhaseBriefed(phaseID string, iteration int, b *director.Briefing, cap phaseCapability) {
 	if d.phaseStatus == nil {
 		d.phaseStatus = map[string]phaseMark{}
 	}
 	d.currentPhaseID = phaseID
-	d.currentAttempt = attempt
+	d.currentIteration = iteration
+	d.currentAttempt = 0
+	d.briefingActive = false
 	if d.phaseStatus[phaseID] != phaseApproved {
 		d.phaseStatus[phaseID] = phaseInProgress
 	}
@@ -439,8 +480,22 @@ func (d directorPanel) view(width int) string {
 		}
 		row := fmt.Sprintf("  %s %s", styled, title)
 		if ph.ID == d.currentPhaseID {
-			active := fmt.Sprintf(" (attempt %d)", d.currentAttempt)
-			row += theme.subtle.Render(active)
+			var active string
+			switch {
+			case d.briefingActive:
+				active = " (briefing...)"
+			case d.reviewingActive:
+				active = " (reviewing...)"
+			case d.currentIteration > 0 && d.currentAttempt > 0:
+				active = fmt.Sprintf(" (iter %d · attempt %d)", d.currentIteration, d.currentAttempt)
+			case d.currentIteration > 0:
+				active = fmt.Sprintf(" (iter %d)", d.currentIteration)
+			case d.currentAttempt > 0:
+				active = fmt.Sprintf(" (attempt %d)", d.currentAttempt)
+			}
+			if active != "" {
+				row += theme.subtle.Render(active)
+			}
 			row = lipgloss.NewStyle().Bold(true).Render(row)
 		}
 		if cap, ok := d.phaseCapability[ph.ID]; ok {

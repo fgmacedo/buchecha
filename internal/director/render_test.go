@@ -158,9 +158,16 @@ func TestRenderBriefingSystem_IncludesPartials(t *testing.T) {
 		"Clean on entry",
 		"agent-test",
 		"## Identity",
+		"## What bcc is",
+		"**Executor** (you)",
 	} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(marker)) {
 			t.Errorf("partial marker %q missing from system prompt", marker)
+		}
+	}
+	for _, otherRole := range []string{"**Planner** (you)", "**Briefer** (you)", "**Reviewer** (you)"} {
+		if strings.Contains(got, otherRole) {
+			t.Errorf("system prompt must not mark %q as (you); rendered:\n%s", otherRole, got)
 		}
 	}
 }

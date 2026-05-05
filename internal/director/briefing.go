@@ -5,20 +5,20 @@ import (
 	"fmt"
 )
 
-// BriefingFor assembles a BrieferInput for (phaseID, attempt). The
+// BriefingFor assembles a BrieferInput for (phaseID, iteration). The
 // caller supplies the Plan, the spec path, and the per-iteration sub-DAG
 // task ids (drawn from the live DAG state). PriorFeedback is the
-// loop-supplied prose the next attempt should prepend (an escalation
-// hint or a per-task feedback summary); empty on attempt 1.
-func BriefingFor(plan *Plan, specPath, phaseID string, attempt int, subDAG []string, priorFeedback string) (*BrieferInput, error) {
+// loop-supplied prose the next iteration should prepend (an escalation
+// hint or a per-task feedback summary); empty on iteration 1.
+func BriefingFor(plan *Plan, specPath, phaseID string, iteration int, subDAG []string, priorFeedback string) (*BrieferInput, error) {
 	if plan == nil {
 		return nil, errors.New("director: BriefingFor: nil plan")
 	}
 	if phaseID == "" {
 		return nil, errors.New("director: BriefingFor: empty phase_id")
 	}
-	if attempt < 1 {
-		return nil, fmt.Errorf("director: BriefingFor: attempt must be >= 1, got %d", attempt)
+	if iteration < 1 {
+		return nil, fmt.Errorf("director: BriefingFor: iteration must be >= 1, got %d", iteration)
 	}
 	phase := plan.PhaseByID(phaseID)
 	if phase == nil {
@@ -27,10 +27,9 @@ func BriefingFor(plan *Plan, specPath, phaseID string, attempt int, subDAG []str
 	in := &BrieferInput{
 		Plan:          plan,
 		SpecPath:      specPath,
-		IterationID:   fmt.Sprintf("%s-%02d", phaseID, attempt),
+		IterationID:   fmt.Sprintf("%s-%02d", phaseID, iteration),
 		PhaseID:       phaseID,
 		SubDAGTaskIDs: append([]string(nil), subDAG...),
-		Attempt:       attempt,
 		PriorFeedback: priorFeedback,
 	}
 	return in, nil

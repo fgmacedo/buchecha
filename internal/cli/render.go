@@ -159,7 +159,7 @@ func textRenderEvent(ev loop.Event) (string, []slog.Attr) {
 	case loop.PhaseBriefed:
 		attrs := []slog.Attr{
 			slog.String("phase", e.PhaseID),
-			slog.Int("attempt", e.Attempt),
+			slog.Int("iteration", e.Iteration),
 		}
 		attrs = append(attrs, roleSpawnAttrs("briefer", e.BrieferModel, e.BrieferEffort, e.BrieferSkipped)...)
 		attrs = append(attrs, roleSpawnAttrs("executor", e.ExecutorModel, e.ExecutorEffort, false)...)

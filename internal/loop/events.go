@@ -79,8 +79,14 @@ type PhasePlanned struct {
 func (PhasePlanned) isLoopEvent() {}
 
 // PhaseBriefed is emitted when the Director's Briefer returned a
-// Briefing for (PhaseID, Attempt) and bcc has materialized the prompt
-// to disk. The Executor is about to run.
+// Briefing for (PhaseID, Iteration) and bcc has materialized the
+// prompt to disk. The Executor is about to run.
+//
+// Iteration is the 1-based index of this brief→execute→review cycle
+// within the phase. A phase may have multiple iterations when an
+// earlier briefing covered only a subset of pending tasks, or when
+// an escalation resumed the phase. It is not the executor retry
+// counter; that lives on PhaseReviewed and DirectorEscalation.
 //
 // Capability fields surface the resolved per-role spawn parameters
 // for the upcoming iteration: the model+effort each role will use
@@ -93,7 +99,7 @@ func (PhasePlanned) isLoopEvent() {}
 // will be bypassed.
 type PhaseBriefed struct {
 	PhaseID        string
-	Attempt        int
+	Iteration      int
 	Briefing       *director.Briefing
 	BrieferModel   string
 	BrieferEffort  string

@@ -49,7 +49,7 @@ func TestBriefer_DelegatesAndErrorsWhenUnset(t *testing.T) {
 		called = true
 		return &director.DirectorCallStats{CostUSD: 0.02}, nil
 	}
-	stats, err := b.Brief(context.Background(), director.BrieferInput{PhaseID: "p1", Attempt: 1}, nil)
+	stats, err := b.Brief(context.Background(), director.BrieferInput{PhaseID: "p1"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

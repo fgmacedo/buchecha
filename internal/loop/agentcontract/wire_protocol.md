@@ -11,7 +11,7 @@ The methods bcc exposes depend on the role bcc spawned you in (Planner, Briefer,
 | Method | Purpose |
 |---|---|
 | `bcc_task_started(agent_id, "planning")` | Open the planning task on the timeline. Use the literal id `"planning"`. |
-| `bcc_plan_emit(agent_id, plan)` | Submit the typed Plan. Validated against `plan.schema.json` and the structural invariants (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps). On rejection bcc returns the validator error; correct and re-emit. |
+| `bcc_plan_emit(agent_id, plan)` | Submit the typed Plan. The handler validates it against the typed Plan shape and the structural invariants (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps). On rejection bcc returns the validator error; correct and re-emit. |
 | `bcc_task_completed(agent_id, "planning", summary)` | Close the planning task. `summary` is one short sentence. |
 
 ### Briefer

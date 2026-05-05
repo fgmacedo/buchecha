@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -51,10 +52,16 @@ func (h *recordingHandler) Calls() []handlerCall {
 	return out
 }
 
-func newTestServer(t *testing.T) (*Server, *recordingHandler) {
+// newTestServer builds an *httptest.Server fronting the MCP handler.
+// The composition root in production installs a path-scoped bearer
+// middleware in front of Routes(); the server itself does not validate
+// bearer tokens. Tests drive Routes() directly so assertions on the
+// transport (role header, JSON-RPC framing, dispatch) stay isolated
+// from the auth middleware.
+func newTestServer(t *testing.T) (*httptest.Server, *recordingHandler) {
 	t.Helper()
 	h := &recordingHandler{}
-	srv, err := Start(ServerConfig{
+	srv, err := New(ServerConfig{
 		Tools: []Tool{
 			{Name: "task_started", Description: "begin a unit", InputSchema: map[string]any{
 				"type": "object",
@@ -70,32 +77,25 @@ func newTestServer(t *testing.T) (*Server, *recordingHandler) {
 		ConnectionNames: []string{"bcc-executor", "bcc-planner"},
 	})
 	if err != nil {
-		t.Fatalf("start: %v", err)
+		t.Fatalf("new: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = srv.Close()
-	})
-	return srv, h
+	ts := httptest.NewServer(srv.Routes())
+	t.Cleanup(ts.Close)
+	return ts, h
 }
 
 // post sends a JSON-RPC request and returns the parsed response. role
 // becomes the X-BCC-Role header value; pass empty to omit the header.
-// tokenOverride defaults to the server's token; set to test auth.
-func post(t *testing.T, srv *Server, body any, role, tokenOverride string) *http.Response {
+func post(t *testing.T, ts *httptest.Server, body any, role string) *http.Response {
 	t.Helper()
 	buf := new(bytes.Buffer)
 	if err := json.NewEncoder(buf).Encode(body); err != nil {
 		t.Fatalf("encode: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, srv.URL(), buf)
+	req, err := http.NewRequest(http.MethodPost, ts.URL, buf)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	tok := srv.Token()
-	if tokenOverride != "" {
-		tok = tokenOverride
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
 	if role != "" {
 		req.Header.Set(RoleHeader, role)
@@ -119,13 +119,13 @@ func decodeResp(t *testing.T, r *http.Response) rpcResp {
 }
 
 func TestServer_Initialize(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, _ := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      0,
 		"method":  "initialize",
 		"params":  map[string]any{},
-	}, "bcc-executor", "")
+	}, "bcc-executor")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -144,12 +144,12 @@ func TestServer_Initialize(t *testing.T) {
 }
 
 func TestServer_ToolsList(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, _ := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
-	}, "bcc-executor", "")
+	}, "bcc-executor")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -176,8 +176,8 @@ func TestServer_ToolsList(t *testing.T) {
 }
 
 func TestServer_ToolsCall_DispatchesToHandler(t *testing.T) {
-	srv, h := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, h := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
@@ -185,7 +185,7 @@ func TestServer_ToolsCall_DispatchesToHandler(t *testing.T) {
 			"name":      "task_started",
 			"arguments": map[string]any{"id": "P1.1", "summary": "begin"},
 		},
-	}, "bcc-executor", "")
+	}, "bcc-executor")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -218,14 +218,14 @@ func TestServer_ToolsCall_DispatchesToHandler(t *testing.T) {
 }
 
 func TestServer_ToolsCall_HandlerErrorReturnsRPCError(t *testing.T) {
-	srv, h := newTestServer(t)
+	ts, h := newTestServer(t)
 	h.callsErr = errors.New("invalid sub_dag_task_ids")
-	resp := post(t, srv, map[string]any{
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      3,
 		"method":  "tools/call",
 		"params":  map[string]any{"name": "task_started", "arguments": map[string]any{}},
-	}, "bcc-executor", "")
+	}, "bcc-executor")
 	r := decodeResp(t, resp)
 	if r.Error == nil {
 		t.Fatal("expected JSON-RPC error from handler error")
@@ -235,109 +235,58 @@ func TestServer_ToolsCall_HandlerErrorReturnsRPCError(t *testing.T) {
 	}
 }
 
-func TestServer_RejectsMissingAuth(t *testing.T) {
-	srv, _ := newTestServer(t)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL(), strings.NewReader(`{"jsonrpc":"2.0","id":4,"method":"initialize"}`))
-	req.Header.Set(RoleHeader, "bcc-executor")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
-func TestServer_RejectsWrongAuth(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      5,
-		"method":  "initialize",
-	}, "bcc-executor", "wrong-token")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
 func TestServer_RejectsUnknownRole(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, _ := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      6,
 		"method":  "initialize",
-	}, "bcc-mystery", "")
+	}, "bcc-mystery")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", resp.StatusCode)
 	}
 }
 
 func TestServer_RejectsMissingRole(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, _ := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      7,
 		"method":  "initialize",
-	}, "", "")
+	}, "")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("status = %d, want 403 (empty role rejected)", resp.StatusCode)
 	}
 }
 
 func TestServer_NotificationAccepted(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, _ := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "notifications/initialized",
-	}, "bcc-executor", "")
+	}, "bcc-executor")
 	if resp.StatusCode != http.StatusAccepted {
 		t.Errorf("status = %d, want 202", resp.StatusCode)
 	}
 }
 
 func TestServer_UnknownMethodErrors(t *testing.T) {
-	srv, _ := newTestServer(t)
-	resp := post(t, srv, map[string]any{
+	ts, _ := newTestServer(t)
+	resp := post(t, ts, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      8,
 		"method":  "resources/list",
-	}, "bcc-executor", "")
+	}, "bcc-executor")
 	r := decodeResp(t, resp)
 	if r.Error == nil || r.Error.Code != -32601 {
 		t.Errorf("error = %+v, want code -32601", r.Error)
 	}
 }
 
-func TestServer_TokenIsHexBytes(t *testing.T) {
-	srv, _ := newTestServer(t)
-	tok := srv.Token()
-	if len(tok) != 64 {
-		t.Errorf("token len = %d, want 64", len(tok))
-	}
-	for i, c := range tok {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			t.Errorf("token char %d = %q is not lowercase hex", i, c)
-			break
-		}
-	}
-}
-
-func TestServer_URLPointsAtLoopback(t *testing.T) {
-	srv, _ := newTestServer(t)
-	if !strings.HasPrefix(srv.URL(), "http://127.0.0.1:") {
-		t.Errorf("URL = %q, want http://127.0.0.1:<port>", srv.URL())
-	}
-	if !strings.HasSuffix(srv.URL(), "/mcp") {
-		t.Errorf("URL = %q, want /mcp suffix", srv.URL())
-	}
-}
-
 func TestServer_GetIsSSEAndClosesOnContextCancel(t *testing.T) {
-	srv, _ := newTestServer(t)
+	ts, _ := newTestServer(t)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	req, _ := http.NewRequest(http.MethodGet, srv.URL(), nil)
-	req.Header.Set("Authorization", "Bearer "+srv.Token())
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
 	req.Header.Set(RoleHeader, "bcc-executor")
 	req.Header.Set("Accept", "text/event-stream")
 	start := time.Now()
@@ -359,18 +308,8 @@ func TestServer_GetIsSSEAndClosesOnContextCancel(t *testing.T) {
 	}
 }
 
-func TestServer_CloseIsIdempotent(t *testing.T) {
-	srv, _ := newTestServer(t)
-	if err := srv.Close(); err != nil {
-		t.Errorf("first close: %v", err)
-	}
-	if err := srv.Close(); err != nil {
-		t.Errorf("second close: %v", err)
-	}
-}
-
 func TestServer_RejectsNilHandler(t *testing.T) {
-	_, err := Start(ServerConfig{
+	_, err := New(ServerConfig{
 		Tools:           nil,
 		Handler:         nil,
 		ConnectionNames: []string{"bcc-executor"},
@@ -381,11 +320,31 @@ func TestServer_RejectsNilHandler(t *testing.T) {
 }
 
 func TestServer_RejectsEmptyConnectionNames(t *testing.T) {
-	_, err := Start(ServerConfig{
+	_, err := New(ServerConfig{
 		Tools:   nil,
 		Handler: &recordingHandler{},
 	})
 	if err == nil {
 		t.Fatal("expected error when ConnectionNames is empty")
+	}
+}
+
+func TestServer_ConnectionNamesReturnsConfiguredRoles(t *testing.T) {
+	srv, err := New(ServerConfig{
+		Handler:         &recordingHandler{},
+		ConnectionNames: []string{"a", "b", "c"},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	got := srv.ConnectionNames()
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	want := map[string]bool{"a": true, "b": true, "c": true}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected role %q", name)
+		}
 	}
 }

@@ -149,4 +149,10 @@ type DirectorPorts struct {
 	// channel after emitting DirectorEscalation. nil means "abort on
 	// any escalation"; useful for headless runs.
 	Escalation <-chan EscalationReply
+
+	// Stats, when non-nil, receives one StatsEntry per agent spawn
+	// (Briefer, Executor, Reviewer; the Planner is recorded by the
+	// caller before constructing the loop). nil disables persistence;
+	// the loop continues normally.
+	Stats *director.StatsLog
 }

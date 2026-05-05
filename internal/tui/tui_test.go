@@ -54,23 +54,24 @@ func (f *fakeGitProbe) CommitsSince(_ context.Context, _ string) (int, error) {
 	return f.commitsN, nil
 }
 
-// newTestModel builds a Model with a buffered events channel returned
-// alongside so tests can push events into it.
+// newTestModel builds a Model backed by a test services instance,
+// returning the raw events channel alongside so tests can push events into it.
 func newTestModel(t *testing.T) (Model, chan loop.Event, *Gate, *bool) {
 	t.Helper()
-	events := make(chan loop.Event, 16)
+	ts := newTestSvc(t)
 	gate := NewGate()
 	cancelled := false
 	cancel := func() { cancelled = true }
 	m := New(Options{
-		Events:   events,
-		Cancel:   cancel,
-		Gate:     gate,
-		SpecPath: "spec.md",
-		Branch:   "feat/x",
-		MaxIter:  5,
+		Services:  ts.Svc,
+		SessionID: ts.SessionID,
+		Cancel:    cancel,
+		Gate:      gate,
+		SpecPath:  "spec.md",
+		Branch:    "feat/x",
+		MaxIter:   5,
 	})
-	return m, events, gate, &cancelled
+	return m, ts.Events, gate, &cancelled
 }
 
 func TestUpdate_WindowSizeStored(t *testing.T) {
@@ -237,21 +238,21 @@ func drainBatchChildren(t *testing.T, cmd tea.Cmd) []tea.Cmd {
 
 func TestUpdate_IterationStartedFiresImmediateGitProbe(t *testing.T) {
 	probe := &fakeGitProbe{dirtyN: 1, commitsN: 0}
-	events := make(chan loop.Event, 1)
+	ts := newTestSvc(t)
 	gate := NewGate()
 	m := New(Options{
-		Events:   events,
-		Cancel:   func() {},
-		Gate:     gate,
-		SpecPath: "spec.md",
-		Branch:   "feat/x",
-		MaxIter:  5,
-		GitProbe: probe,
+		Services:  ts.Svc,
+		SessionID: ts.SessionID,
+		Cancel:    func() {},
+		Gate:      gate,
+		SpecPath:  "spec.md",
+		Branch:    "feat/x",
+		MaxIter:   5,
+		GitProbe:  probe,
 	})
 
-	// Close the events channel so the inner readEventCmd does not block
-	// when we drive it synchronously below.
-	close(events)
+	// Close the events channel so the subscriber channel also closes quickly.
+	ts.Close()
 
 	_, cmd := m.Update(eventMsg{ev: loop.IterationStarted{
 		Index: 1, MaxIter: 5, BaselineSHA: "abc123",
@@ -294,18 +295,19 @@ func TestUpdate_IterationStartedFiresImmediateGitProbe(t *testing.T) {
 
 func TestUpdate_IterationStartedWithoutBaselineDoesNotProbe(t *testing.T) {
 	probe := &fakeGitProbe{}
-	events := make(chan loop.Event, 1)
+	ts := newTestSvc(t)
 	gate := NewGate()
 	m := New(Options{
-		Events:   events,
-		Cancel:   func() {},
-		Gate:     gate,
-		SpecPath: "spec.md",
-		Branch:   "feat/x",
-		MaxIter:  5,
-		GitProbe: probe,
+		Services:  ts.Svc,
+		SessionID: ts.SessionID,
+		Cancel:    func() {},
+		Gate:      gate,
+		SpecPath:  "spec.md",
+		Branch:    "feat/x",
+		MaxIter:   5,
+		GitProbe:  probe,
 	})
-	close(events)
+	ts.Close()
 
 	_, cmd := m.Update(eventMsg{ev: loop.IterationStarted{
 		Index: 1, MaxIter: 5, BaselineSHA: "",

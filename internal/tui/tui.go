@@ -21,6 +21,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/services"
 )
 
 // gitProbeInterval is the cadence at which the dashboard polls the
@@ -86,6 +87,11 @@ type Model struct {
 	gate     *Gate
 	gitProbe GitProbe
 	gitCtx   context.Context
+
+	// svc is the application services handle. When non-nil, the TUI
+	// receives its event stream via svc.Events.Subscribe instead of the
+	// raw events channel. Wired from Options.Services.
+	svc *services.Services
 
 	// newEvents builds a fresh loop, spawns its goroutine, and returns
 	// the new events channel. Invoked when the user presses [r] in the
@@ -176,7 +182,6 @@ func (m *Model) SetProgram(p *tea.Program) {
 // Options bundles construction parameters for New. Optional fields may
 // be left zero.
 type Options struct {
-	Events    <-chan loop.Event
 	Cancel    context.CancelFunc
 	Gate      *Gate
 	SpecPath  string
@@ -186,10 +191,12 @@ type Options struct {
 	GitProbe  GitProbe
 	GitCtx    context.Context
 
-	// NewEvents is the host's factory for a fresh loop run. Invoked when
-	// the user presses [r] in the session menu. Nil disables the resume
-	// action.
-	NewEvents func() <-chan loop.Event
+	// Services, when non-nil, is the application services handle from
+	// which the TUI obtains its event stream via
+	// Services.Events.Subscribe. The TUI subscribes directly to the
+	// shared services instance and derives its newEvents factory from
+	// the same handle.
+	Services *services.Services
 
 	// EscalationGate is the channel the Model writes into when the user
 	// resolves a Director escalation modal. The host wires the same
@@ -204,18 +211,18 @@ type Options struct {
 	PlanningPending bool
 }
 
-// New returns a Model wired to the given event channel and cancel
-// callback. The gate is required; nil disables the pause feature
-// silently. GitProbe is optional: nil disables the commit-count and
-// dirty-file probes (panels still render with empty placeholders).
+// New returns a Model wired to the given services and cancel callback.
+// The gate is required; nil disables the pause feature silently.
+// GitProbe is optional: nil disables the commit-count and dirty-file
+// probes (panels still render with empty placeholders).
 func New(opts Options) Model {
 	now := time.Now()
 	m := Model{
-		events:   opts.Events,
 		cancel:   opts.Cancel,
 		gate:     opts.Gate,
 		gitProbe: opts.GitProbe,
 		gitCtx:   opts.GitCtx,
+		svc:      opts.Services,
 		header: header{
 			specPath:  opts.SpecPath,
 			branch:    opts.Branch,
@@ -231,12 +238,20 @@ func New(opts Options) Model {
 		sessionKeys:     defaultSessionKeyMap(),
 		directorKeys:    defaultDirectorKeyMap(),
 		helpView:        help.New(),
-		newEvents:       opts.NewEvents,
 		escalationGate:  opts.EscalationGate,
 		planningPending: opts.PlanningPending,
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
+	}
+	if opts.Services != nil {
+		svc := opts.Services
+		sid := opts.SessionID
+		ctx := m.gitCtx
+		m.events = serviceEventsChan(ctx, svc, sid, 0)
+		m.newEvents = func() <-chan loop.Event {
+			return serviceEventsChan(context.Background(), svc, sid, 0)
+		}
 	}
 	return m
 }
@@ -546,7 +561,7 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.director.onPhasePlanned(e.Plan)
 		m.header.onAny(e.At)
 	case loop.PhaseBriefed:
-		m.director.onPhaseBriefed(e.PhaseID, e.Attempt, e.Briefing, phaseCapability{
+		m.director.onPhaseBriefed(e.PhaseID, e.Iteration, e.Briefing, phaseCapability{
 			BrieferModel:   e.BrieferModel,
 			BrieferEffort:  e.BrieferEffort,
 			ExecutorModel:  e.ExecutorModel,
@@ -565,13 +580,17 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.header.onAny(e.At)
 	case loop.TaskStarted:
 		m.director.onTaskStarted(e.TaskID)
-		m.progress.onTaskStarted()
-		m.risk.onTaskStarted()
+		if !isPseudoTaskID(e.TaskID) {
+			m.progress.onTaskStarted()
+			m.risk.onTaskStarted()
+		}
 		m.header.onAny(e.At)
 	case loop.TaskCompleted:
 		m.director.onTaskCompleted(e.TaskID)
-		m.progress.onTaskCompleted()
-		m.risk.onTaskCompleted()
+		if !isPseudoTaskID(e.TaskID) {
+			m.progress.onTaskCompleted()
+			m.risk.onTaskCompleted()
+		}
 		m.header.onAny(e.At)
 	}
 	return m, tea.Batch(cmds...)
@@ -661,7 +680,8 @@ func (m Model) viewSession() string {
 	}
 	dashboard := m.viewDashboard(true)
 	status := sessionStatus(m.sessionReason, m.lastIterSignal)
-	menu := renderSessionMenu(m.helpView, m.sessionKeys, status)
+	explanation := sessionExplanation(m.sessionReason)
+	menu := renderSessionMenu(m.helpView, m.sessionKeys, status, explanation)
 	hint := ""
 	if m.sessionExitMsg != "" {
 		hint = "  " + theme.warn.Render(m.sessionExitMsg) + "\n"
@@ -766,4 +786,37 @@ func gitProbeNowCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea
 	return func() tea.Msg {
 		return doGitProbe(ctx, probe, baselineSHA)
 	}
+}
+
+// serviceEventsChan subscribes to sessionID via svc.Events and returns a
+// <-chan loop.Event that emits each event in the SeqEvent. The goroutine
+// exits when ctx is cancelled or when the subscription channel closes (on
+// LoopFinished or fan-out shutdown). The returned channel is closed when
+// the goroutine exits so the caller's readEventCmd sees the terminal state.
+func serviceEventsChan(ctx context.Context, svc *services.Services, sessionID string, fromSeq int64) <-chan loop.Event {
+	out := make(chan loop.Event, 256)
+	sub, err := svc.Events.Subscribe(ctx, sessionID, fromSeq)
+	if err != nil {
+		close(out)
+		return out
+	}
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case se, ok := <-sub:
+				if !ok {
+					return
+				}
+				select {
+				case out <- se.Event:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
 }

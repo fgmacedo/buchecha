@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -56,7 +57,6 @@ func TestBrief_RunsAndReportsStats(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-1",
 		PhaseID:     "p1",
-		Attempt:     1,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -105,7 +105,6 @@ func TestRunRole_BudgetExceeded(t *testing.T) {
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
-		Attempt:  1,
 	}, nil)
 	if err == nil {
 		t.Fatalf("expected ErrBudgetExceeded")
@@ -129,7 +128,7 @@ func TestArgs_PassedToBinary(t *testing.T) {
 		Model:        "test-model",
 		MaxBudgetUSD: 0.5,
 		ExtraArgs:    []string{"--foo"},
-		MCPURL:       "http://127.0.0.1:1/mcp",
+		MCPURL:       "http://127.0.0.1:1/mcp/",
 		MCPToken:     "secret",
 	})
 	_, err := a.Brief(context.Background(), director.BrieferInput{
@@ -137,7 +136,6 @@ func TestArgs_PassedToBinary(t *testing.T) {
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
-		Attempt:  1,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -202,7 +200,6 @@ func TestBrief_AssignmentOverridesModelAndEffort(t *testing.T) {
 		Plan:       &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath:   "/tmp/spec.md",
 		PhaseID:    "p1",
-		Attempt:    1,
 		Assignment: &director.RoleAssignment{Model: "override-model", Effort: "high"},
 	}, nil)
 	if err != nil {
@@ -239,7 +236,6 @@ func TestBrief_NoAssignmentKeepsConfiguredDefaults(t *testing.T) {
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
-		Attempt:  1,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -293,9 +289,9 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 		tpl  string
 		view any
 	}{
-		{"plan", director.PlanPromptTemplate(), planView{AgentID: "planner-001", SpecPath: "/tmp/spec.md"}},
-		{"brief", director.BriefPromptTemplate(), briefView{AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1", Attempt: 1}},
-		{"review", director.ReviewPromptTemplate(), reviewView{AgentID: "reviewer-001", SpecPath: "/tmp/spec.md"}},
+		{"plan", director.PlanPromptTemplate(), planView{Role: "planner", AgentID: "planner-001", SpecPath: "/tmp/spec.md"}},
+		{"brief", director.BriefPromptTemplate(), briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"}},
+		{"review", director.ReviewPromptTemplate(), reviewView{Role: "reviewer", AgentID: "reviewer-001"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -312,6 +308,134 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 				t.Errorf("agent_id marker missing in %s prompt", tc.name)
 			}
 		})
+	}
+}
+
+// TestComposePrompt_EmbedsWhatBccIs guards the "what bcc is" partial:
+// every per-role prompt must carry the shared product description, and
+// the role's bullet must be marked with "(you)" so the agent knows
+// which one of the four it is. Review is not asserted because the
+// review prompt has not adopted the partial yet.
+func TestComposePrompt_EmbedsWhatBccIs(t *testing.T) {
+	cases := []struct {
+		name       string
+		tpl        string
+		view       any
+		youMarker  string
+		otherRoles []string
+	}{
+		{
+			"plan",
+			director.PlanPromptTemplate(),
+			planView{Role: "planner", AgentID: "planner-001", SpecPath: "/tmp/spec.md"},
+			"**Planner** (you)",
+			[]string{"**Briefer** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+		},
+		{
+			"brief",
+			director.BriefPromptTemplate(),
+			briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"},
+			"**Briefer** (you)",
+			[]string{"**Planner** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+		},
+		{
+			"review",
+			director.ReviewPromptTemplate(),
+			reviewView{Role: "reviewer", AgentID: "reviewer-001"},
+			"**Reviewer** (you)",
+			[]string{"**Planner** (you)", "**Briefer** (you)", "**Executor** (you)"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := composePrompt(tc.tpl, tc.view)
+			if err != nil {
+				t.Fatalf("compose: %v", err)
+			}
+			if !strings.Contains(out, "## What bcc is") {
+				t.Errorf("what_bcc_is heading missing from %s prompt", tc.name)
+			}
+			if !strings.Contains(out, "format-agnostic") {
+				t.Errorf("what_bcc_is body marker missing from %s prompt", tc.name)
+			}
+			if !strings.Contains(out, tc.youMarker) {
+				t.Errorf("expected %q to mark the active role in %s prompt", tc.youMarker, tc.name)
+			}
+			for _, other := range tc.otherRoles {
+				if strings.Contains(out, other) {
+					t.Errorf("%s prompt should not mark %q as (you); rendered:\n%s", tc.name, other, out)
+				}
+			}
+		})
+	}
+}
+
+// TestWriteMCPConfig_PreservesURLAndCarriesRoleHeader pins the per-spawn
+// mcp-config.json shape against the new shared-listener URL contract:
+// the URL is written verbatim (no rewrite, no segment stripping), the
+// X-BCC-Role header carries the role's connection name, and the bearer
+// token lives in Authorization. The trailing slash matters because chi
+// strips the /mcp prefix and an agent that hits /mcp would land outside
+// the mount.
+func TestWriteMCPConfig_PreservesURLAndCarriesRoleHeader(t *testing.T) {
+	const url = "http://127.0.0.1:54321/mcp/"
+	path, cleanup, err := writeMCPConfig(url, "tok", "bcc-planner")
+	if err != nil {
+		t.Fatalf("writeMCPConfig: %v", err)
+	}
+	t.Cleanup(cleanup)
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read mcp-config: %v", err)
+	}
+	var doc struct {
+		MCPServers map[string]struct {
+			Type    string            `json:"type"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("decode mcp-config: %v\n%s", err, body)
+	}
+	server, ok := doc.MCPServers["bcc"]
+	if !ok {
+		t.Fatalf("mcpServers[bcc] missing: %s", body)
+	}
+	if server.Type != "http" {
+		t.Errorf("type = %q, want http", server.Type)
+	}
+	if server.URL != url {
+		t.Errorf("url = %q, want %q (verbatim, no rewrite)", server.URL, url)
+	}
+	if !strings.HasSuffix(server.URL, "/mcp/") {
+		t.Errorf("url must end with /mcp/, got %q", server.URL)
+	}
+	if got := server.Headers["Authorization"]; got != "Bearer tok" {
+		t.Errorf("Authorization = %q, want Bearer tok", got)
+	}
+	if got := server.Headers["X-BCC-Role"]; got != "bcc-planner" {
+		t.Errorf("X-BCC-Role = %q, want bcc-planner", got)
+	}
+}
+
+// TestWriteMCPConfig_RejectsEmptyURL guards the precondition: callers
+// must supply the run-wide MCP URL (the composition root resolves it
+// once the listener binds).
+func TestWriteMCPConfig_RejectsEmptyURL(t *testing.T) {
+	_, _, err := writeMCPConfig("", "tok", "bcc-planner")
+	if err == nil {
+		t.Fatal("expected error for empty url")
+	}
+}
+
+// TestWriteMCPConfig_RejectsEmptyConnection guards the role header so
+// the handler's connection-name allow-list never sees a blank value.
+func TestWriteMCPConfig_RejectsEmptyConnection(t *testing.T) {
+	_, _, err := writeMCPConfig("http://x/mcp/", "tok", "")
+	if err == nil {
+		t.Fatal("expected error for empty connection name")
 	}
 }
 

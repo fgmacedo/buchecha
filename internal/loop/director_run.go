@@ -74,6 +74,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 	globalIter := 0
 	priorFeedback := ""
 	pendingHint := ""
+	phaseIterations := map[string]int{}
 
 	for state.HasPending() {
 		eligible := state.EligiblePhases()
@@ -92,12 +93,11 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: phase %q is eligible but has no pending tasks", phaseID)
 		}
-		budget := maxRetryBudget(phase, subDAG)
-		if budget == 0 && l.Config.Director.RetryBudget > 0 {
-			budget = l.Config.Director.RetryBudget
-		}
+		budget := effectiveRetryBudget(phase, subDAG, l.Config.Director.RetryBudget)
 
-		iterationID := fmt.Sprintf("%s-%d", phaseID, 1)
+		phaseIterations[phaseID]++
+		iteration := phaseIterations[phaseID]
+		iterationID := fmt.Sprintf("%s-%02d", phaseID, iteration)
 		var briefing *director.Briefing
 		if phase.PreparedBriefing != nil {
 			synthetic := director.Briefing{
@@ -122,7 +122,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				return l.terminate(events, "fatal", ExitInvalid),
 					fmt.Errorf("director: register briefer: %w", err)
 			}
-			briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, 1, subDAG, priorFeedback)
+			briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, iteration, subDAG, priorFeedback)
 			if err != nil {
 				registry.Deregister(brieferID)
 				return l.terminate(events, "fatal", ExitInvalid),
@@ -130,11 +130,27 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			}
 			briefIn.AgentID = string(brieferID)
 			briefIn.Assignment = phase.AssignmentFor("briefer")
+			var brieferStats *director.DirectorCallStats
 			brierr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
-				_, e := d.Briefer.Brief(ctx, *briefIn, agentEvents)
+				stats, e := d.Briefer.Brief(ctx, *briefIn, agentEvents)
+				brieferStats = stats
 				return e
 			})
 			registry.Deregister(brieferID)
+			if brieferStats != nil {
+				if err := d.Stats.Append(director.StatsEntry{
+					At:           time.Now(),
+					Role:         string(dag.RoleBriefer),
+					PhaseID:      phaseID,
+					IterationID:  iterationID,
+					DurationMS:   brieferStats.DurationMS,
+					CostUSD:      brieferStats.CostUSD,
+					InputTokens:  brieferStats.InputTokens,
+					OutputTokens: brieferStats.OutputTokens,
+				}); err != nil {
+					logger.Warn("director stats append briefer", "err", err)
+				}
+			}
 			if brierr != nil {
 				return l.terminate(events, "fatal", ExitInvalid),
 					fmt.Errorf("director: brief phase %s: %w", phaseID, brierr)
@@ -201,7 +217,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		brieferSkipped := phase.PreparedBriefing != nil
 		reviewSkipped := phase.SkipReview
 		emit(events, PhaseBriefed{
-			PhaseID: phaseID, Attempt: 1,
+			PhaseID: phaseID, Iteration: iteration,
 			Briefing:       briefing,
 			BrieferModel:   brieferModel,
 			BrieferEffort:  brieferEffort,
@@ -247,9 +263,24 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				PhaseID:    phaseID,
 				SubDAG:     actualSub,
 			}
-			signal, execErr := runDirectorExecutor(ctx, d.NewExecutor(execArgs, renderSystem, phase.AssignmentFor("executor")), userPrompt, events, d.Handler, briefing.IterationID)
+			signal, execStats, execErr := runDirectorExecutor(ctx, d.NewExecutor(execArgs, renderSystem, phase.AssignmentFor("executor")), userPrompt, events, d.Handler, briefing.IterationID)
 			if execErr != nil {
 				return l.terminate(events, "fatal", ExitInvalid), execErr
+			}
+			if execStats != nil {
+				if err := d.Stats.Append(director.StatsEntry{
+					At:           time.Now(),
+					Role:         string(dag.RoleExecutor),
+					PhaseID:      phaseID,
+					IterationID:  briefing.IterationID,
+					Attempt:      attempt,
+					DurationMS:   execStats.DurationMS,
+					CostUSD:      execStats.CostUSD,
+					InputTokens:  execStats.InputTokens,
+					OutputTokens: execStats.OutputTokens,
+				}); err != nil {
+					logger.Warn("director stats append executor", "err", err)
+				}
 			}
 
 			headAfter, err := l.Git.HeadSHA(ctx)
@@ -295,20 +326,37 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 					return l.terminate(events, "fatal", ExitInvalid),
 						fmt.Errorf("director: register reviewer: %w", err)
 				}
+				var reviewerStats *director.DirectorCallStats
 				rerr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
-					_, e := d.Reviewer.Review(ctx, director.ReviewerInput{
+					stats, e := d.Reviewer.Review(ctx, director.ReviewerInput{
 						AgentID:     string(reviewerID),
 						IterationID: briefing.IterationID,
 						PhaseID:     phaseID,
 						SubDAG:      actualSub,
 						Assignment:  phase.AssignmentFor("reviewer"),
 					}, agentEvents)
+					reviewerStats = stats
 					return e
 				})
 				registry.Deregister(reviewerID)
 				if rerr != nil {
 					return l.terminate(events, "fatal", ExitInvalid),
 						fmt.Errorf("director: review phase %s attempt %d: %w", phaseID, attempt, rerr)
+				}
+				if reviewerStats != nil {
+					if err := d.Stats.Append(director.StatsEntry{
+						At:           time.Now(),
+						Role:         string(dag.RoleReviewer),
+						PhaseID:      phaseID,
+						IterationID:  briefing.IterationID,
+						Attempt:      attempt,
+						DurationMS:   reviewerStats.DurationMS,
+						CostUSD:      reviewerStats.CostUSD,
+						InputTokens:  reviewerStats.InputTokens,
+						OutputTokens: reviewerStats.OutputTokens,
+					}); err != nil {
+						logger.Warn("director stats append reviewer", "err", err)
+					}
 				}
 			}
 			outcome := d.Handler.LastReviewOutcome(briefing.IterationID)
@@ -423,30 +471,51 @@ func runWithAgentEvents(ctx context.Context, events chan<- Event, fn func(chan<-
 // handler-stored value populated by the executor's
 // bcc_iteration_finished call. An executor that exits without calling
 // the terminal method falls back to SignalReview, the safe default
-// (the Reviewer audits regardless and decides advance/retry).
-func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, events chan<- Event, handler *dag.Handler, briefingID string) (agentcontract.Signal, error) {
+// (the Reviewer audits regardless and decides advance/retry). The
+// returned stats pointer carries the executor's last result summary
+// (cost, tokens, duration) when the agent emitted one, nil otherwise.
+func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, events chan<- Event, handler *dag.Handler, briefingID string) (agentcontract.Signal, *director.DirectorCallStats, error) {
 	if exec == nil {
-		return agentcontract.SignalUnknown, errors.New("director: NewExecutor returned nil executor")
+		return agentcontract.SignalUnknown, nil, errors.New("director: NewExecutor returned nil executor")
 	}
 	agentEvents := make(chan agentcontract.AgentEvent, 256)
 	pumpDone := make(chan struct{})
+	var lastSummary *agentcontract.ResultSummaryInfo
+	var summaryAt time.Time
 	go func() {
 		defer close(pumpDone)
 		for ae := range agentEvents {
+			if ae.Kind == agentcontract.KindResultSummary && ae.Done != nil {
+				lastSummary = ae.Done
+				summaryAt = ae.At
+			}
 			emit(events, AgentEventReceived{Event: ae})
 		}
 	}()
 	result, err := exec.Run(ctx, userPrompt, agentEvents)
 	close(agentEvents)
 	<-pumpDone
+	var stats *director.DirectorCallStats
+	if lastSummary != nil {
+		var dur int64
+		if !summaryAt.IsZero() {
+			dur = lastSummary.DurationMS
+		}
+		stats = &director.DirectorCallStats{
+			DurationMS:   dur,
+			CostUSD:      lastSummary.TotalCostUSD,
+			InputTokens:  lastSummary.InputTokens,
+			OutputTokens: lastSummary.OutputTokens,
+		}
+	}
 	if err != nil {
-		return agentcontract.SignalUnknown, fmt.Errorf("director: executor run: %w", err)
+		return agentcontract.SignalUnknown, stats, fmt.Errorf("director: executor run: %w", err)
 	}
 	if result.ExitCode != 0 && handler != nil && handler.IterationSignal(briefingID) == "" {
 		// Executor crashed without emitting bcc_iteration_finished. Surface
 		// the captured stderr tail so the dashboard does not show a bare
 		// "head_stuck" with no diagnostic context.
-		return agentcontract.SignalBlocked, formatExecutorCrash(result, briefingID)
+		return agentcontract.SignalBlocked, stats, formatExecutorCrash(result, briefingID)
 	}
 	signal := agentcontract.SignalUnknown
 	if handler != nil {
@@ -455,7 +524,7 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 	if signal == agentcontract.SignalUnknown {
 		signal = agentcontract.SignalReview
 	}
-	return signal, nil
+	return signal, stats, nil
 }
 
 // formatExecutorCrash builds the diagnostic message for an iteration
@@ -516,6 +585,17 @@ func resolveAssignment(a *director.RoleAssignment, defaultModel, defaultEffort s
 		}
 	}
 	return model, effort
+}
+
+// effectiveRetryBudget resolves the per-iteration retry budget by
+// taking the higher of the sub-DAG's per-task maximum and the run
+// config floor. The floor exists because a Planner that emits
+// retry_budget=1 on every task would otherwise silently shrink the
+// run-wide budget (Config.Director.RetryBudget) the user asked for in
+// .bcc.toml. Per-task overrides may raise the budget above the floor;
+// they cannot drop below it.
+func effectiveRetryBudget(phase *director.Phase, subDAG []string, configFloor int) int {
+	return max(maxRetryBudget(phase, subDAG), configFloor)
 }
 
 // maxRetryBudget aggregates the per-task retry budgets in subDAG into

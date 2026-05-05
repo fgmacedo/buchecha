@@ -171,3 +171,70 @@ func TestTaskEventBridge_TranslatesTaskMethods(t *testing.T) {
 		t.Errorf("got[3] = %+v, want TaskNeedsFix{P1,t2,note}", got[3])
 	}
 }
+
+// TestMaxRetryBudget_TakesPerTaskMaximum pins the per-task aggregation
+// rule: the iteration-level budget is the highest retry_budget across
+// the sub-DAG. Returns 0 when no task in subDAG has a budget.
+func TestMaxRetryBudget_TakesPerTaskMaximum(t *testing.T) {
+	phase := &director.Phase{
+		ID: "P1",
+		Tasks: []director.Task{
+			{ID: "t1", RetryBudget: 1},
+			{ID: "t2", RetryBudget: 3},
+			{ID: "t3", RetryBudget: 0},
+		},
+	}
+	cases := []struct {
+		name   string
+		subDAG []string
+		want   int
+	}{
+		{"single task budget", []string{"t1"}, 1},
+		{"max across sub-DAG", []string{"t1", "t2"}, 3},
+		{"unknown task ignored", []string{"t1", "missing"}, 1},
+		{"all zero", []string{"t3"}, 0},
+		{"empty sub-DAG", nil, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maxRetryBudget(phase, tc.subDAG); got != tc.want {
+				t.Errorf("maxRetryBudget(%v) = %d, want %d", tc.subDAG, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEffectiveRetryBudget_ConfigFloorWins guards the run-config floor:
+// a Planner that emits retry_budget=1 on every task must not be able to
+// shrink Config.Director.RetryBudget. Per-task values higher than the
+// floor still win.
+func TestEffectiveRetryBudget_ConfigFloorWins(t *testing.T) {
+	phase := &director.Phase{
+		ID: "P1",
+		Tasks: []director.Task{
+			{ID: "t1", RetryBudget: 1},
+			{ID: "t2", RetryBudget: 4},
+			{ID: "t3", RetryBudget: 0},
+		},
+	}
+	cases := []struct {
+		name        string
+		subDAG      []string
+		configFloor int
+		want        int
+	}{
+		{"floor lifts a brittle plan", []string{"t1"}, 2, 2},
+		{"per-task above floor wins", []string{"t2"}, 2, 4},
+		{"floor lifts an all-zero plan", []string{"t3"}, 2, 2},
+		{"no floor and no per-task", []string{"t3"}, 0, 0},
+		{"floor lifts empty sub-DAG", nil, 3, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := effectiveRetryBudget(phase, tc.subDAG, tc.configFloor); got != tc.want {
+				t.Errorf("effectiveRetryBudget(%v, floor=%d) = %d, want %d",
+					tc.subDAG, tc.configFloor, got, tc.want)
+			}
+		})
+	}
+}

@@ -92,15 +92,58 @@ func sessionStatus(reason string, sig agentcontract.Signal) string {
 	}
 }
 
+// sessionExplanation returns a short paragraph describing why the loop
+// stopped, so the menu does not reduce a non-obvious termination to a
+// two-word badge. Returns an empty string for reasons that are
+// self-explanatory (idle, done, signals the user already saw on the
+// timeline) or that have no useful guidance to give.
+func sessionExplanation(reason string) string {
+	switch reason {
+	case "head_stuck":
+		return "  The iteration ended without commits, so the loop stopped to\n" +
+			"  avoid spinning without progress. Inspect the diff before [r]esuming,\n" +
+			"  or [e]dit the spec to clarify the next step."
+	case "max_iterations":
+		return "  The run reached its iteration cap before the spec was done.\n" +
+			"  Raise [loop].max_iterations in .bcc.toml or [r]esume to continue\n" +
+			"  with a fresh budget."
+	case "planner_failed":
+		return "  The planner exited without emitting a plan. Check the agent's\n" +
+			"  output, fix the cause, then [r]esume."
+	case "blocked":
+		return "  The executor reported blocked: a hard restriction or a missing\n" +
+			"  prerequisite stopped the iteration. Inspect the run log, address\n" +
+			"  the cause, then [r]esume."
+	case "aborted":
+		return "  An escalation aborted the run. [r]esume to retry the iteration\n" +
+			"  or [e]dit the spec to redirect the work."
+	case "no plan to resume":
+		return "  No plan latched in this session yet. Re-run bcc with the spec\n" +
+			"  path to plan the work first."
+	case "nothing_to_do":
+		return "  The planner judged the spec already complete. [e]dit the spec\n" +
+			"  to add new work, then [r]esume."
+	}
+	return ""
+}
+
 // renderSessionMenu produces the menu line the Model appends to the
 // frozen dashboard while sessionMode is latched. The line lists only
 // the bindings whose handlers are wired (Resume, Edit, Quit); the
 // Journal binding lands together with the carved-out viewer.
-func renderSessionMenu(h help.Model, k sessionKeyMap, status string) string {
+//
+// explanation is the multi-line guidance (already indented) returned by
+// sessionExplanation; an empty string skips the explanation block, which
+// is the right shape for self-explanatory reasons like "done" or "idle".
+func renderSessionMenu(h help.Model, k sessionKeyMap, status, explanation string) string {
 	var b strings.Builder
 	label := fmt.Sprintf("[ session: %s ]", status)
 	b.WriteString(theme.title.Render(label))
 	b.WriteByte('\n')
+	if explanation != "" {
+		b.WriteString(explanation)
+		b.WriteByte('\n')
+	}
 	b.WriteString("  ")
 	b.WriteString(h.ShortHelpView(k.ShortHelp()))
 	b.WriteByte('\n')

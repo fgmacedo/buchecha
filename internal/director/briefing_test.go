@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestBriefingFor_FirstAttempt_NoPriors(t *testing.T) {
+func TestBriefingFor_FirstIteration_NoPriors(t *testing.T) {
 	plan := samplePlan(t)
 	in, err := BriefingFor(plan, "/tmp/spec.md", "p1", 1, []string{"t1"}, "")
 	if err != nil {
 		t.Fatalf("BriefingFor: %v", err)
 	}
-	if in.PhaseID != "p1" || in.Attempt != 1 {
+	if in.PhaseID != "p1" {
 		t.Errorf("identity: %+v", in)
 	}
 	if in.IterationID != "p1-01" {
@@ -24,11 +24,11 @@ func TestBriefingFor_FirstAttempt_NoPriors(t *testing.T) {
 		t.Errorf("SubDAGTaskIDs = %v, want [t1]", in.SubDAGTaskIDs)
 	}
 	if in.PriorFeedback != "" {
-		t.Errorf("attempt=1 should have empty prior feedback, got %q", in.PriorFeedback)
+		t.Errorf("iteration=1 should have empty prior feedback, got %q", in.PriorFeedback)
 	}
 }
 
-func TestBriefingFor_RetryPropagatesPriorFeedback(t *testing.T) {
+func TestBriefingFor_FollowUpPropagatesPriorFeedback(t *testing.T) {
 	plan := samplePlan(t)
 	in, err := BriefingFor(plan, "/tmp/spec.md", "p1", 2, []string{"t1"}, "missing test")
 	if err != nil {
@@ -44,13 +44,13 @@ func TestBriefingFor_RetryPropagatesPriorFeedback(t *testing.T) {
 
 // TestBriefingFor_IterationIDPaddingSorts verifies the iteration_id
 // uses zero-padded width 2 so lexicographic sort matches numeric order
-// for attempts up to 99 (the working range; the format will not break
-// past 99 but ordering would degrade then).
+// for iterations up to 99 (the working range; the format will not
+// break past 99 but ordering would degrade then).
 func TestBriefingFor_IterationIDPaddingSorts(t *testing.T) {
 	plan := samplePlan(t)
 	cases := []struct {
-		attempt int
-		want    string
+		iteration int
+		want      string
 	}{
 		{1, "p1-01"},
 		{9, "p1-09"},
@@ -58,12 +58,12 @@ func TestBriefingFor_IterationIDPaddingSorts(t *testing.T) {
 		{99, "p1-99"},
 	}
 	for _, tc := range cases {
-		in, err := BriefingFor(plan, "/tmp/spec.md", "p1", tc.attempt, []string{"t1"}, "")
+		in, err := BriefingFor(plan, "/tmp/spec.md", "p1", tc.iteration, []string{"t1"}, "")
 		if err != nil {
-			t.Fatalf("attempt %d: %v", tc.attempt, err)
+			t.Fatalf("iteration %d: %v", tc.iteration, err)
 		}
 		if in.IterationID != tc.want {
-			t.Errorf("attempt %d: iteration_id = %q, want %q", tc.attempt, in.IterationID, tc.want)
+			t.Errorf("iteration %d: iteration_id = %q, want %q", tc.iteration, in.IterationID, tc.want)
 		}
 	}
 }
@@ -76,11 +76,11 @@ func TestBriefingFor_RejectsUnknownPhase(t *testing.T) {
 	}
 }
 
-func TestBriefingFor_RejectsBadAttempt(t *testing.T) {
+func TestBriefingFor_RejectsBadIteration(t *testing.T) {
 	plan := samplePlan(t)
 	_, err := BriefingFor(plan, "/tmp/spec.md", "p1", 0, nil, "")
-	if err == nil || !strings.Contains(err.Error(), "attempt must be >= 1") {
-		t.Fatalf("err = %v, want attempt-must-be-positive", err)
+	if err == nil || !strings.Contains(err.Error(), "iteration must be >= 1") {
+		t.Fatalf("err = %v, want iteration-must-be-positive", err)
 	}
 }
 

@@ -1,14 +1,21 @@
-// Package mcp implements a minimal MCP-over-HTTP server bound to
-// loopback. The bcc process runs a single instance of this server per
-// `bcc run`; agent invocations (Planner, Briefer, Reviewer, Executor)
-// connect to it through their per-spawn mcp-config.
+// Package mcp implements a minimal MCP-over-HTTP request handler. The
+// bcc process owns a single composition root that mounts this handler
+// at /mcp/ on the run-wide API listener; agent invocations (Planner,
+// Briefer, Reviewer, Executor) connect to it through their per-spawn
+// mcp-config.
 //
-// The server is the transport. It validates the bearer token, validates
-// the per-role connection name (the X-BCC-Role header), and delegates
-// every tools/call to a Handler the caller wires at Start time. The
-// handler is the protocol of record: schema validation, agent identity
-// checks, scope enforcement, and DAG mutations all live there. The
-// stdlib-only server keeps no MCP semantics beyond JSON-RPC framing.
+// The handler is the transport. It validates the per-role connection
+// name (the X-BCC-Role header) and delegates every tools/call to a
+// Handler the caller wires at construction time. The handler is the
+// protocol of record: schema validation, agent identity checks, scope
+// enforcement, and DAG mutations all live there. The stdlib-only
+// transport keeps no MCP semantics beyond JSON-RPC framing.
+//
+// Bearer-token enforcement is not the transport's job: the composition
+// root installs a path-scoped auth middleware on /mcp/* that validates
+// the agent registry token before requests reach this handler. Tests
+// that need a bearer probe install their own middleware in front of
+// Routes().
 //
 // Tool descriptors advertised via tools/list are passed through to the
 // agent CLI so it knows what to call; the descriptors do not constrain
@@ -17,15 +24,9 @@ package mcp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net"
 	"net/http"
-	"sync"
-	"time"
 )
 
 // RoleHeader names the request header an agent must set so the server
@@ -52,7 +53,7 @@ type Handler interface {
 	HandleCall(ctx context.Context, connectionName, methodName string, input map[string]any) (resultText string, err error)
 }
 
-// ServerConfig parameterizes Start. Tools is the descriptor set
+// ServerConfig parameterizes New. Tools is the descriptor set
 // advertised on tools/list. Handler dispatches tools/call. ConnectionNames
 // is the closed set of values accepted in the X-BCC-Role header; an
 // empty set rejects every authenticated request.
@@ -62,102 +63,53 @@ type ServerConfig struct {
 	ConnectionNames []string
 }
 
-// Server is the live MCP HTTP endpoint. Construct via Start, dispose
-// via Close. Safe to access URL and Token concurrently.
+// Server is the MCP request handler. Construct via New, mount via
+// Routes. The receiver carries no listener state and is safe to share
+// across goroutines for the lifetime of one composition root.
 type Server struct {
 	tools   []Tool
 	handler Handler
 	roleSet map[string]struct{}
-	token   string
-	addr    string
-	httpSrv *http.Server
-
-	wg     sync.WaitGroup
-	closed chan struct{}
 }
 
-// Start binds 127.0.0.1:0, generates a 32-byte hex bearer token, and
-// serves until Close. Returns the running server. Caller must Close.
-//
+// New validates cfg and returns a Server ready to mount via Routes.
 // cfg.Handler must be non-nil and cfg.ConnectionNames must list every
 // role expected to call the server.
-func Start(cfg ServerConfig) (*Server, error) {
+func New(cfg ServerConfig) (*Server, error) {
 	if cfg.Handler == nil {
 		return nil, errors.New("mcp: nil Handler")
 	}
 	if len(cfg.ConnectionNames) == 0 {
 		return nil, errors.New("mcp: empty ConnectionNames")
 	}
-	tok, err := newToken()
-	if err != nil {
-		return nil, fmt.Errorf("mcp token: %w", err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("mcp listen: %w", err)
-	}
 	roles := make(map[string]struct{}, len(cfg.ConnectionNames))
 	for _, name := range cfg.ConnectionNames {
 		roles[name] = struct{}{}
 	}
-	s := &Server{
+	return &Server{
 		tools:   cfg.Tools,
 		handler: cfg.Handler,
 		roleSet: roles,
-		token:   tok,
-		addr:    ln.Addr().String(),
-		closed:  make(chan struct{}),
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/mcp", s.handle)
-	s.httpSrv = &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		if err := s.httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			_ = err
-		}
-	}()
-	return s, nil
+	}, nil
 }
 
-// URL returns the http://host:port/mcp endpoint the agent should be
-// configured with.
-func (s *Server) URL() string {
-	return "http://" + s.addr + "/mcp"
+// Routes returns an http.Handler ready to mount at any prefix on a
+// host router. Both `/` and `/<segment>` reach the same dispatch path
+// so the handler works whether mounted with or without a trailing
+// slash strip.
+func (s *Server) Routes() http.Handler {
+	return http.HandlerFunc(s.handle)
 }
 
-// Token returns the bearer token the agent must present in the
-// Authorization header.
-func (s *Server) Token() string {
-	return s.token
-}
-
-// Close stops accepting new connections and waits for in-flight
-// handlers to return. Idempotent.
-func (s *Server) Close() error {
-	select {
-	case <-s.closed:
-		return nil
-	default:
-		close(s.closed)
+// ConnectionNames returns the registered role allow-list as a copy.
+// The composition root reuses this list to drive the path-scoped MCP
+// auth middleware without re-stating the allowed roles separately.
+func (s *Server) ConnectionNames() []string {
+	out := make([]string, 0, len(s.roleSet))
+	for name := range s.roleSet {
+		out = append(out, name)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	err := s.httpSrv.Shutdown(ctx)
-	s.wg.Wait()
-	return err
-}
-
-func newToken() (string, error) {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b[:]), nil
+	return out
 }
 
 type rpcReq struct {
@@ -180,10 +132,6 @@ type rpcResp struct {
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer "+s.token {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
 	role := r.Header.Get(RoleHeader)
 	if _, ok := s.roleSet[role]; !ok {
 		http.Error(w, "forbidden role", http.StatusForbidden)
@@ -283,5 +231,6 @@ func writeErr(w http.ResponseWriter, id json.RawMessage, code int, msg string) {
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &rpcErrObj{Code: code, Message: msg},
+		Result:  nil,
 	})
 }

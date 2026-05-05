@@ -1,0 +1,8 @@
+/* Stub stylesheet kept until T6.2 wires Tailwind v4 with design
+   tokens. internal/webui/handler_test.go fetches /assets/app.css
+   and asserts the dark color-scheme declaration; this file
+   satisfies that contract while the real CSS pipeline lands later
+   in P6. Vite copies public/ contents verbatim into dist/. */
+:root {
+  color-scheme: dark;
+}

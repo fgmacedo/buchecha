@@ -62,13 +62,16 @@ type PlannerInput struct {
 
 // BrieferInput is the request payload for Briefer.Brief. IterationID
 // is the loop-assigned id the Briefer echoes back into the emitted
-// Briefing. SubDAGTaskIDs lists the tasks within PhaseID this iteration
-// targets, drawn from the phase's pending or needs_fix tasks.
-// PriorFeedback, when non-empty, carries the user's escalation hint or
-// the prior attempt's per-task feedback the Briefer prepends to the
-// next iteration's instructions. The Briefer reads the spec itself via
-// the Read tool using SpecPath; bcc never inlines the spec body.
-// AgentID is the per-spawn registry id.
+// Briefing; it has the form "<phase_id>-<NN>" where NN is the 1-based
+// iteration index within the phase. SubDAGTaskIDs lists the tasks
+// within PhaseID this iteration targets, drawn from the phase's
+// pending or needs_fix tasks. PriorFeedback, when non-empty, carries
+// the user's escalation hint or the prior iteration's per-task
+// feedback the Briefer prepends to the next iteration's instructions;
+// its presence is also the signal that this is a follow-up iteration.
+// The Briefer reads the spec itself via the Read tool using SpecPath;
+// bcc never inlines the spec body. AgentID is the per-spawn registry
+// id.
 type BrieferInput struct {
 	AgentID       string
 	Plan          *Plan
@@ -76,7 +79,6 @@ type BrieferInput struct {
 	IterationID   string
 	PhaseID       string
 	SubDAGTaskIDs []string
-	Attempt       int
 	PriorFeedback string
 	// Assignment, when non-nil, overrides the Briefer adapter's
 	// configured model and effort for this single call. The Planner

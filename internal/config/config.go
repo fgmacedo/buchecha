@@ -21,6 +21,7 @@ type Config struct {
 	Env      Env            `toml:"env"`
 	Director DirectorConfig `toml:"director"`
 	Debug    DebugConfig    `toml:"debug"`
+	Webui    Webui          `toml:"webui"`
 }
 
 // Project holds top-level project settings.
@@ -166,6 +167,25 @@ func (d DebugConfig) IsCaptureSubprocessStdoutEnabled() bool {
 		return false
 	}
 	return *d.CaptureSubprocessStdout
+}
+
+// Webui carries the embedded web dashboard surface toggles, mapped to
+// the [webui] TOML block. Both fields default to false; CLI flags
+// (--webui / --webui-open) take precedence when explicitly set in
+// internal/cli/run.go.
+//
+// The block intentionally has no bind field: the API and WebUI share
+// the run-wide listener owned by internal/api, and bind belongs to a
+// future [api] block. Adding it here would split listener configuration
+// across two siblings.
+type Webui struct {
+	// Enabled mirrors --webui: when true, the composition root builds
+	// a webui.New() handler and mounts it at / on the api listener.
+	Enabled bool `toml:"enabled"`
+	// Open mirrors --webui-open: when true, the run boot launches the
+	// platform default browser at the dashboard URL after the listener
+	// is up. Implies Enabled (the CLI promotes runWebUI when -W is set).
+	Open bool `toml:"open"`
 }
 
 // DirectorClaude configures the Director's Claude adapter (P3+).

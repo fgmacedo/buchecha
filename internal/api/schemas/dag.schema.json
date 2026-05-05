@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/api/v1/dag.schema.json",
+  "title": "DAG",
+  "description": "Bare DAG fragment for one session. Phases mirror dag.State's canonical JSON form: each phase carries its id, dependency edges, and ordered tasks; each task carries its id, lifecycle status, dependency edges, and retry budget.",
+  "oneOf": [
+    {"type": "null"},
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phases"],
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "description": "Optional URI of the JSON Schema this document validates against, attached by huma's SchemaLinkTransformer."
+        },
+        "phases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "tasks"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "depends_on": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "tasks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "status", "retry_budget"],
+                  "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "status": {
+                      "type": "string",
+                      "enum": ["pending", "in_progress", "done", "needs_fix"]
+                    },
+                    "depends_on": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                    },
+                    "retry_budget": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

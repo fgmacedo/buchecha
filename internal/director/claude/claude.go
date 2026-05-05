@@ -145,11 +145,14 @@ type Config struct {
 	// when zero.
 	MaxLineBytes int
 
-	// MCPURL is the http://127.0.0.1:port/mcp endpoint of the run-wide
-	// MCP server. The adapter writes a per-spawn mcp-config pointing at
-	// it with the role's connection name carried in the X-BCC-Role
-	// header. Empty disables the --mcp-config wiring; useful for tests
-	// against fake-claude scripts that do not connect.
+	// MCPURL is the http://127.0.0.1:port/mcp/ endpoint of the run-wide
+	// MCP handler mounted on the shared API listener. The adapter writes
+	// a per-spawn mcp-config pointing at it verbatim with the role's
+	// connection name carried in the X-BCC-Role header; the trailing
+	// slash matters because chi mounts the handler at /mcp and strips
+	// the prefix, so agents must hit /mcp/ to land inside the mount.
+	// Empty disables the --mcp-config wiring; useful for tests against
+	// fake-claude scripts that do not connect.
 	MCPURL string
 
 	// MCPToken is the bearer token the agent presents in Authorization
@@ -199,22 +202,23 @@ func (a *Adapter) SetStdoutFactory(fn func(role, iterationID, agentID string) (i
 // templates render against. They are kept narrow so a future template
 // edit cannot accidentally surface fields the role should not see.
 type planView struct {
+	Role     string
 	AgentID  string
 	SpecPath string
 	Registry director.CapabilityRegistry
 }
 
 type briefView struct {
+	Role        string
 	AgentID     string
 	SpecPath    string
 	IterationID string
 	PhaseID     string
-	Attempt     int
 }
 
 type reviewView struct {
-	AgentID  string
-	SpecPath string
+	Role    string
+	AgentID string
 }
 
 // Plan implements director.Planner. It renders the planner prompt, runs
@@ -231,6 +235,7 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 		return nil, nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.PlanPromptTemplate(), planView{
+		Role:     "planner",
 		AgentID:  in.AgentID,
 		SpecPath: in.SpecPath,
 		Registry: in.Registry,
@@ -252,11 +257,11 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 		return nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.BriefPromptTemplate(), briefView{
+		Role:        "briefer",
 		AgentID:     in.AgentID,
 		SpecPath:    in.SpecPath,
 		IterationID: in.IterationID,
 		PhaseID:     in.PhaseID,
-		Attempt:     in.Attempt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)
@@ -275,8 +280,8 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 		return nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.ReviewPromptTemplate(), reviewView{
-		AgentID:  in.AgentID,
-		SpecPath: "",
+		Role:    "reviewer",
+		AgentID: in.AgentID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)

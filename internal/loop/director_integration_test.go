@@ -2,7 +2,9 @@ package loop_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -894,10 +896,260 @@ func TestDirectorIntegration_PreparedBriefingSkipsBriefer(t *testing.T) {
 	}
 	// And the synthetic briefings must be present on the handler so the
 	// Executor + Reviewer could read them.
-	if got := h.Briefing("phase-1-1"); got == nil || got.Instructions != "ship it" {
+	if got := h.Briefing("phase-1-01"); got == nil || got.Instructions != "ship it" {
 		t.Errorf("phase-1 synthetic briefing not stored: %+v", got)
 	}
-	if got := h.Briefing("phase-2-1"); got == nil || got.Instructions != "ship it again" {
+	if got := h.Briefing("phase-2-01"); got == nil || got.Instructions != "ship it again" {
 		t.Errorf("phase-2 synthetic briefing not stored: %+v", got)
+	}
+}
+
+// TestDirectorIntegration_StatsLogPersistsRoles pins the
+// per-spawn telemetry contract: when DirectorPorts.Stats is wired,
+// every Briefer / Reviewer call (and Executor result summary, when
+// the agent emits one) lands as a StatsEntry in the stats log,
+// tagged with phase_id and iteration_id. The Planner is recorded by
+// the cli boot, not the loop, so it is not asserted here.
+func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := directorTestSpec(t, tmp)
+	store := directorTestStore(t, tmp, specPath)
+	plan := directorTestPlan()
+	plan.SpecHash = "deadbeef"
+	if err := store.WritePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	h := directorTestHandler(plan)
+	statsPath := filepath.Join(t.TempDir(), "stats.jsonl")
+	statsLog := director.NewStatsLog(statsPath)
+
+	statsBriefer := &fake.Briefer{
+		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+			ids := make([]any, len(in.SubDAGTaskIDs))
+			for i, s := range in.SubDAGTaskIDs {
+				ids[i] = s
+			}
+			input := map[string]any{
+				"agent_id": in.AgentID,
+				"briefing": map[string]any{
+					"iteration_id":     in.IterationID,
+					"phase_id":         in.PhaseID,
+					"sub_dag_task_ids": ids,
+					"spec_path":        in.SpecPath,
+					"instructions":     "fake briefing",
+				},
+			}
+			if _, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input); err != nil {
+				return nil, err
+			}
+			return &director.DirectorCallStats{
+				DurationMS: 800, CostUSD: 0.012,
+				InputTokens: 900, OutputTokens: 400,
+			}, nil
+		},
+	}
+	statsReviewer := &fake.Reviewer{
+		ReviewFn: func(ctx context.Context, in director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+			for _, tid := range in.SubDAG {
+				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
+					"agent_id": in.AgentID, "id": tid,
+				}); err != nil {
+					return nil, err
+				}
+			}
+			if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodReviewFinished, map[string]any{
+				"agent_id": in.AgentID, "outcome": "approve", "reasoning": "ok",
+			}); err != nil {
+				return nil, err
+			}
+			return &director.DirectorCallStats{
+				DurationMS: 1200, CostUSD: 0.022,
+				InputTokens: 1400, OutputTokens: 700,
+			}, nil
+		},
+	}
+
+	cfg := newTestConfig()
+	l := &loop.Loop{
+		SpecPath: specPath,
+		Config:   cfg,
+		Git:      &directorAdvancingGit{},
+		Director: &loop.DirectorPorts{
+			Plan:        plan,
+			Briefer:     statsBriefer,
+			Reviewer:    statsReviewer,
+			Store:       store,
+			Handler:     h,
+			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, &directorFakeRuns{}),
+			Stats:       statsLog,
+		},
+	}
+	code, err, _ := runDirectorLoop(t, l)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != loop.ExitDone {
+		t.Errorf("exit = %d, want ExitDone", code)
+	}
+	if err := statsLog.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	body, err := os.ReadFile(statsPath)
+	if err != nil {
+		t.Fatalf("read stats.jsonl: %v", err)
+	}
+	roleCounts := map[string]int{}
+	taggedIters := map[string]string{}
+	for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var e director.StatsEntry
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("unmarshal stats line %q: %v", line, err)
+		}
+		roleCounts[e.Role]++
+		if e.IterationID != "" {
+			taggedIters[e.Role] = e.IterationID
+		}
+	}
+	if roleCounts[string(dag.RoleBriefer)] != 2 {
+		t.Errorf("briefer entries = %d, want 2 (one per phase)", roleCounts[string(dag.RoleBriefer)])
+	}
+	if roleCounts[string(dag.RoleReviewer)] != 2 {
+		t.Errorf("reviewer entries = %d, want 2 (one per phase)", roleCounts[string(dag.RoleReviewer)])
+	}
+	if taggedIters[string(dag.RoleBriefer)] == "" {
+		t.Error("briefer entries missing iteration_id tag")
+	}
+	if taggedIters[string(dag.RoleReviewer)] == "" {
+		t.Error("reviewer entries missing iteration_id tag")
+	}
+}
+
+// TestDirectorIntegration_PhaseSubDAGSequence pins the iteration_id
+// uniqueness contract: when a phase has multiple pending tasks and the
+// Briefer picks them across successive iterations (subset-then-rest),
+// each iteration must get a distinct iteration_id (suffix -01, -02,
+// ...) and the handler must retain the per-iteration briefing record
+// without overwriting the previous one. Regression test for the
+// pre-fix bug where every iteration of the same phase reused
+// "<phase>-1" and the second briefing silently overwrote the first.
+func TestDirectorIntegration_PhaseSubDAGSequence(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := directorTestSpec(t, tmp)
+	store := directorTestStore(t, tmp, specPath)
+	plan := &director.Plan{
+		Goal:     "subset coverage",
+		SpecHash: "deadbeef",
+		Phases: []director.Phase{{
+			ID: "phase-1", Title: "First", Intent: "do thing",
+			Tasks: []director.Task{
+				{ID: "t1", Title: "a", Intent: "a", Status: director.TaskPending,
+					Acceptance:  []director.AcceptanceItem{{ID: "a1", Description: "a", Evidence: director.EvidenceBuild}},
+					RetryBudget: 2},
+				{ID: "t2", Title: "b", Intent: "b", Status: director.TaskPending,
+					Acceptance:  []director.AcceptanceItem{{ID: "a2", Description: "b", Evidence: director.EvidenceBuild}},
+					RetryBudget: 2},
+				{ID: "t3", Title: "c", Intent: "c", Status: director.TaskPending,
+					Acceptance:  []director.AcceptanceItem{{ID: "a3", Description: "c", Evidence: director.EvidenceBuild}},
+					RetryBudget: 2},
+			},
+		}},
+	}
+	if err := store.WritePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	h := directorTestHandler(plan)
+
+	// Subset briefer: first call picks {t1}, subsequent calls pick the
+	// remaining pending tasks. Each call writes a Briefing through the
+	// handler, exactly mirroring the production wire.
+	var brieferCalls int
+	subsetBriefer := &fake.Briefer{
+		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+			brieferCalls++
+			var picked []string
+			if brieferCalls == 1 {
+				picked = []string{"t1"}
+			} else {
+				picked = append(picked, in.SubDAGTaskIDs...)
+			}
+			ids := make([]any, len(picked))
+			for i, s := range picked {
+				ids[i] = s
+			}
+			input := map[string]any{
+				"agent_id": in.AgentID,
+				"briefing": map[string]any{
+					"iteration_id":     in.IterationID,
+					"phase_id":         in.PhaseID,
+					"sub_dag_task_ids": ids,
+					"spec_path":        in.SpecPath,
+					"instructions":     fmt.Sprintf("call %d covers %v", brieferCalls, picked),
+				},
+			}
+			if _, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input); err != nil {
+				return nil, err
+			}
+			return &director.DirectorCallStats{}, nil
+		},
+	}
+
+	cfg := newTestConfig()
+	l := &loop.Loop{
+		SpecPath: specPath,
+		Config:   cfg,
+		Git:      &directorAdvancingGit{},
+		Director: &loop.DirectorPorts{
+			Plan:        plan,
+			Briefer:     subsetBriefer,
+			Reviewer:    approvingReviewer(t, h),
+			Store:       store,
+			Handler:     h,
+			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, &directorFakeRuns{}),
+		},
+	}
+
+	code, err, evs := runDirectorLoop(t, l)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != loop.ExitDone {
+		t.Errorf("exit = %d, want ExitDone", code)
+	}
+	if brieferCalls < 2 {
+		t.Fatalf("Briefer was called %d times; expected at least 2 (subset then rest)", brieferCalls)
+	}
+
+	var briefedIDs []string
+	for _, ev := range evs {
+		if e, ok := ev.(loop.PhaseBriefed); ok && e.Briefing != nil {
+			briefedIDs = append(briefedIDs, e.Briefing.IterationID)
+		}
+	}
+	if len(briefedIDs) < 2 {
+		t.Fatalf("expected ≥2 PhaseBriefed events; got %d (%v)", len(briefedIDs), briefedIDs)
+	}
+	if briefedIDs[0] != "phase-1-01" || briefedIDs[1] != "phase-1-02" {
+		t.Errorf("PhaseBriefed iteration_ids = %v, want [phase-1-01 phase-1-02 ...]", briefedIDs)
+	}
+
+	// The handler must retain both briefings; the second emit must not
+	// have overwritten the first.
+	first := h.Briefing("phase-1-01")
+	second := h.Briefing("phase-1-02")
+	if first == nil || second == nil {
+		t.Fatalf("handler dropped a briefing: first=%+v second=%+v", first, second)
+	}
+	if first.Instructions == second.Instructions {
+		t.Errorf("first and second briefings carry identical instructions; they should differ:\n first=%q\nsecond=%q",
+			first.Instructions, second.Instructions)
+	}
+	if len(first.SubDAGTaskIDs) == 0 || first.SubDAGTaskIDs[0] != "t1" {
+		t.Errorf("first iteration sub_dag = %v, want [t1]", first.SubDAGTaskIDs)
 	}
 }

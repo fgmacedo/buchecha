@@ -575,6 +575,86 @@ func TestHandleTaskStarted_PlannerPlanningOnly(t *testing.T) {
 	}
 }
 
+func TestHandleTaskStarted_BrieferBriefingOnly(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	bid, _ := h.Registry().Register(RoleBriefer, RegisterArgs{PhaseID: "P1"})
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskStarted, map[string]any{
+		"agent_id": string(bid),
+		"id":       BriefingTaskID,
+	}); err != nil {
+		t.Fatalf("briefer briefing: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskCompleted, map[string]any{
+		"agent_id": string(bid),
+		"id":       BriefingTaskID,
+	}); err != nil {
+		t.Fatalf("briefer briefing complete: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskStarted, map[string]any{
+		"agent_id": string(bid),
+		"id":       PlanningTaskID,
+	}); err == nil {
+		t.Fatal("briefer using planning id must be rejected")
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodTaskStarted, map[string]any{
+		"agent_id": string(bid),
+		"id":       "t1",
+	}); err == nil {
+		t.Fatal("briefer using a real task id must be rejected")
+	}
+}
+
+func TestHandleTaskStarted_ReviewerReviewingOnly(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	rid, _ := h.Registry().Register(RoleReviewer, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
+	})
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskStarted, map[string]any{
+		"agent_id": string(rid),
+		"id":       ReviewingTaskID,
+	}); err != nil {
+		t.Fatalf("reviewer reviewing: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskCompleted, map[string]any{
+		"agent_id": string(rid),
+		"id":       ReviewingTaskID,
+	}); err != nil {
+		t.Fatalf("reviewer reviewing complete: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskStarted, map[string]any{
+		"agent_id": string(rid),
+		"id":       BriefingTaskID,
+	}); err == nil {
+		t.Fatal("reviewer using briefing id must be rejected")
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskStarted, map[string]any{
+		"agent_id": string(rid),
+		"id":       "t1",
+	}); err == nil {
+		t.Fatal("reviewer using a real task id must be rejected")
+	}
+}
+
+func TestIsPseudoTaskID(t *testing.T) {
+	if !IsPseudoTaskID(PlanningTaskID) {
+		t.Errorf("PlanningTaskID should be pseudo")
+	}
+	if !IsPseudoTaskID(BriefingTaskID) {
+		t.Errorf("BriefingTaskID should be pseudo")
+	}
+	if !IsPseudoTaskID(ReviewingTaskID) {
+		t.Errorf("ReviewingTaskID should be pseudo")
+	}
+	if IsPseudoTaskID("t1") {
+		t.Errorf("real task id must not be classified as pseudo")
+	}
+	if IsPseudoTaskID("") {
+		t.Errorf("empty id must not be classified as pseudo")
+	}
+}
+
 func TestHandleTaskCompleted_ExecutorScopeEnforced(t *testing.T) {
 	h := NewHandler(nil, NewAgentRegistry(nil))
 	emitSamplePlan(t, h)

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buchecha.dev/schemas/api/v1/event.schema.json",
+  "title": "SeqEvent",
+  "description": "One element of the live or replayed event stream. Seq is the monotonic sequence number assigned by the live fan-out (starting at 1); event is the loop event payload, identified by its type discriminator. Adapters render seq as the SSE id so reconnects can resume from the last delivered seq.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "event"],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "iter_started",
+            "iter_finished",
+            "loop_finished",
+            "agent_event",
+            "phase_planned",
+            "phase_briefed",
+            "phase_reviewed",
+            "task_started",
+            "task_completed",
+            "task_approved",
+            "task_needs_fix",
+            "director_escalation"
+          ]
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

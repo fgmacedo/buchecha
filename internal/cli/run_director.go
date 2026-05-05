@@ -8,7 +8,9 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -25,7 +27,9 @@ import (
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/services"
 	"github.com/fgmacedo/buchecha/internal/tui"
+	"github.com/fgmacedo/buchecha/internal/webui"
 )
 
 // errPlannerSkipped is returned by freshPlan / resolveDirectorPlan when
@@ -71,6 +75,19 @@ type directorDeps struct {
 	// without re-constructing the boot. Tests leave this nil and skip
 	// the bind step.
 	boot *mcpBoot
+	// stats, when non-nil, persists per-role spawn telemetry to
+	// stats.jsonl in the session directory. Bound after session
+	// resolution; tests typically leave nil to opt out.
+	stats *director.StatsLog
+	// serviceEvents, when non-nil, is the long-lived loop.Event channel
+	// the services aggregator consumes. Per-run tees forward every loop
+	// event onto it (non-blocking) so /api/v1/sessions/{id}/events
+	// subscribers see the live stream. Tests leave nil to opt out.
+	serviceEvents chan<- loop.Event
+	// svc, when non-nil, is the application services aggregator the TUI
+	// subscribes to for its event stream instead of a raw channel.
+	// Wired after services.New in runDirector; tests leave nil.
+	svc *services.Services
 }
 
 // directorIO captures the I/O surface so tests can drive escalation
@@ -89,22 +106,161 @@ type directorIO struct {
 // persistence, and user confirmation; the brief/execute/review pipeline
 // lands in P5-P7.
 func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string, cfg *config.Config) error {
-	boot, err := startMCPBoot(nil)
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return err
-	}
-	defer boot.Close()
-
-	deps := defaultDirectorDeps(cfg, boot)
-	deps.boot = boot
 	dio := directorIO{
 		stdin:   os.Stdin,
 		stderr:  os.Stderr,
 		resume:  runResume,
 		session: runSessionID,
 	}
+
+	// Resolve (or create) the session and build the run-wide MCP boot
+	// before the listener so the services aggregator the api.Server
+	// consumes has a SessionStore and DAGHandler from t=0. Without this
+	// the read-only API endpoints would respond "services not configured"
+	// for the entire run.
+	store, err := resolveDirectorSessionEarly(specPath, dio)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+	boot, err := newMCPBoot(nil)
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+
+	// serviceEvents is the long-lived loop.Event channel the services
+	// aggregator subscribes to. Per-loop-run tees forward every event
+	// onto it without closing it so subscriber lifetimes are decoupled
+	// from any single l.Run invocation. The bcc run's defer closes the
+	// channel after the listener tears down.
+	serviceEvents := make(chan loop.Event, 256)
+	defer close(serviceEvents)
+
+	svc := services.New(services.Deps{
+		DAGHandler:      boot.handler,
+		SessionStore:    store,
+		SessionsBaseDir: filepath.Join(".bcc", "sessions"),
+		AuditPath:       directorAuditPath(cfg, store),
+		LoopEvents:      serviceEvents,
+	})
+
+	webuiHandler := resolveWebUIHandler(cfg, runWebUIDev)
+	listener, err := startRunListener(ctx, boot, svc, webuiHandler, runListenerBind())
+	if err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+	defer func() {
+		if cerr := listener.Stop(); cerr != nil {
+			slog.Warn("cli: run listener stop", "err", cerr)
+		}
+	}()
+
+	// --webui implies --api at the banner level: a webui run is by
+	// definition api-enabled because the SPA depends on /api/v1/* on
+	// the same listener. The banner already prefers webui over api when
+	// both are set; promoting api here keeps the wiring honest if the
+	// user opted into --webui without --api.
+	apiBanner := runAPI || cfg.Webui.Enabled
+	webuiBanner := cfg.Webui.Enabled
+	printRunBanner(os.Stderr, listener.addr, listener.sessionToken, apiBanner, webuiBanner)
+
+	if cfg.Webui.Open {
+		// Best-effort browser launch: --webui-open is opt-in sugar; a
+		// failure here must not derail the run. openBrowser logs a Warn
+		// slog entry on its own; we discard the error after that.
+		_ = openBrowser(dashboardURL(listener.addr, listener.sessionToken))
+	}
+
+	deps := defaultDirectorDeps(cfg, listener.boot)
+	deps.boot = listener.boot
+	deps.store = store
+	deps.serviceEvents = serviceEvents
+	deps.svc = svc
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
+}
+
+// resolveDirectorSessionEarly hashes the spec and resolves the session
+// store before the run-wide HTTP listener binds. Pre-resolving the
+// session means the services aggregator passed to api.New has a live
+// SessionStore from t=0, which is what powers GET /api/v1/sessions and
+// the snapshot/dag/briefings/prompts read-only paths.
+func resolveDirectorSessionEarly(specPath string, dio directorIO) (*director.Store, error) {
+	content, err := os.ReadFile(specPath)
+	if err != nil {
+		return nil, fmt.Errorf("director: read spec %s: %w", specPath, err)
+	}
+	hash := director.SpecHash(content)
+	deps := directorDeps{baseDir: ".bcc", now: time.Now}
+	store, err := resolveDirectorSession(deps, dio, specPath, hash)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// directorAuditPath returns the per-session MCP audit log path when the
+// audit toggle is on, otherwise empty. Matches the path mcpBoot.bindSession
+// uses so the services Audit and the dag handler agree on the destination.
+func directorAuditPath(cfg *config.Config, store *director.Store) string {
+	if cfg == nil || store == nil || !cfg.Director.IsMCPAuditEnabled() {
+		return ""
+	}
+	return filepath.Join(store.SessionDir(), "mcp-log.jsonl")
+}
+
+// teeLoopEvents reads every event written to src and forwards it to the
+// transient consumer (TUI bridge, render dispatch) and to the persistent
+// services channel. transient is closed when src closes so the per-run
+// consumer's existing close-cascade keeps working; persistent stays open
+// because services subscribers outlive any single l.Run. Sends are
+// non-blocking so a slow consumer cannot stall its peer; the EventService
+// already documents the same drop-on-pressure contract for its own ring
+// buffer.
+//
+// persistent may be nil to opt out of services forwarding (tests).
+func teeLoopEvents(src <-chan loop.Event, transient chan<- loop.Event, persistent chan<- loop.Event) {
+	defer close(transient)
+	for ev := range src {
+		select {
+		case transient <- ev:
+		default:
+			slog.Warn("cli: tui events channel full; dropping event")
+		}
+		if persistent == nil {
+			continue
+		}
+		select {
+		case persistent <- ev:
+		default:
+			slog.Warn("cli: service events channel full; dropping event")
+		}
+	}
+}
+
+// resolveWebUIHandler picks the http.Handler the run-wide listener
+// mounts at / based on the [webui] config block. cfg.Webui.Enabled
+// false returns nil so chi's default 404 stands. When Enabled is true,
+// the dev flag selects between the production embedded bundle handler
+// and the Vite reverse-proxy handler used during contributor work on
+// the SPA. The flag is hidden from --help; only contributors set it.
+func resolveWebUIHandler(cfg *config.Config, dev bool) http.Handler {
+	if cfg == nil || !cfg.Webui.Enabled {
+		return nil
+	}
+	if dev {
+		return webui.NewDev()
+	}
+	return webui.New()
+}
+
+// runListenerBind returns the bind address used by startRunListener.
+// The default is loopback with an OS-assigned port. P4 keeps the
+// surface minimal; an explicit `--bind` flag lands once webui/api
+// configuration grows in P5+.
+func runListenerBind() string {
+	return "127.0.0.1:0"
 }
 
 func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
@@ -122,7 +278,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		ExtraArgs:    cfg.Director.Claude.ExtraArgs,
 		MaxBudgetUSD: cfg.Director.Claude.MaxBudgetUSD,
 		Stderr:       subprocessStderr,
-		MCPURL:       boot.url(),
+		MCPURL:       boot.MCPURL(),
 		MCPToken:     boot.token(),
 	})
 	registry := director.MergeCapabilityRegistries(
@@ -131,6 +287,11 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	)
 	if boot != nil && boot.handler != nil {
 		boot.handler.SetCapabilityRegistry(&registry)
+		boot.handler.SetPlanDefaults(director.PlanDefaults{
+			Briefer:  director.RoleAssignment{Model: cfg.Director.Claude.Model, Effort: cfg.Director.Claude.Effort},
+			Executor: director.RoleAssignment{Model: cfg.Agent.Claude.Model, Effort: cfg.Agent.Claude.Effort},
+			Reviewer: director.RoleAssignment{Model: cfg.Director.Claude.Model, Effort: cfg.Director.Claude.Effort},
+		})
 	}
 	return directorDeps{
 		planner:     adapter,
@@ -354,6 +515,9 @@ func runDirectorWith(
 		}
 		deps.boot.bindSession(deps.store, cfg.Director.IsMCPAuditEnabled(), gitProvider, director.JournalDeltaProvider{})
 	}
+	if deps.store != nil && deps.stats == nil {
+		deps.stats = director.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
+	}
 
 	enableDebugLogCapture(cfg, &deps)
 
@@ -388,6 +552,7 @@ func runDirectorWith(
 			NewExecutor: deps.newExecutor,
 			Handler:     directorEffectiveHandler(deps),
 			Escalation:  escalation,
+			Stats:       deps.stats,
 		},
 	}
 
@@ -398,7 +563,13 @@ func runDirectorWith(
 		return derr
 	}
 
-	code, runErr := l.Run(ctx, events)
+	// Tee every loop event into the long-lived services channel so live
+	// SSE subscribers see the headless run alongside the chosen render
+	// backend.
+	loopOut := make(chan loop.Event, 256)
+	go teeLoopEvents(loopOut, events, deps.serviceEvents)
+
+	code, runErr := l.Run(ctx, loopOut)
 	<-drained
 	ExitCode = code
 	return runErr
@@ -586,7 +757,25 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 	}
 
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// raw is the writer-side channel: loop.Loop.Run and the planner
+	// orchestrator both publish onto it. A forwarding goroutine copies
+	// every event from raw to deps.serviceEvents (non-blocking, keepalive
+	// semantics: raw closing does not close serviceEvents so subscriber
+	// lifetimes are decoupled from any single l.Run invocation). The TUI
+	// reads from deps.svc.Events.Subscribe rather than a dedicated channel.
 	raw := make(chan loop.Event, 256)
+	go func() {
+		for ev := range raw {
+			if deps.serviceEvents == nil {
+				continue
+			}
+			select {
+			case deps.serviceEvents <- ev:
+			default:
+				slog.Warn("cli: serviceEvents channel full; dropping event")
+			}
+		}
+	}()
 
 	type runResult struct {
 		code int
@@ -600,25 +789,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		resultMu.Lock()
 		defer resultMu.Unlock()
 		latest = r
-	}
-
-	// resolvedPlan is the plan the orchestrator latched on the first
-	// run; the session-menu Resume factory reuses it so [r] does not
-	// re-run the planner. Captured by the orchestrator goroutine, read
-	// by the factory closure on subsequent UI events.
-	var (
-		planMu       sync.Mutex
-		resolvedPlan *director.Plan
-	)
-	setResolvedPlan := func(p *director.Plan) {
-		planMu.Lock()
-		defer planMu.Unlock()
-		resolvedPlan = p
-	}
-	currentPlan := func() *director.Plan {
-		planMu.Lock()
-		defer planMu.Unlock()
-		return resolvedPlan
 	}
 
 	// runLoopOn spins up loop.Loop.Run against a freshly built events
@@ -647,32 +817,15 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 				NewExecutor: deps.newExecutor,
 				Handler:     directorEffectiveHandler(deps),
 				Escalation:  escalation,
+				Stats:       deps.stats,
 			},
 		}
 		code, err := l.Run(ctx, ch)
 		setLatest(runResult{code: code, err: err})
 	}
 
-	// newEvents is the host's Resume factory: the user pressed [r] in
-	// the session menu after the loop terminated. Build a fresh channel,
-	// spawn the loop on it (reusing the latched plan), and hand the
-	// channel back to the Model so panels live-update against the new
-	// run.
-	newEvents := func() <-chan loop.Event {
-		plan := currentPlan()
-		if plan == nil {
-			ch := make(chan loop.Event, 1)
-			emitLoopFinished(ch, "no plan to resume", loop.ExitInvalid)
-			close(ch)
-			return ch
-		}
-		ch := make(chan loop.Event, 256)
-		go runLoopOn(plan, ch)
-		return ch
-	}
-
 	model := tui.New(tui.Options{
-		Events:          raw,
+		Services:        deps.svc,
 		Cancel:          cancel,
 		Gate:            gate,
 		SpecPath:        specPath,
@@ -683,7 +836,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		GitCtx:          ctx,
 		EscalationGate:  escalation,
 		PlanningPending: true,
-		NewEvents:       newEvents,
 	})
 	progOpts := []tea.ProgramOption{
 		tea.WithContext(ctx),
@@ -759,7 +911,6 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		// planning placeholder, and start the loop straight away.
 		// bcc is autonomous by design: there is no user gate here.
 		model.SignalPlanReady(plan)
-		setResolvedPlan(plan)
 		runLoopOn(plan, raw)
 		// loop.Loop.Run owns raw for the duration of Run: it emits a
 		// final LoopFinished and closes the channel via its own defer,
@@ -970,7 +1121,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 			plannerRegistry = *reg
 		}
 	}
-	plan, _, runErr := deps.planner.Plan(ctx, director.PlannerInput{
+	plan, plannerStats, runErr := deps.planner.Plan(ctx, director.PlannerInput{
 		AgentID:  agentID,
 		SpecPath: specPath,
 		SpecHash: hash,
@@ -980,6 +1131,18 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		close(agentEvents)
 	}
 	<-pumpDone
+	if plannerStats != nil && deps.stats != nil {
+		if err := deps.stats.Append(director.StatsEntry{
+			At:           deps.now(),
+			Role:         string(dag.RolePlanner),
+			DurationMS:   plannerStats.DurationMS,
+			CostUSD:      plannerStats.CostUSD,
+			InputTokens:  plannerStats.InputTokens,
+			OutputTokens: plannerStats.OutputTokens,
+		}); err != nil {
+			slog.Warn("director stats append planner", "err", err)
+		}
+	}
 
 	// The Plan flows through the MCP handler via bcc_plan_emit; the
 	// adapter return is nil by design. Handler state is authoritative:

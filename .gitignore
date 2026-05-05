@@ -39,6 +39,11 @@ go.work.sum
 /dist/
 /build/
 
+# SPA toolchain (internal/webui/web/)
+internal/webui/web/node_modules/
+internal/webui/web/.vite/
+internal/webui/web/*.tsbuildinfo
+
 # Runtime / scratch
 /tmp/
 .bcc-cache/

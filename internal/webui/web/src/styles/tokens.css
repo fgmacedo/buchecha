@@ -1,0 +1,109 @@
+/*
+ * Design tokens for the bcc dashboard. V1 is dark-only, so the
+ * canonical palette lives under both :root (default) and the
+ * [data-theme="dark"] guard. The light-mode block is intentionally
+ * absent: a future light theme will land as a [data-theme="light"]
+ * override without touching consumers.
+ *
+ * Status colors map directly to the lifecycle vocabulary used by the
+ * Director: pending, running (in_progress on the wire), done,
+ * needs_fix, and error (terminal failure surfaced by the runtime).
+ *
+ * The @font-face block at the top registers the self-hosted Geist
+ * Sans, Geist Mono, and Instrument Serif WOFF2 binaries served from
+ * /fonts/<family>/. The same families appear first in the family
+ * stacks below so the named faces resolve before any system fallback.
+ */
+
+@font-face {
+  font-family: "Geist Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/geist/geist-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/geist/geist-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/geist-mono/geist-mono-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/geist-mono/geist-mono-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif/instrument-serif-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif/instrument-serif-latin-400-italic.woff2") format("woff2");
+}
+
+:root,
+[data-theme="dark"] {
+  /* Surface */
+  --color-background: #0b0d10;
+  --color-foreground: #e6e8eb;
+  --color-muted: #1a1d21;
+  --color-muted-foreground: #9ba1a8;
+  --color-border: #262a30;
+
+  /* Accent */
+  --color-accent: #6ea8ff;
+  --color-accent-foreground: #0b0d10;
+
+  /* Lifecycle status palette */
+  --status-pending: #6b7280;
+  --status-running: #6ea8ff;
+  --status-done: #4ade80;
+  --status-needs-fix: #f59e0b;
+  --status-error: #ef4444;
+
+  /* Typography stacks. The named families resolve to the self-hosted
+     WOFF2 faces registered above; the system fallbacks below keep the
+     SPA legible if a binary fails to load. */
+  --font-sans:
+    "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  --font-serif:
+    "Instrument Serif", ui-serif, Georgia, Cambria, "Times New Roman",
+    Times, serif;
+}
+
+/* Make the dark palette the document default so an unstyled root
+   still reads as dark, and so html[data-theme="dark"] is forward
+   compatible with later theme variants. */
+html,
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  color-scheme: dark;
+  font-family: var(--font-sans);
+}

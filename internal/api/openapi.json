@@ -1,0 +1,645 @@
+{
+  "components": {
+    "schemas": {
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "description": "Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'",
+            "type": "string"
+          },
+          "message": {
+            "description": "Error message text",
+            "type": "string"
+          },
+          "value": {
+            "description": "The value at the given location"
+          }
+        },
+        "type": "object"
+      },
+      "ErrorModel": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/ErrorModel.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "detail": {
+            "description": "A human-readable explanation specific to this occurrence of the problem.",
+            "examples": [
+              "Property foo is required but is missing."
+            ],
+            "type": "string"
+          },
+          "errors": {
+            "description": "Optional list of individual error details",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "instance": {
+            "description": "A URI reference that identifies the specific occurrence of the problem.",
+            "examples": [
+              "https://example.com/error-log/abc123"
+            ],
+            "format": "uri",
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP status code",
+            "examples": [
+              400
+            ],
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "description": "A short, human-readable summary of the problem type. This value should not change between occurrences of the error.",
+            "examples": [
+              "Bad Request"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "description": "A URI reference to human-readable documentation for the error.",
+            "examples": [
+              "https://example.com/errors/example"
+            ],
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "ListSessionsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/ListSessionsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMeta"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "type": "object"
+      },
+      "PhaseBriefedRef": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "iteration_id": {
+            "type": "string"
+          },
+          "phase_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase_id",
+          "attempt",
+          "iteration_id"
+        ],
+        "type": "object"
+      },
+      "RootCatalog": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/RootCatalog.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "api_version": {
+            "description": "Wire-level API version segment, e.g. v1.",
+            "examples": [
+              "v1"
+            ],
+            "type": "string"
+          },
+          "binary_version": {
+            "description": "bcc binary version reported at build time.",
+            "examples": [
+              "dev"
+            ],
+            "type": "string"
+          },
+          "endpoints": {
+            "description": "Every V1 endpoint path the server registers, one entry per route, with parameter placeholders preserved.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "openapi_url": {
+            "description": "Absolute path of the OpenAPI 3.1 document.",
+            "examples": [
+              "/api/v1/openapi.json"
+            ],
+            "type": "string"
+          },
+          "schemas_url": {
+            "description": "Absolute base path of the schemas directory; append a name to fetch one.",
+            "examples": [
+              "/api/v1/schemas"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_version",
+          "binary_version",
+          "openapi_url",
+          "schemas_url",
+          "endpoints"
+        ],
+        "type": "object"
+      },
+      "SessionMeta": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/SessionMeta.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "baseline_sha": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "iteration_index": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_iter": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "spec_path": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "spec_path",
+          "baseline_sha",
+          "started_at",
+          "status",
+          "iteration_index",
+          "max_iter"
+        ],
+        "type": "object"
+      },
+      "Snapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/Snapshot.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "dag": {
+            "$ref": "#/components/schemas/State"
+          },
+          "last_phase_briefed": {
+            "$ref": "#/components/schemas/PhaseBriefedRef"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionMeta"
+          }
+        },
+        "required": [
+          "session",
+          "dag"
+        ],
+        "type": "object"
+      },
+      "State": {
+        "additionalProperties": false,
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "bcc",
+    "version": "v1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "description": "Returns discoverable metadata about the bcc HTTP API: wire-level version, binary version, the absolute OpenAPI document URL, the schemas base URL, and the list of registered V1 endpoints. Tools that introspect the API at runtime use this as their entry point.",
+        "operationId": "get-api-root",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RootCatalog"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "API root catalog",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/sessions": {
+      "get": {
+        "description": "Returns the live session (when one is active) plus every archived session under .bcc/sessions/, ordered with the most recent first.",
+        "operationId": "list-sessions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSessionsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List every session known to the runtime",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/sessions/{id}": {
+      "get": {
+        "description": "Returns the SessionMeta for the live session (when its id matches) or the archived session under .bcc/sessions/\u003cid\u003e/. Unknown ids return 404 with envelope code session_not_found.",
+        "operationId": "get-session",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMeta"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get one session's metadata by id",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/sessions/{id}/briefings/{phase}/{attempt}": {
+      "get": {
+        "description": "Returns the rendered briefing markdown the Briefer materialized for the requested attempt. Misses map to 404 with envelope code phase_not_found (no briefing recorded against the phase) or attempt_not_found (briefings exist but not at the requested attempt). Unknown sessions return session_not_found.",
+        "operationId": "get-session-briefing",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Phase id matching the plan emitted at session start.",
+            "in": "path",
+            "name": "phase",
+            "required": true,
+            "schema": {
+              "description": "Phase id matching the plan emitted at session start.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "1-based attempt index for the requested phase.",
+            "in": "path",
+            "name": "attempt",
+            "required": true,
+            "schema": {
+              "description": "1-based attempt index for the requested phase.",
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "contentEncoding": "base64",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rendered briefing markdown for one (phase, attempt)",
+        "tags": [
+          "briefings"
+        ]
+      }
+    },
+    "/sessions/{id}/dag": {
+      "get": {
+        "description": "Returns only the DAG portion of the session snapshot, suitable for refetching after a seq_gone signal from the events stream without re-downloading the full bootstrap payload. Unknown ids return 404 with envelope code session_not_found.",
+        "operationId": "get-session-dag",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "contentEncoding": "base64",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "DAG fragment for one session",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/sessions/{id}/prompts/{role}": {
+      "get": {
+        "description": "Returns the rendered system prompt the run boot materialized for the requested role under .bcc/sessions/\u003cid\u003e/prompts/\u003crole\u003e.md. Roles outside the closed set planner|briefer|executor|reviewer return 400 with envelope code invalid_request; unknown sessions return 404 with session_not_found; missing prompt files return 404 with role_not_found.",
+        "operationId": "get-session-prompt",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "description": "One of planner, briefer, executor, reviewer.",
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "description": "One of planner, briefer, executor, reviewer.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "contentEncoding": "base64",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rendered system prompt for one role",
+        "tags": [
+          "prompts"
+        ]
+      }
+    },
+    "/sessions/{id}/snapshot": {
+      "get": {
+        "description": "Returns enough state for an SPA to render a session view in one request: SessionMeta, the DAG state (deep-copied from the live handler or read from .bcc/sessions/\u003cid\u003e/dag.json for archived runs), and the most recent PhaseBriefed reference when known. Unknown ids return 404 with envelope code session_not_found.",
+        "operationId": "get-session-snapshot",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Snapshot"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Bootstrap snapshot for one session",
+        "tags": [
+          "sessions"
+        ]
+      }
+    }
+  }
+}

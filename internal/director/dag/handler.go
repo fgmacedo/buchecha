@@ -42,6 +42,35 @@ const (
 // no DAG mutation happens.
 const PlanningTaskID = "planning"
 
+// BriefingTaskID is the well-known task id the Briefer uses on the
+// timeline pair (bcc_task_started, bcc_task_completed) so briefing
+// shows up alongside work tasks. Same out-of-DAG semantics as
+// PlanningTaskID: the calls are bookkeeping, not state mutation.
+const BriefingTaskID = "briefing"
+
+// ReviewingTaskID is the well-known task id the Reviewer uses on the
+// timeline pair so reviewing shows up alongside work tasks. Same
+// out-of-DAG semantics as PlanningTaskID and BriefingTaskID.
+const ReviewingTaskID = "reviewing"
+
+// PseudoTaskIDs is the set of well-known task IDs that are role
+// bookkeeping rather than real DAG tasks. Consumers (TUI progress
+// counters, exporters) should treat these as informational and not
+// fold them into per-task work metrics.
+var PseudoTaskIDs = map[string]struct{}{
+	PlanningTaskID:  {},
+	BriefingTaskID:  {},
+	ReviewingTaskID: {},
+}
+
+// IsPseudoTaskID reports whether id is one of the well-known role
+// bookkeeping task ids (planning, briefing). True means the id is
+// out-of-DAG and progress consumers should not count it.
+func IsPseudoTaskID(id string) bool {
+	_, ok := PseudoTaskIDs[id]
+	return ok
+}
+
 // methodSpec describes one entry in the dispatch table: which roles may
 // call the method and the function that runs after agent identity and
 // connection-name checks pass.
@@ -104,6 +133,7 @@ type Handler struct {
 	dagStore      DAGSnapshotPersister
 
 	capabilityRegistry *director.CapabilityRegistry
+	planDefaults       director.PlanDefaults
 
 	mu             sync.Mutex
 	plan           *director.Plan
@@ -189,11 +219,11 @@ func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOp
 			handle:       (*Handler).handleGetPendingTasks,
 		},
 		MethodTaskStarted: {
-			allowedRoles: rolesSet(RolePlanner, RoleExecutor),
+			allowedRoles: rolesSet(RolePlanner, RoleBriefer, RoleExecutor, RoleReviewer),
 			handle:       (*Handler).handleTaskStarted,
 		},
 		MethodTaskCompleted: {
-			allowedRoles: rolesSet(RolePlanner, RoleExecutor),
+			allowedRoles: rolesSet(RolePlanner, RoleBriefer, RoleExecutor, RoleReviewer),
 			handle:       (*Handler).handleTaskCompleted,
 		},
 		MethodIterationFinished: {
@@ -323,6 +353,19 @@ func (h *Handler) SetCapabilityRegistry(reg *director.CapabilityRegistry) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.capabilityRegistry = reg
+}
+
+// SetPlanDefaults installs the per-role model and effort defaults the
+// handler stamps onto each Phase at bcc_plan_emit time when the
+// Planner left an assignment nil. Filling at emit makes the persisted
+// plan.json self-describing: every Phase carries the routing it
+// actually ran with. Empty (zero) defaults are accepted and skipped
+// per role; the assignment stays nil and the loop's runtime fallback
+// applies.
+func (h *Handler) SetPlanDefaults(defaults director.PlanDefaults) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.planDefaults = defaults
 }
 
 // CapabilityRegistry returns the registry the handler validates
@@ -532,6 +575,7 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	if err := director.ValidatePlan(&plan, h.capabilityRegistry); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
+	director.FillPlanDefaults(&plan, h.planDefaults)
 	newState := NewStateFromPlan(&plan)
 
 	h.mu.Lock()
@@ -874,6 +918,18 @@ func (h *Handler) handleTaskStarted(_ context.Context, entry AgentEntry, input m
 		}
 		return `{"ok":true}`, nil
 	}
+	if entry.Role == RoleBriefer {
+		if id != BriefingTaskID {
+			return "", fmt.Errorf("dag: bcc_task_started: briefer must use id=%q, got %q", BriefingTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
+	if entry.Role == RoleReviewer {
+		if id != ReviewingTaskID {
+			return "", fmt.Errorf("dag: bcc_task_started: reviewer must use id=%q, got %q", ReviewingTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
 	if err := h.assertExecutorScope(entry, id); err != nil {
 		return "", err
 	}
@@ -892,6 +948,18 @@ func (h *Handler) handleTaskCompleted(_ context.Context, entry AgentEntry, input
 	if entry.Role == RolePlanner {
 		if id != PlanningTaskID {
 			return "", fmt.Errorf("dag: bcc_task_completed: planner must use id=%q, got %q", PlanningTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
+	if entry.Role == RoleBriefer {
+		if id != BriefingTaskID {
+			return "", fmt.Errorf("dag: bcc_task_completed: briefer must use id=%q, got %q", BriefingTaskID, id)
+		}
+		return `{"ok":true}`, nil
+	}
+	if entry.Role == RoleReviewer {
+		if id != ReviewingTaskID {
+			return "", fmt.Errorf("dag: bcc_task_completed: reviewer must use id=%q, got %q", ReviewingTaskID, id)
 		}
 		return `{"ok":true}`, nil
 	}
