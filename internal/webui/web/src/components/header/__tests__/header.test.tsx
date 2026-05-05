@@ -25,8 +25,7 @@ const SNAPSHOT: Snapshot = {
     max_iter: 5,
     baseline_sha: 'abc1234',
   },
-  phases: [],
-  last_phase_briefed: null,
+  last_phase_briefed: undefined,
   dag: {},
 }
 
@@ -39,9 +38,10 @@ const EVENTS: SeqEvent[] = []
 // makeMQ creates a minimal MediaQueryList mock.
 function makeMQ(matches: boolean): MediaQueryList {
   const listeners: ((e: MediaQueryListEvent) => void)[] = []
+  const media = '(min-width: 1024px)'
   return {
     matches,
-    media: '(min-width: 1024px)',
+    media,
     onchange: null,
     addListener: () => {},
     removeListener: () => {},
@@ -52,9 +52,9 @@ function makeMQ(matches: boolean): MediaQueryList {
     dispatchEvent: () => true,
     // Expose for test use.
     _listeners: listeners,
-    _trigger(matches: boolean) {
+    _trigger(m: boolean) {
       for (const l of listeners) {
-        l({ matches, media: this.media } as MediaQueryListEvent)
+        l({ matches: m, media } as MediaQueryListEvent)
       }
     },
   } as unknown as MediaQueryList & { _listeners: ((e: MediaQueryListEvent) => void)[]; _trigger(m: boolean): void }

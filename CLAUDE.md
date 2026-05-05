@@ -215,7 +215,7 @@ Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sam
 - `go test -race ./...` always passes. Race conditions in TUI/handler code are the #1 risk; the race detector catches most.
 - No flaky tests. If a test depends on time, inject a `Clock` interface; if on filesystem, use `t.TempDir()`.
 - Coverage is not a target. We do not chase percentages. We cover what would hurt us if it broke.
-- **Anti-drift contract: `loop.AllEventKinds` and `internal/api/schemas/event.schema.json`.** The wire-level enum the SPA fetches at runtime mirrors the canonical `loop.AllEventKinds` slice. Adding an `Event` variant requires updating the `MarshalJSONEvent` switch, `AllEventKinds`, the schema enum, and the sample table in `TestMarshalJSONEvent_AllKindsCovered`. Two tests fail loudly if any of these drift. See [`docs/how-to/event-stream-troubleshooting.md`](docs/how-to/event-stream-troubleshooting.md).
+- **Anti-drift contract: `loop.AllEventKinds` and `internal/api/schemas/event.schema.json`.** The wire-level enum the SPA fetches at runtime mirrors the canonical `loop.AllEventKinds` slice. Adding an `Event` variant (including `spawn_started` and `spawn_finished`) requires updating the `MarshalJSONEvent` switch, `AllEventKinds`, the schema enum, and the sample table in `TestMarshalJSONEvent_AllKindsCovered`. Two tests fail loudly if any of these drift. See [`docs/how-to/event-stream-troubleshooting.md`](docs/how-to/event-stream-troubleshooting.md).
 
 ### Fixtures
 
@@ -245,6 +245,9 @@ gofmt -w .                                    # apply formatting
 ./bcc run docs/specs/<spec>.md                # opens live TUI by default; --output text|json for headless
 ./bcc sessions list                           # list past runs under .bcc/sessions/
 ./bcc sessions show <id>                      # inspect one session's manifest
+                                              # session layout: manifest.json, plan.json,
+                                              # dag.json, briefings/<iteration_id>.prompt.md,
+                                              # spawns/<spawn_id>.md, mcp-log.jsonl
 
 # release
 goreleaser release --snapshot --clean         # local snapshot

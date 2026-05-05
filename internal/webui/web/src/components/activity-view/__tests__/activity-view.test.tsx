@@ -3,7 +3,7 @@
 // Tests cover: bar rendering for a fixture session, tooltip content on
 // simulated hover, and click dispatching the correct selection.
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { render, fireEvent, act } from '@testing-library/react'
 import React from 'react'
 import { ActivityView } from '../index'

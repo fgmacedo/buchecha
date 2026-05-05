@@ -99,7 +99,7 @@ interface GanttPlotProps {
 
 // GanttPlot renders the SVG plot area: phase lanes, bars, iteration
 // boundary rules with index labels, retry markers, and the time axis.
-function GanttPlot({ data, width, height, snapshot, costAgg, onHover, onBarClick }: GanttPlotProps) {
+function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, onBarClick }: GanttPlotProps) {
   const plotW = width - MARGIN.left - MARGIN.right
   const plotH = height - MARGIN.top - MARGIN.bottom
 

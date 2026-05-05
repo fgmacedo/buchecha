@@ -32,7 +32,7 @@ The dashboard depends on the bcc HTTP API (PRD at `docs/specs/api/2026-05-04-htt
 
 | Version | Capability |
 | --- | --- |
-| **V1** | Read-only inspection: DAG view, Activity Gantt, event timeline, briefing and prompt rendering, sessions sidebar. |
+| **V1** | Read-only inspection: DAG view, Activity Gantt, RightPane (Timeline + Inspector views), CostMeter header component, briefing and prompt rendering, sessions sidebar. The observability surface (spawn events, per-spawn prompt inspection, cost aggregation) is specified in [`docs/specs/webui/2026-05-05-observability-redesign.md`](./2026-05-05-observability-redesign.md). |
 | **V2** | Write parity with the TUI: task approval and rejection, escalation reply, phase skip, run abort. Available when API V2 mutating endpoints ship. |
 | **V3+** | Extended manipulation: edit tasks, edit prompts, replan from here, manage archived sessions. Available when API V3+ endpoints ship. |
 
