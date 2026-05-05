@@ -775,7 +775,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This phase is a refactor; users must not notice a change.
 **depends_on**: T8.2, T8.3, T8.4.
 
-### [ ] P9: Documentation
+### [x] P9: Documentation
 
 **id**: `P9-docs`
 **intent**: Update `CLAUDE.md`, add a surface coverage table, update `README.md`.
@@ -783,7 +783,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **scope_out**: Code.
 **depends_on**: P8.
 
-#### [ ] T9.1: `internal/services/` documented in CLAUDE.md
+#### [x] T9.1: `internal/services/` documented in CLAUDE.md
 
 **acceptance_criteria**:
 - The "Layers" section of `CLAUDE.md` lists `internal/services/` as the application services layer between core and protocol adapters.
@@ -792,7 +792,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: The architectural rule is normative; code review enforces it.
 **depends_on**: none.
 
-#### [ ] T9.2: HTTP routing rule relaxed
+#### [x] T9.2: HTTP routing rule relaxed
 
 **acceptance_criteria**:
 - `CLAUDE.md` updates the "Stack" section to read: HTTP routing uses stdlib `net/http` for the MCP and `chi` for the HTTP API. Frameworks with custom contexts (gin, echo, fiber) remain rejected.
@@ -801,7 +801,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the policy change motivated by the HTTP API's surface size.
 **depends_on**: none.
 
-#### [ ] T9.3: `internal/api/` and `internal/webui/` documented
+#### [x] T9.3: `internal/api/` and `internal/webui/` documented
 
 **acceptance_criteria**:
 - `CLAUDE.md` describes `internal/api/` as a protocol adapter peer of `internal/mcp/`, and `internal/webui/` as a presentation peer of `internal/tui/`.
@@ -810,7 +810,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: New readers see the two new packages alongside the existing ones.
 **depends_on**: T9.1, T9.2.
 
-#### [ ] T9.4: Surface coverage table
+#### [x] T9.4: Surface coverage table
 
 **acceptance_criteria**:
 - `docs/surface-coverage.md` (new) lists every user-facing capability with columns: Capability, TUI, WebUI, Notes.
@@ -820,7 +820,7 @@ Nine phases. Sequencing follows the dependency graph at the end of this section.
 **context**: This is the authoritative answer when users ask why a feature is in one surface and not the other.
 **depends_on**: T9.3.
 
-#### [ ] T9.5: `README.md` updated
+#### [x] T9.5: `README.md` updated
 
 **acceptance_criteria**:
 - The "Run" section of `README.md` documents `bcc run --webui` and `--api` with the same examples as the PRDs.
@@ -914,3 +914,6 @@ The following are explicitly out of scope here and ride a later spec built on th
 2026-05-05 T8.3: verified no director/dag behavior calls in internal/tui/; go vet and build clean (bundled with T8.2 commit 758132a).
 2026-05-05 T8.4: wired *services.Services into tui.Options.Services in runDirectorTUI; added TestServiceEventsSameOrderForTUIAndAPI (commit 531ebe5).
 2026-05-05 T8.5: go test -race ./... all green; gofmt -l . clean; go vet ./... zero issues; P8 checkboxes flipped (commit 5ef6d2c).
+2026-05-05 T9.1-T9.3: documented internal/services/, chi/huma in Stack, and api/webui layers in CLAUDE.md (commit 9589ffe).
+2026-05-05 T9.4: created surface-coverage.md with V1 and V2/V3 capability matrix (commit b1a0ce4).
+2026-05-05 T9.5: updated README.md with --webui/--api examples and make targets; P9 checkboxes flipped (commit a9f0259).
