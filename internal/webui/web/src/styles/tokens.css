@@ -65,16 +65,29 @@
 
 :root,
 [data-theme="dark"] {
-  /* Surface */
-  --color-background: #0b0d10;
+  /* Surface hierarchy */
+  --surface-canvas: #08090b;
+  --surface-panel: #101316;
+  --surface-card: #16191d;
+  --surface-elevated: #1d2126;
+  --surface-overlay: #0d0f12cc;
+
+  /* Borders */
+  --border-subtle: #1c1f24;
+  --border-default: #262a30;
+  --border-strong: #353a42;
+
+  /* Legacy aliases for backward compatibility */
+  --color-background: var(--surface-canvas);
   --color-foreground: #e6e8eb;
-  --color-muted: #1a1d21;
+  --color-muted: var(--surface-panel);
   --color-muted-foreground: #9ba1a8;
-  --color-border: #262a30;
+  --color-border: var(--border-default);
 
   /* Accent */
   --color-accent: #6ea8ff;
   --color-accent-foreground: #0b0d10;
+  --accent-warn: #f5b840;
 
   /* Lifecycle status palette */
   --status-pending: #6b7280;
