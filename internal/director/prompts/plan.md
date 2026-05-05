@@ -109,7 +109,7 @@ Task
 ├── priority: int                         relative priority within the phase
 ├── acceptance: []AcceptanceItem          checkable criteria for this task
 ├── status: "pending"                     emit every task as pending
-└── retry_budget: int                     >= 0; per-task override or 0 for default
+└── retry_budget: int                     >= 0; the run config sets a floor, per-task may raise it for tasks you expect to be brittle
 
 AcceptanceItem
 ├── id: string                            short label (e.g. "A1", "tests-pass")

@@ -93,10 +93,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: phase %q is eligible but has no pending tasks", phaseID)
 		}
-		budget := maxRetryBudget(phase, subDAG)
-		if budget == 0 && l.Config.Director.RetryBudget > 0 {
-			budget = l.Config.Director.RetryBudget
-		}
+		budget := effectiveRetryBudget(phase, subDAG, l.Config.Director.RetryBudget)
 
 		phaseIterations[phaseID]++
 		iteration := phaseIterations[phaseID]
@@ -588,6 +585,17 @@ func resolveAssignment(a *director.RoleAssignment, defaultModel, defaultEffort s
 		}
 	}
 	return model, effort
+}
+
+// effectiveRetryBudget resolves the per-iteration retry budget by
+// taking the higher of the sub-DAG's per-task maximum and the run
+// config floor. The floor exists because a Planner that emits
+// retry_budget=1 on every task would otherwise silently shrink the
+// run-wide budget (Config.Director.RetryBudget) the user asked for in
+// .bcc.toml. Per-task overrides may raise the budget above the floor;
+// they cannot drop below it.
+func effectiveRetryBudget(phase *director.Phase, subDAG []string, configFloor int) int {
+	return max(maxRetryBudget(phase, subDAG), configFloor)
 }
 
 // maxRetryBudget aggregates the per-task retry budgets in subDAG into
