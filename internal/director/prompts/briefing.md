@@ -41,7 +41,7 @@ Acceptance:
 {{end}}
 ## Spec
 
-Read the spec at: {{.SpecPath}}
+Read the spec at: {{.SpecPath}} (use the `Read` tool; if the path is a directory, treat it as a spec bundle and read the entries that describe the work). The spec is the source of truth for any acceptance detail this briefing did not pin.
 {{if .Instructions}}
 ## Instructions
 

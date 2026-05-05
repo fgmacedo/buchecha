@@ -291,7 +291,7 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 	}{
 		{"plan", director.PlanPromptTemplate(), planView{Role: "planner", AgentID: "planner-001", SpecPath: "/tmp/spec.md"}},
 		{"brief", director.BriefPromptTemplate(), briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"}},
-		{"review", director.ReviewPromptTemplate(), reviewView{Role: "reviewer", AgentID: "reviewer-001", SpecPath: "/tmp/spec.md"}},
+		{"review", director.ReviewPromptTemplate(), reviewView{Role: "reviewer", AgentID: "reviewer-001"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -337,6 +337,13 @@ func TestComposePrompt_EmbedsWhatBccIs(t *testing.T) {
 			briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"},
 			"**Briefer** (you)",
 			[]string{"**Planner** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+		},
+		{
+			"review",
+			director.ReviewPromptTemplate(),
+			reviewView{Role: "reviewer", AgentID: "reviewer-001"},
+			"**Reviewer** (you)",
+			[]string{"**Planner** (you)", "**Briefer** (you)", "**Executor** (you)"},
 		},
 	}
 	for _, tc := range cases {

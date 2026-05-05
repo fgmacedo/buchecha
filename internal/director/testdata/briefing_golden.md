@@ -31,7 +31,7 @@ Acceptance:
 
 ## Spec
 
-Read the spec at: /tmp/spec.md
+Read the spec at: /tmp/spec.md (use the `Read` tool; if the path is a directory, treat it as a spec bundle and read the entries that describe the work). The spec is the source of truth for any acceptance detail this briefing did not pin.
 
 ## Instructions
 

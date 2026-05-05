@@ -217,9 +217,8 @@ type briefView struct {
 }
 
 type reviewView struct {
-	Role     string
-	AgentID  string
-	SpecPath string
+	Role    string
+	AgentID string
 }
 
 // Plan implements director.Planner. It renders the planner prompt, runs
@@ -281,9 +280,8 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 		return nil, ErrMissingAgentID
 	}
 	prompt, err := composePrompt(director.ReviewPromptTemplate(), reviewView{
-		Role:     "reviewer",
-		AgentID:  in.AgentID,
-		SpecPath: "",
+		Role:    "reviewer",
+		AgentID: in.AgentID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)
