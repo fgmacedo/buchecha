@@ -43,7 +43,8 @@ interface AppShellProps {
 
 // EscapeHandler clears the active selection when the Escape key is pressed.
 // Mounted once inside SelectionProvider so it has access to useSelection.
-function EscapeHandler() {
+// Exported for use in integration tests.
+export function EscapeHandler() {
   const { select } = useSelection()
 
   useEffect(() => {
