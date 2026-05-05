@@ -41,7 +41,11 @@ func RenderBriefingSystem(agentID string) (string, error) {
 		return "", fmt.Errorf("director: parse briefing_system template: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, "briefing_system", struct{ AgentID string }{AgentID: agentID}); err != nil {
+	view := struct {
+		Role    string
+		AgentID string
+	}{Role: "executor", AgentID: agentID}
+	if err := t.ExecuteTemplate(&buf, "briefing_system", view); err != nil {
 		return "", fmt.Errorf("director: render briefing_system: %w", err)
 	}
 	return buf.String(), nil
