@@ -1,5 +1,13 @@
 import { useState } from 'react'
+import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
+import { useSnapshot } from './hooks/use-snapshot'
+import { useEvents } from './hooks/use-events'
+import { useView } from './hooks/use-view'
+import { Header } from './components/header'
+import { TimelinePanel } from './components/timeline-panel'
+import { BriefingPanel } from './components/briefing-panel'
+import { SessionsSidebar } from './components/sessions-sidebar'
 
 // Bind a generated operation type so `tsc -b` fails when the OpenAPI
 // contract drifts away from a known endpoint shape. The reference is
@@ -7,16 +15,27 @@ import type { paths } from './lib/api-client'
 type GetSessionSnapshot = paths['/sessions/{id}/snapshot']['get']
 void (0 as unknown as GetSessionSnapshot)
 
-// Layout shell (T6.4). The five regions render labelled stubs so the
-// geometry is verifiable by eye before P7 fills each panel with its
-// real content. The outer frame is a CSS grid with three rows
-// (header, body, drawer) and the body row is a three-column grid
-// (sidebar, main, right panel) so the sidebar widths can scale with
-// the viewport between 1024px and 2560px without media queries on the
-// shell. The drawer collapses via a useState toggle and animates via
-// a height transition; no external state libraries.
-export function App() {
+// DEFAULT_SESSION_ID is the live session id bcc injects at build time via
+// Vite define (VITE_SESSION_ID). When absent (e.g. local dev without a bcc
+// run active) the SPA falls back to "live" and the API resolves it.
+const DEFAULT_SESSION_ID =
+  typeof import.meta.env.VITE_SESSION_ID === 'string'
+    ? import.meta.env.VITE_SESSION_ID
+    : 'live'
+
+// AppShell is the main layout tree. It consumes a resolved sessionId so both
+// the live route ("/") and the archived route ("/archived/:id") render the
+// same structure with different data sources.
+interface AppShellProps {
+  sessionId: string
+}
+
+function AppShell({ sessionId }: AppShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(true)
+  const [view, setView] = useView()
+
+  const { snapshot, refetch } = useSnapshot(sessionId)
+  const { events } = useEvents(sessionId, { onSeqGone: refetch })
 
   return (
     <div
@@ -25,72 +44,59 @@ export function App() {
         gridTemplateRows: `auto minmax(0, 1fr) auto`,
       }}
     >
-      <header
-        aria-label="Header"
-        className="flex items-center border-b border-border bg-muted px-6 py-3"
-      >
-        <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
-          Header
-        </span>
-      </header>
+      <Header
+        snapshot={snapshot}
+        events={events}
+        view={view}
+        onViewChange={setView}
+      />
       <div
         className="grid min-h-0"
         style={{
           gridTemplateColumns: `clamp(14rem, 18vw, 20rem) minmax(0, 1fr) clamp(18rem, 22vw, 28rem)`,
         }}
       >
-        <aside
-          aria-label="Sidebar"
-          className="flex flex-col border-r border-border bg-muted px-4 py-4 overflow-y-auto"
-        >
-          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
-            Sidebar
-          </span>
-        </aside>
+        <div className="border-r border-border bg-muted overflow-hidden">
+          <SessionsSidebar activeSessionId={snapshot?.session.id ?? null} />
+        </div>
         <main
           aria-label="Main"
           className="flex min-w-0 flex-col overflow-y-auto px-6 py-6"
         >
           <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
-            Main
+            {view === 'dag' ? 'DAG view' : 'Activity view'} (coming in P7c)
           </span>
         </main>
-        <aside
-          aria-label="Right panel"
-          className="flex flex-col border-l border-border bg-muted px-4 py-4 overflow-y-auto"
-        >
-          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
-            Right panel
-          </span>
-        </aside>
+        <div className="border-l border-border bg-muted overflow-hidden">
+          <TimelinePanel events={events} />
+        </div>
       </div>
-      <section
-        aria-label="Drawer"
-        className="border-t border-border bg-muted overflow-hidden transition-[height] duration-200 ease-out"
-        style={{ height: drawerOpen ? '14rem' : '2.5rem' }}
-      >
-        <div className="flex items-center justify-between px-6 py-2 border-b border-border">
-          <span className="text-sm font-medium tracking-wide uppercase text-muted-foreground">
-            Drawer
-          </span>
-          <button
-            type="button"
-            onClick={() => setDrawerOpen((open) => !open)}
-            aria-expanded={drawerOpen}
-            aria-controls="drawer-body"
-            className="text-xs font-mono text-accent hover:text-accent-foreground hover:bg-accent rounded px-2 py-1 transition-colors"
-          >
-            {drawerOpen ? 'Collapse' : 'Expand'}
-          </button>
-        </div>
-        <div
-          id="drawer-body"
-          aria-hidden={!drawerOpen}
-          className="px-6 py-3 text-sm text-muted-foreground"
-        >
-          Drawer content lands in P7.
-        </div>
-      </section>
+      <BriefingPanel
+        snapshot={snapshot}
+        events={events}
+        open={drawerOpen}
+        onToggle={() => setDrawerOpen((o) => !o)}
+      />
     </div>
+  )
+}
+
+// ArchivedRoute reads the :id param from wouter and renders the AppShell
+// with that session id, giving archived sessions the same layout as the live one.
+function ArchivedRoute() {
+  const params = useParams<{ id: string }>()
+  return <AppShell sessionId={params.id} />
+}
+
+// App is the SPA entry point. It mounts a wouter Router with two routes:
+// the live session at "/" and archived sessions at "/archived/:id".
+export function App() {
+  return (
+    <Router>
+      <Route path="/archived/:id" component={ArchivedRoute} />
+      <Route>
+        <AppShell sessionId={DEFAULT_SESSION_ID} />
+      </Route>
+    </Router>
   )
 }
