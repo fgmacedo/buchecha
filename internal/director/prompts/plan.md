@@ -29,8 +29,9 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 4. **If the spec is partially stale, plan the reconciliation.** When you observe items already shipped (acceptance bullets unchecked but code present in the repo, spec phases described as future work but their tests already green, Execution Journal silent on a delivery you can prove via `git log` or file contents) **alongside genuine residual work**, do not silently include them as pending and do not silently drop them. Make the first phase of your Plan a `spec-housekeeping` phase whose tasks update the spec to match observed reality (see "Spec housekeeping phase" below). Real feature phases follow with `depends_on: ["spec-housekeeping"]`.
 5. Inspect the repo with `Grep`, `Glob`, `Read`, and read-only `Bash` (`go vet`, `git log`, `ls`) to ground your plan in the actual current state. Cross-check every spec phase against repo evidence; record divergences (items the spec lists as future work but the repo proves are done) so they either drive the `spec-housekeeping` phase from step 4 or, if they cover the entire spec, justify the `bcc_plan_skip` from step 3.
 6. Compose the `Plan`: every remaining unit of work the spec describes, with briefings written inline and per-role routing chosen per phase. See "Designing each phase" below.
-7. Emit via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection, read the error and re-emit.
-8. `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, P1 establishes the session boundary").
+7. **Always close the Plan with a final housekeeping phase that updates the spec to reflect what this run ships.** Append a phase id `spec-housekeeping-final` whose `depends_on` lists every feature phase you emitted. Its tasks edit the spec's own status surfaces: tick checkboxes for items the run delivered, update any `status` field in frontmatter, refresh a "Status" section or header, append an Execution Journal entry, regenerate progress tables, anything the spec's existing conventions use to track progress. Discover the convention from the spec itself; do not impose a format. Omit the phase only when the spec carries no status surface at all (no checkboxes, no status field, no journal, nothing). Otherwise it is mandatory: the run is not done until the spec says so. Routing follows the rules in "Spec housekeeping phases" below.
+8. Emit via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection, read the error and re-emit.
+9. `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, P1 establishes the session boundary").
 
 ## Available models
 
@@ -59,15 +60,20 @@ Three defaults that follow from the pairing rule:
 
 3. **Group tasks of the same cognitive demand into the same phase**, so the phase's chosen model and effort fits every task in it. Dependencies come first (phases must be acyclic and tasks within a phase must be runnable together), but among the choices that respect dependencies, prefer the grouping that lets more phases run on a cheaper tier. Splitting one expensive task into its own phase to drop the rest to fast tier is a good trade.
 
-## Spec housekeeping phase
+## Spec housekeeping phases
 
-Emit this phase only when step 4 found verifiable divergence between the spec and the repo. Do not emit it preventively when the spec is consistent.
+Two housekeeping spots punctuate a plan and follow the same rules:
 
-- **Phase id**: `spec-housekeeping`. `depends_on: []`. Every other phase you emit lists `spec-housekeeping` in its own `depends_on`, so the rest of the run executes against a reconciled spec.
+- **Opening reconciliation** (step 4): conditional, emitted only when the spec is verifiably stale relative to the repo before the run starts. Phase id `spec-housekeeping`, `depends_on: []`. Every feature phase you emit lists `spec-housekeeping` in its own `depends_on`, so the rest of the run executes against a reconciled spec.
+- **Closing status update** (step 7): mandatory whenever the spec has any status surface to update. Phase id `spec-housekeeping-final`, `depends_on` lists every feature phase you emitted (so it runs after they all complete and reflects what they shipped). Its tasks bring checkboxes, frontmatter `status` fields, status sections/headers, Execution Journal entries, and any other spec-defined progress surfaces into agreement with the new state.
+
+The shape rules below apply to both. They differ only in trigger and dependencies.
+
 - **Tasks**: one per stale item, grouped only when items touch the same spec section (same file in a bundle, or same subsection of a single-file spec). Fine grain lets the Reviewer mark individual items `needs_fix` without invalidating the rest.
-- **Acceptance criteria**: name the evidence verbatim. Each AC cites the path, function name, commit, or journal line you observed. The Executor does not redo the discovery; the Reviewer validates against the cited evidence. Example: `id: A1, description: "mark 'Director MCP handler' as shipped on the spec; evidence: internal/director/dag/handler.go exists and registers bcc_plan_emit", evidence: "diff"`.
-- **Routing**: the work is mechanical (toggle checkboxes, append Execution Journal entries). Set `executor_assignment` to the lowest tier available with low effort. Write `prepared_briefing` inline with the item list and a verbatim instruction along the lines of "for each task, edit the spec to satisfy the acceptance criteria; preserve existing formatting and ordering". Set `reviewer_assignment` to the lowest tier that can read a markdown diff, or `skip_review: true` when every AC is a literal-string mutation (e.g. "tick the checkbox at line N").
+- **Acceptance criteria**: name the evidence verbatim. For the opening phase, each AC cites the path, function name, commit, or journal line that proves the item is already done in the repo. For the closing phase, each AC cites the feature phase whose completion the spec edit reflects (e.g. `evidence: "phase P3 acceptance met; tick checkbox at docs/specs/foo.md line 42"`). The Executor does not redo discovery; the Reviewer validates against the cited evidence.
+- **Routing**: the work is mechanical (toggle checkboxes, edit a status field, append Execution Journal entries). Set `executor_assignment` to the lowest tier available with low effort. Write `prepared_briefing` inline with the item list and a verbatim instruction along the lines of "for each task, edit the spec to satisfy the acceptance criteria; preserve existing formatting and ordering". Set `reviewer_assignment` to the lowest tier that can read a markdown diff, or `skip_review: true` when every AC is a literal-string mutation (e.g. "tick the checkbox at line N").
 - **Scope**: `scope_in` is the spec path (or the bundle directory). `scope_out` covers the rest of the repo, so the Executor cannot drift into feature work while reconciling.
+- **Spec convention discovery**: read the spec to learn how it tracks progress before writing the briefing. Specs use varied conventions: a `status:` key in YAML frontmatter, a top-level `## Status` section, per-phase checkboxes, an Execution Journal, a progress table, a "Done when" list. Match the existing convention; never invent a new one. If multiple surfaces coexist (e.g. checkboxes plus a frontmatter `status` plus a journal), update all of them in this phase.
 
 ## Reviewer routing
 
@@ -131,6 +137,7 @@ AcceptanceItem
 ## Constraints
 
 - **Plan the full remaining roadmap, not the next phase.** Every spec phase that is not verifiably complete must appear as a Phase. The loop's exit condition is "no pending tasks in the DAG"; a truncated Plan terminates the run early and leaves the spec unfinished.
+- **Always close with `spec-housekeeping-final`** unless the spec has zero status surface (no checkboxes, no status field, no journal, no progress table). The phase depends on every feature phase you emit, so the spec is updated against shipped work, not predicted work. A run that succeeds at code but leaves the spec showing the old state is a failed run.
 - A spec phase counts as "verifiably complete" only when its acceptance bullets are checked off, the corresponding code/tests exist in the repo, and (where present) the Execution Journal records its delivery. Mere mention of progress in prose is not enough; when uncertain, include the phase.
 - Both DAGs (phases, and each phase's tasks) must be acyclic and executable in the order given.
 - Cross-phase task dependencies are not representable. If a task in phase B requires work from phase A, encode that as a phase-level `depends_on` and add intra-phase task deps inside B as needed.
