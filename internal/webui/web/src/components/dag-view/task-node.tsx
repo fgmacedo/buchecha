@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, TaskStatus } from './types'
 
-// STATUS_COLOR_MAP maps TaskStatus values to CSS variable references
-// declared in src/styles/tokens.css.
+// STATUS_COLOR_MAP maps TaskStatus values to CSS variable references.
 const STATUS_COLOR_MAP: Record<TaskStatus, string> = {
   pending: 'var(--status-pending)',
   in_progress: 'var(--status-running)',
@@ -21,34 +21,55 @@ function statusLabel(status: string): string {
 
 export interface TaskNodeData {
   task: DAGTask
+  phaseId: string
+  startedAt?: string
+  endedAt?: string
   [key: string]: unknown
 }
 
-// TaskNodeComponent renders one task as a status-colored card. Hovering
-// opens a popover with task metadata sourced from the snapshot so no
-// additional fetch is required.
+// TaskNodeComponent renders a compact task card with status, retry-budget
+// dots, and a hover tooltip that shows dependencies and timestamps.
+// Clicking the card invokes select({ kind: "task", phaseId, taskId }).
+// Selected state outlines the card: --accent-warn for needs_fix, otherwise
+// --status-running.
 export function TaskNodeComponent({ data }: NodeProps) {
   const [hovered, setHovered] = useState(false)
-  const { task } = data as TaskNodeData
+  const { task, phaseId, startedAt, endedAt } = data as TaskNodeData
+  const { selection, select } = useSelection()
+
+  const selected =
+    selection?.kind === 'task' &&
+    selection.phaseId === phaseId &&
+    selection.taskId === task.id
+
   const color = statusColor(task.status)
+
+  // Selected outline follows status: warn for needs_fix, running otherwise.
+  const outlineColor =
+    task.status === 'needs_fix' ? 'var(--accent-warn)' : 'var(--status-running)'
 
   return (
     <div
+      onClick={() => select({ kind: 'task', phaseId, taskId: task.id })}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 200,
-        height: 64,
-        borderRadius: 6,
-        border: `1.5px solid ${color}`,
-        backgroundColor: `color-mix(in srgb, ${color} 14%, var(--color-muted))`,
+        width: '100%',
+        height: '100%',
+        borderRadius: 4,
+        border: selected
+          ? `2px solid ${outlineColor}`
+          : `1px solid color-mix(in srgb, ${color} 60%, transparent)`,
+        backgroundColor: `color-mix(in srgb, ${color} 12%, var(--surface-card))`,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
-        padding: '0 12px',
-        cursor: 'default',
+        padding: '0 8px',
+        cursor: 'pointer',
         position: 'relative',
         boxSizing: 'border-box',
+        transition: 'border-color 0.1s ease',
+        overflow: 'visible',
       }}
     >
       <Handle
@@ -57,8 +78,8 @@ export function TaskNodeComponent({ data }: NodeProps) {
         style={{
           background: color,
           borderColor: 'var(--color-background)',
-          width: 7,
-          height: 7,
+          width: 6,
+          height: 6,
         }}
       />
       <Handle
@@ -67,112 +88,138 @@ export function TaskNodeComponent({ data }: NodeProps) {
         style={{
           background: color,
           borderColor: 'var(--color-background)',
-          width: 7,
-          height: 7,
+          width: 6,
+          height: 6,
         }}
       />
 
-      <span
+      {/* Top row: task id and status pill */}
+      <div
         style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          fontWeight: 700,
-          color,
-          letterSpacing: '0.03em',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
           overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
         }}
       >
-        {task.id}
-      </span>
-      <span
-        style={{
-          fontSize: 10,
-          color: 'var(--color-muted-foreground)',
-          marginTop: 3,
-        }}
-      >
-        {statusLabel(task.status)}
-      </span>
-
-      {hovered && <TaskPopover task={task} />}
-    </div>
-  )
-}
-
-// TaskPopover floats above the task node on hover. It displays the task
-// metadata available in the snapshot: status, retry budget, and
-// dependency list. Acceptance criteria live in the plan file which is
-// not included in the snapshot payload; that field is omitted here.
-function TaskPopover({ task }: { task: DAGTask }) {
-  const color = statusColor(task.status)
-  const deps = task.depends_on ?? []
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        bottom: 'calc(100% + 10px)',
-        left: 0,
-        zIndex: 200,
-        minWidth: 240,
-        maxWidth: 340,
-        backgroundColor: 'var(--color-background)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 8,
-        padding: '12px 14px',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-        pointerEvents: 'none',
-      }}
-    >
-      {/* Task id + status */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: 12,
+            fontSize: 10,
             fontWeight: 700,
             color,
+            letterSpacing: '0.03em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            flex: 1,
+            minWidth: 0,
           }}
         >
           {task.id}
         </span>
         <span
           style={{
-            fontSize: 9,
+            fontSize: 8,
             color,
+            border: `1px solid color-mix(in srgb, ${color} 50%, transparent)`,
+            borderRadius: 2,
+            padding: '0 3px',
             textTransform: 'uppercase',
-            letterSpacing: '0.07em',
-            border: `1px solid ${color}`,
-            borderRadius: 3,
-            padding: '1px 5px',
+            letterSpacing: '0.04em',
+            flexShrink: 0,
+            lineHeight: 1.6,
           }}
         >
           {statusLabel(task.status)}
         </span>
       </div>
 
-      {/* Metadata rows */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <PopoverRow label="Retry budget" value={String(task.retry_budget)} />
-        {deps.length > 0 ? (
-          <PopoverRow label="Depends on" value={deps.join(', ')} />
-        ) : (
-          <PopoverRow label="Depends on" value="none" />
-        )}
+      {/* Retry budget dots */}
+      {task.retry_budget > 0 && (
+        <RetryDots budget={task.retry_budget} />
+      )}
+
+      {hovered && (
+        <TaskTooltip task={task} startedAt={startedAt} endedAt={endedAt} />
+      )}
+    </div>
+  )
+}
+
+// RetryDots renders the retry budget as small filled dots (remaining budget).
+// Capped at 8 dots to avoid overflow on very large budgets.
+function RetryDots({ budget }: { budget: number }) {
+  const count = Math.min(budget, 8)
+  return (
+    <div style={{ display: 'flex', gap: 3, marginTop: 3 }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <span
+          key={i}
+          style={{
+            width: 4,
+            height: 4,
+            borderRadius: '50%',
+            backgroundColor: 'var(--color-muted-foreground)',
+            display: 'inline-block',
+            opacity: 0.5,
+            flexShrink: 0,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+// TaskTooltip floats above the task card on hover. Displays dependencies and
+// the started/ended timestamps when available.
+function TaskTooltip({
+  task,
+  startedAt,
+  endedAt,
+}: {
+  task: DAGTask
+  startedAt?: string
+  endedAt?: string
+}) {
+  const deps = task.depends_on ?? []
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 'calc(100% + 8px)',
+        left: 0,
+        zIndex: 200,
+        minWidth: 200,
+        maxWidth: 300,
+        backgroundColor: 'var(--surface-overlay)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 6,
+        padding: '8px 10px',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{ fontSize: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <TooltipRow
+          label="Depends on"
+          value={deps.length > 0 ? deps.join(', ') : 'none'}
+        />
+        {startedAt && <TooltipRow label="Started" value={startedAt} />}
+        {endedAt && <TooltipRow label="Ended" value={endedAt} />}
       </div>
     </div>
   )
 }
 
-function PopoverRow({ label, value }: { label: string; value: string }) {
+function TooltipRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+    <div style={{ display: 'flex', gap: 6 }}>
       <span
         style={{
           color: 'var(--color-muted-foreground)',
-          minWidth: 82,
+          minWidth: 70,
           flexShrink: 0,
         }}
       >
