@@ -182,8 +182,10 @@ func (s *EventService) Replay(ctx context.Context, sessionID string, fromSeq int
 }
 
 // isLiveSession reports whether sessionID matches the SessionStore's
-// bound session id. The fan-out is bound to a single live session;
-// any other id routes through Replay.
+// bound session id, also accepting the reserved LiveSessionAlias so the
+// SPA can subscribe before discovering the live session's real id. The
+// fan-out is bound to a single live session; any other id routes
+// through Replay.
 func (s *EventService) isLiveSession(sessionID string) bool {
 	if s.deps.SessionStore == nil {
 		return false
@@ -192,6 +194,9 @@ func (s *EventService) isLiveSession(sessionID string) bool {
 	if live == nil {
 		return false
 	}
+	if sessionID == LiveSessionAlias {
+		return true
+	}
 	return live.ID == sessionID
 }
 
@@ -199,11 +204,14 @@ func (s *EventService) isLiveSession(sessionID string) bool {
 // session is acceptable here too: Replay against the live session
 // reads its on-disk event log even while the loop is still running,
 // which is how a freshly opened SPA tab can backfill before
-// switching to Subscribe at the live tail.
+// switching to Subscribe at the live tail. LiveSessionAlias resolves
+// to whichever session is bound as live.
 func (s *EventService) archivedSessionDir(sessionID string) (string, error) {
 	if s.deps.SessionStore != nil {
-		if live := s.deps.SessionStore.Session(); live != nil && live.ID == sessionID {
-			return s.deps.SessionStore.SessionDir(), nil
+		if live := s.deps.SessionStore.Session(); live != nil {
+			if sessionID == LiveSessionAlias || live.ID == sessionID {
+				return s.deps.SessionStore.SessionDir(), nil
+			}
 		}
 	}
 	if s.deps.SessionsBaseDir == "" {

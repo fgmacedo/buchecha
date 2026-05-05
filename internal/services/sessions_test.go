@@ -345,6 +345,82 @@ func TestSessionService_Snapshot_UnknownReturnsNotFound(t *testing.T) {
 	}
 }
 
+// TestSessionService_LiveAlias covers the SPA's bootstrap path: the
+// dashboard hits /api/v1/sessions/live/{snapshot,...} before it has a
+// real session id, and the service must resolve the alias to whichever
+// session is bound as live.
+func TestSessionService_LiveAlias(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	tmp := t.TempDir()
+	baseDir := filepath.Join(tmp, ".bcc")
+	live := director.Session{
+		ID:        "a1b2c3d4e5f6",
+		SpecPath:  "/spec/live.md",
+		SpecHash:  "h",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Status:    director.SessionRunning,
+	}
+	writeManifest(t, baseDir, live)
+	store, err := director.OpenSession(baseDir, live.ID)
+	if err != nil {
+		t.Fatalf("open live: %v", err)
+	}
+
+	state := dag.NewStateFromPlan(trivialPlan())
+	registry := dag.NewAgentRegistry(nil)
+	handler := dag.NewHandler(state, registry)
+
+	svc := newSessionService(Deps{
+		SessionsBaseDir: baseDir,
+		SessionStore:    store,
+		DAGHandler:      handler,
+	})
+
+	t.Run("Get resolves to the bound live session", func(t *testing.T) {
+		got, err := svc.Get(context.Background(), LiveSessionAlias)
+		if err != nil {
+			t.Fatalf("Get(live): %v", err)
+		}
+		if got.ID != live.ID {
+			t.Errorf("Get(live).ID = %q, want %q", got.ID, live.ID)
+		}
+	})
+
+	t.Run("Snapshot resolves to the bound live session", func(t *testing.T) {
+		got, err := svc.Snapshot(context.Background(), LiveSessionAlias)
+		if err != nil {
+			t.Fatalf("Snapshot(live): %v", err)
+		}
+		if got.Session.ID != live.ID {
+			t.Errorf("Snapshot(live).Session.ID = %q, want %q", got.Session.ID, live.ID)
+		}
+		if got.DAG == nil {
+			t.Error("Snapshot(live).DAG nil; expected deep copy of live state")
+		}
+	})
+}
+
+// TestSessionService_LiveAliasWithoutLive verifies the alias surfaces
+// ErrSessionNotFound when no SessionStore is bound, instead of silently
+// returning a zero-value record.
+func TestSessionService_LiveAliasWithoutLive(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	baseDir := filepath.Join(tmp, ".bcc")
+	svc := newSessionService(Deps{SessionsBaseDir: baseDir})
+
+	if _, err := svc.Get(context.Background(), LiveSessionAlias); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("Get(live) without SessionStore: err = %v, want ErrSessionNotFound", err)
+	}
+	if _, err := svc.Snapshot(context.Background(), LiveSessionAlias); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("Snapshot(live) without SessionStore: err = %v, want ErrSessionNotFound", err)
+	}
+}
+
 func TestSessionService_Snapshot_ArchivedWithoutDAGFile(t *testing.T) {
 	t.Parallel()
 

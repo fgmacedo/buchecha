@@ -82,6 +82,43 @@ func TestEventService_Subscribe_LiveOrderingAndSeq(t *testing.T) {
 	}
 }
 
+// TestEventService_Subscribe_LiveAlias covers the SPA's bootstrap path:
+// the dashboard opens an EventSource at /api/v1/sessions/live/events
+// before it has a real session id. Subscribe must accept the alias and
+// route it to the bound live session's fan-out.
+func TestEventService_Subscribe_LiveAlias(t *testing.T) {
+	t.Parallel()
+	deps, ch := liveDeps(t, "abcabcabc104")
+	svc := newEventService(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub, err := svc.Subscribe(ctx, LiveSessionAlias, 0)
+	if err != nil {
+		t.Fatalf("Subscribe(live): %v", err)
+	}
+	ch <- loop.IterationStarted{Index: 1, MaxIter: 1}
+	ch <- loop.LoopFinished{Reason: "done", ExitCode: 0}
+
+	var got []SeqEvent
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case se, ok := <-sub:
+			if !ok {
+				if len(got) != 2 {
+					t.Fatalf("got %d events, want 2", len(got))
+				}
+				return
+			}
+			got = append(got, se)
+		case <-deadline.C:
+			t.Fatalf("subscriber did not close after LoopFinished; got %d events", len(got))
+		}
+	}
+}
+
 func TestEventService_Subscribe_LoopFinishedClosesSubscriber(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc102")

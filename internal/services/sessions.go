@@ -51,6 +51,15 @@ type Snapshot struct {
 	LastPhaseBriefed *PhaseBriefedRef `json:"last_phase_briefed,omitempty"`
 }
 
+// LiveSessionAlias is the reserved id callers pass when they want the
+// service to resolve the currently bound live session. The SPA defaults
+// to this alias on first load, before it has a real session id from
+// /sessions, so the dashboard can render without bcc injecting the id at
+// build time. Methods that accept an id (Get, Snapshot, plus the
+// EventService) translate this token to the live session's real id; an
+// alias lookup with no live session bound returns ErrSessionNotFound.
+const LiveSessionAlias = "live"
+
 // SessionService exposes live and archived session metadata and
 // snapshots. The live session, when configured, is read from the
 // in-memory dag handler and the live store; archived sessions are
@@ -106,13 +115,21 @@ func (s *SessionService) List(ctx context.Context) ([]SessionMeta, error) {
 
 // Get returns the metadata for one session id. The live session takes
 // precedence over the archived manifest when both exist for the same
-// id. Unknown ids return ErrSessionNotFound.
+// id. The reserved id LiveSessionAlias resolves to whichever session is
+// bound as live; with no live session bound it returns ErrSessionNotFound.
+// Unknown ids return ErrSessionNotFound.
 func (s *SessionService) Get(ctx context.Context, id string) (SessionMeta, error) {
 	if err := ctx.Err(); err != nil {
 		return SessionMeta{}, err
 	}
 	if id == "" {
 		return SessionMeta{}, ErrInvalidRequest.WithMessage("session service: empty id")
+	}
+	if id == LiveSessionAlias {
+		if live := s.liveSession(); live != nil {
+			return sessionMetaFrom(*live), nil
+		}
+		return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
 	if live := s.liveSession(); live != nil && live.ID == id {
 		return sessionMetaFrom(*live), nil
@@ -142,6 +159,12 @@ func (s *SessionService) Snapshot(ctx context.Context, id string) (Snapshot, err
 	}
 	if id == "" {
 		return Snapshot{}, ErrInvalidRequest.WithMessage("session service: empty id")
+	}
+	if id == LiveSessionAlias {
+		if live := s.liveSession(); live != nil {
+			return s.liveSnapshot(*live)
+		}
+		return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
 	if live := s.liveSession(); live != nil && live.ID == id {
 		return s.liveSnapshot(*live)
