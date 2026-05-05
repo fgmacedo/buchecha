@@ -21,6 +21,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/services"
 )
 
 // gitProbeInterval is the cadence at which the dashboard polls the
@@ -86,6 +87,11 @@ type Model struct {
 	gate     *Gate
 	gitProbe GitProbe
 	gitCtx   context.Context
+
+	// svc is the application services handle. When non-nil, the TUI
+	// receives its event stream via svc.Events.Subscribe instead of the
+	// raw events channel. Wired from Options.Services.
+	svc *services.Services
 
 	// newEvents builds a fresh loop, spawns its goroutine, and returns
 	// the new events channel. Invoked when the user presses [r] in the
@@ -186,6 +192,13 @@ type Options struct {
 	GitProbe  GitProbe
 	GitCtx    context.Context
 
+	// Services, when non-nil, is the application services handle from
+	// which the TUI obtains its event stream via
+	// Services.Events.Subscribe. When set, the Events and NewEvents
+	// fields are ignored; the TUI subscribes directly to the shared
+	// services instance.
+	Services *services.Services
+
 	// NewEvents is the host's factory for a fresh loop run. Invoked when
 	// the user presses [r] in the session menu. Nil disables the resume
 	// action.
@@ -216,6 +229,7 @@ func New(opts Options) Model {
 		gate:     opts.Gate,
 		gitProbe: opts.GitProbe,
 		gitCtx:   opts.GitCtx,
+		svc:      opts.Services,
 		header: header{
 			specPath:  opts.SpecPath,
 			branch:    opts.Branch,
