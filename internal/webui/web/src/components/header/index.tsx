@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react'
-import { scaleLinear } from 'd3-scale'
-import { line as d3Line, curveLinear } from 'd3-shape'
+import { useState, useEffect } from 'react'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { SeqEvent } from '../../hooks/use-events'
 import type { ViewMode } from '../../hooks/use-view'
+import { useCostAggregator } from '../../hooks/use-cost-aggregator'
+import { CostMeter } from '../cost-meter'
 
 // STATUS_COLORS maps session status strings to CSS variables defined in tokens.css.
 const STATUS_COLORS: Record<string, string> = {
@@ -25,57 +25,6 @@ function formatElapsed(totalSeconds: number): string {
   const s = totalSeconds % 60
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(h)}:${pad(m)}:${pad(s)}`
-}
-
-// SPARKLINE_WINDOW is the sliding window size (seconds) used to bucket event
-// counts for the throughput sparkline. Each bucket represents one second.
-const SPARKLINE_WINDOW = 30
-const SPARKLINE_W = 80
-const SPARKLINE_H = 24
-
-interface SparklineProps {
-  events: SeqEvent[]
-}
-
-// ThroughputSparkline renders a 30-second sliding window of event counts as
-// an SVG path. The x-axis is bucketed seconds (0=oldest, 29=newest);
-// the y-axis is the event count in that second, scaled to the sparkline height.
-function ThroughputSparkline({ events }: SparklineProps) {
-  const path = useMemo(() => {
-    const now = Date.now()
-    const counts = new Array<number>(SPARKLINE_WINDOW).fill(0)
-    for (const { event } of events) {
-      const at = event.at ? new Date(event.at as string).getTime() : now
-      const ageSeconds = Math.floor((now - at) / 1000)
-      if (ageSeconds >= 0 && ageSeconds < SPARKLINE_WINDOW) {
-        counts[SPARKLINE_WINDOW - 1 - ageSeconds]++
-      }
-    }
-
-    const maxCount = Math.max(...counts, 1)
-    const xScale = scaleLinear().domain([0, SPARKLINE_WINDOW - 1]).range([0, SPARKLINE_W])
-    const yScale = scaleLinear().domain([0, maxCount]).range([SPARKLINE_H, 2])
-
-    const generator = d3Line<{ x: number; y: number }>()
-      .x((d) => xScale(d.x))
-      .y((d) => yScale(d.y))
-      .curve(curveLinear)
-
-    return generator(counts.map((count, i) => ({ x: i, y: count }))) ?? ''
-  }, [events])
-
-  return (
-    <svg width={SPARKLINE_W} height={SPARKLINE_H} aria-hidden="true">
-      <path
-        d={path}
-        fill="none"
-        stroke="var(--color-accent)"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }
 
 interface CopyButtonProps {
@@ -150,9 +99,10 @@ export interface HeaderProps {
 
 // Header renders the top chrome band with three flexbox regions:
 // left (session metadata), center (status, counter, elapsed timer),
-// and right (throughput sparkline, view toggle, settings menu placeholder).
+// and right (view toggle, CostMeter).
 export function Header({ snapshot, events, view, onViewChange }: HeaderProps) {
   const [elapsed, setElapsed] = useState(0)
+  const costAgg = useCostAggregator(events)
 
   // Tick the elapsed timer from session started_at.
   useEffect(() => {
@@ -221,19 +171,10 @@ export function Header({ snapshot, events, view, onViewChange }: HeaderProps) {
         )}
       </div>
 
-      {/* Right: sparkline, view toggle, settings placeholder */}
-      <div className="flex items-center gap-3 shrink-0">
-        <div title="Events per second (last 30 s)">
-          <ThroughputSparkline events={events} />
-        </div>
+      {/* Right: view toggle, CostMeter */}
+      <div className="flex items-center gap-2 shrink-0">
         <ViewToggle view={view} onChange={onViewChange} />
-        <button
-          type="button"
-          aria-label="Settings"
-          className="rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-border transition-colors"
-        >
-          Settings
-        </button>
+        <CostMeter agg={costAgg} />
       </div>
     </header>
   )
