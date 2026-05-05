@@ -485,6 +485,130 @@ func TestRun_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
 	}
 }
 
+// TestRun_EmitsSpawnFinishedWithMatchingCost verifies that after a happy-path
+// spawn:
+//   - loop.SpawnFinished is emitted on the Events channel
+//   - SpawnFinished.SpawnID matches ExecResult.SpawnID
+//   - SpawnFinished.Cost.USD and token fields match the values in the
+//     KindResultSummary agent event (agent_event.result_summary)
+//   - KindResultSummary is still forwarded on the agent events channel
+func TestRun_EmitsSpawnFinishedWithMatchingCost(t *testing.T) {
+	store := newTestStore(t)
+	loopEvents := make(chan loop.Event, 16)
+	e := New(Config{
+		Binary:       fixture(t, "fake-claude.sh"),
+		SessionStore: store,
+		Events:       loopEvents,
+		PhaseID:      "P1",
+		IterationID:  "P1-01",
+		Attempt:      1,
+	})
+	res, agentEvs, err := collectEvents(t, e, "test prompt")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", res.ExitCode)
+	}
+
+	// KindResultSummary must still be forwarded on the agent events channel.
+	var resultEv *agentcontract.AgentEvent
+	for i := range agentEvs {
+		if agentEvs[i].Kind == agentcontract.KindResultSummary {
+			ev := agentEvs[i]
+			resultEv = &ev
+			break
+		}
+	}
+	if resultEv == nil {
+		t.Fatalf("KindResultSummary not forwarded on agent events channel (TUI compat broken)")
+	}
+
+	// SpawnFinished must be emitted on the loop events channel.
+	evs := collectLoopEvents(loopEvents)
+	var finished *loop.SpawnFinished
+	for i := range evs {
+		if sf, ok := evs[i].(loop.SpawnFinished); ok {
+			finished = &sf
+			break
+		}
+	}
+	if finished == nil {
+		t.Fatalf("no loop.SpawnFinished emitted on loop events channel")
+	}
+	if finished.SpawnID == "" {
+		t.Errorf("SpawnFinished.SpawnID is empty")
+	}
+	if finished.SpawnID != res.SpawnID {
+		t.Errorf("SpawnFinished.SpawnID %q != ExecResult.SpawnID %q", finished.SpawnID, res.SpawnID)
+	}
+	if finished.Role != "executor" {
+		t.Errorf("SpawnFinished.Role = %q, want executor", finished.Role)
+	}
+	if finished.ExitCode != 0 {
+		t.Errorf("SpawnFinished.ExitCode = %d, want 0", finished.ExitCode)
+	}
+}
+
+// TestRun_SpawnFinishedCostMatchesResultSummaryEvent verifies that the USD
+// and token fields in SpawnFinished.Cost are consistent with the Done payload
+// of the KindResultSummary agent event emitted by the same spawn. Uses the
+// full-iter fixture which includes non-zero token counts.
+func TestRun_SpawnFinishedCostMatchesResultSummaryEvent(t *testing.T) {
+	store := newTestStore(t)
+	loopEvents := make(chan loop.Event, 16)
+	e := New(Config{
+		Binary:       fixture(t, "fake-claude-fixture.sh"),
+		SessionStore: store,
+		Events:       loopEvents,
+	})
+	_, agentEvs, err := collectEvents(t, e, "p")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var resultEv *agentcontract.AgentEvent
+	for i := range agentEvs {
+		if agentEvs[i].Kind == agentcontract.KindResultSummary && agentEvs[i].Done != nil {
+			ev := agentEvs[i]
+			resultEv = &ev
+			break
+		}
+	}
+	if resultEv == nil {
+		t.Fatalf("no KindResultSummary with Done in agent events")
+	}
+
+	evs := collectLoopEvents(loopEvents)
+	var finished *loop.SpawnFinished
+	for i := range evs {
+		if sf, ok := evs[i].(loop.SpawnFinished); ok {
+			finished = &sf
+			break
+		}
+	}
+	if finished == nil {
+		t.Fatalf("no loop.SpawnFinished emitted")
+	}
+
+	done := resultEv.Done
+	if finished.Cost.USD != done.TotalCostUSD {
+		t.Errorf("Cost.USD = %v, want %v (from result_summary)", finished.Cost.USD, done.TotalCostUSD)
+	}
+	if int64(finished.Cost.InputTokens) != done.InputTokens {
+		t.Errorf("Cost.InputTokens = %d, want %d", finished.Cost.InputTokens, done.InputTokens)
+	}
+	if int64(finished.Cost.OutputTokens) != done.OutputTokens {
+		t.Errorf("Cost.OutputTokens = %d, want %d", finished.Cost.OutputTokens, done.OutputTokens)
+	}
+	if int64(finished.Cost.CacheReadTokens) != done.CacheReadInputTokens {
+		t.Errorf("Cost.CacheReadTokens = %d, want %d", finished.Cost.CacheReadTokens, done.CacheReadInputTokens)
+	}
+	if int64(finished.Cost.CacheCreateTokens) != done.CacheCreationInputTokens {
+		t.Errorf("Cost.CacheCreateTokens = %d, want %d", finished.Cost.CacheCreateTokens, done.CacheCreationInputTokens)
+	}
+}
+
 // TestRun_SpawnIDEmptyWhenNoSessionStore verifies backward compatibility:
 // when SessionStore is nil, SpawnID is empty and no file is written.
 func TestRun_SpawnIDEmptyWhenNoSessionStore(t *testing.T) {

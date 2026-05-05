@@ -14,6 +14,7 @@
 package claude
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -317,22 +319,40 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 		}
 	}
 
+	spawnStartedAt := time.Now()
 	if err := cmd.Start(); err != nil {
 		return loop.ExecResult{ExitCode: -1}, fmt.Errorf("run %s: %w", e.cfg.Binary, err)
 	}
 
-	// Drain the stdout pipe in a goroutine. The pipe EOFs naturally when
-	// the subprocess exits; on cancel, streamjson.Stream exits early via
-	// ctx.Done so a slow consumer never blocks the cmd.Wait below.
+	// Drain the stdout pipe in a goroutine. Accumulate all parsed events so
+	// LastResultSummary can extract cost after the subprocess exits. The
+	// forward path to the caller's events channel stays intact so the TUI
+	// continues to receive KindResultSummary (agent_event.result_summary)
+	// for backward compatibility; SpawnFinished is additive.
 	var src io.Reader = pipe
 	if e.cfg.Stdout != nil {
 		src = io.TeeReader(pipe, e.cfg.Stdout)
 	}
-	var wg sync.WaitGroup
+	var (
+		wg           sync.WaitGroup
+		parsedEvents []agentcontract.AgentEvent
+	)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamjson.Stream(ctx, src, events, e.cfg.MaxLineBytes)
+		sc := bufio.NewScanner(src)
+		sc.Buffer(make([]byte, 64*1024), e.cfg.MaxLineBytes)
+		for sc.Scan() {
+			line := slices.Clone(sc.Bytes())
+			for _, ev := range streamjson.ParseLine(line, time.Now()) {
+				parsedEvents = append(parsedEvents, ev)
+				select {
+				case events <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
 	}()
 
 	// Per Cmd.StdoutPipe doc: callers must finish reading before Wait.
@@ -340,6 +360,34 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	runErr := cmd.Wait()
 
 	tail := strings.TrimSpace(stderrTail.String())
+
+	// Emit SpawnFinished before any return path so observers always see the
+	// closing event paired with SpawnStarted, even on non-zero exits.
+	if spawnID != "" && e.cfg.Events != nil {
+		cost, _ := streamjson.LastResultSummary(parsedEvents)
+		spawnCost := loop.SpawnCost{
+			InputTokens:       cost.InputTokens,
+			OutputTokens:      cost.OutputTokens,
+			CacheReadTokens:   cost.CacheReadTokens,
+			CacheCreateTokens: cost.CacheCreateTokens,
+			USD:               cost.USD,
+		}
+		exitCode := 0
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+		select {
+		case e.cfg.Events <- loop.SpawnFinished{
+			SpawnID:    spawnID,
+			Role:       "executor",
+			ExitCode:   exitCode,
+			DurationMS: time.Since(spawnStartedAt).Milliseconds(),
+			Cost:       spawnCost,
+			At:         time.Now().UTC(),
+		}:
+		default:
+		}
+	}
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		exitCode := -1
