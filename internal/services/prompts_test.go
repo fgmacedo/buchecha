@@ -126,3 +126,95 @@ func TestPromptService_Get_EmptySession(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidRequest", err)
 	}
 }
+
+// seedSpawnPrompt writes <sessionDir>/spawns/<spawn_id>.md with the
+// supplied body so PromptService.GetSpawn has the same on-disk shape
+// the executor/director writes before subprocess launch.
+func seedSpawnPrompt(t *testing.T, sessionDir, spawnID, body string) {
+	t.Helper()
+	dir := filepath.Join(sessionDir, "spawns")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir spawns: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, spawnID+".md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write spawn prompt: %v", err)
+	}
+}
+
+func TestPromptService_GetSpawn(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	baseDir := filepath.Join(tmp, ".bcc")
+	now := time.Now().UTC().Truncate(time.Second)
+	sess := director.Session{
+		ID:        "aabbccdd1111",
+		SpecPath:  "/spec/spawn.md",
+		SpecHash:  "h",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Status:    director.SessionRunning,
+	}
+	writeManifest(t, baseDir, sess)
+	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)
+
+	// Seed two valid spawns with different content.
+	spawn1ID := "0123456789abcdef"
+	spawn2ID := "fedcba9876543210"
+	seedSpawnPrompt(t, sessionDir, spawn1ID, "# executor spawn 1\n")
+	seedSpawnPrompt(t, sessionDir, spawn2ID, "# briefer spawn 2\n")
+
+	svc := newPromptService(Deps{SessionsBaseDir: baseDir})
+
+	cases := []struct {
+		name     string
+		spawnID  string
+		wantBody string
+		wantErr  error
+	}{
+		{name: "happy path spawn 1", spawnID: spawn1ID, wantBody: "# executor spawn 1\n"},
+		{name: "happy path spawn 2", spawnID: spawn2ID, wantBody: "# briefer spawn 2\n"},
+		{name: "malformed spawn id (too short)", spawnID: "short", wantErr: ErrInvalidRequest},
+		{name: "malformed spawn id (uppercase)", spawnID: "0123456789ABCDEF", wantErr: ErrInvalidRequest},
+		{name: "malformed spawn id (special chars)", spawnID: "0123456789ab@def!", wantErr: ErrInvalidRequest},
+		{name: "unknown spawn id", spawnID: "99999999999999aa", wantErr: ErrRoleNotFound},
+		{name: "empty spawn id", spawnID: "", wantErr: ErrInvalidRequest},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := svc.GetSpawn(context.Background(), sess.ID, tc.spawnID)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetSpawn: %v", err)
+			}
+			if got.Markdown != tc.wantBody {
+				t.Fatalf("Markdown = %q, want %q", got.Markdown, tc.wantBody)
+			}
+			if got.SpawnID != tc.spawnID {
+				t.Fatalf("SpawnID = %q, want %q", got.SpawnID, tc.spawnID)
+			}
+			if got.SessionID != sess.ID {
+				t.Fatalf("SessionID = %q, want %q", got.SessionID, sess.ID)
+			}
+			if got.Role != "" {
+				t.Fatalf("Role should be empty for spawn prompts, got %q", got.Role)
+			}
+		})
+	}
+}
+
+func TestPromptService_GetSpawn_UnknownSession(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	svc := newPromptService(Deps{SessionsBaseDir: filepath.Join(tmp, ".bcc")})
+	_, err := svc.GetSpawn(context.Background(), "000000000000", "0123456789abcdef")
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("err = %v, want ErrSessionNotFound", err)
+	}
+}
