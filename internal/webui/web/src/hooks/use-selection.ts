@@ -54,7 +54,7 @@ function reducer(state: State, action: Action): State {
 // archived sessions).
 export interface SelectionProviderProps {
   sessionId: string
-  children: ReactNode
+  children?: ReactNode
 }
 
 // SelectionProvider is the context root for the selection state. Mount it
