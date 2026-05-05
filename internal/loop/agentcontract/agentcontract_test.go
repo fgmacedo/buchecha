@@ -89,6 +89,33 @@ func TestPartials_WireProtocol_NoLegacyEnvelope(t *testing.T) {
 	}
 }
 
+// TestPartials_NoFrameworkPathLeaks ensures the embedded contract stays
+// invariant to the user's working directory: no partial may name a path
+// that lives inside the bcc binary's source tree. The agent must learn
+// every framework artifact (schemas, prompts, packages) from the prompt
+// itself or via MCP, never by reaching for a file in the cwd. A leak
+// makes the contract silently dependent on dogfooding inside the bcc
+// repo, since the file would only exist there.
+func TestPartials_NoFrameworkPathLeaks(t *testing.T) {
+	p := Partials()
+	for _, name := range []string{"wire_protocol", "absolute_restrictions", "working_tree", "what_bcc_is"} {
+		var buf bytes.Buffer
+		view := struct{ Role string }{Role: "planner"}
+		if err := p.ExecuteTemplate(&buf, name, view); err != nil {
+			t.Fatalf("execute %s: %v", name, err)
+		}
+		body := buf.String()
+		for _, banned := range []string{
+			".schema.json",
+			"internal/",
+		} {
+			if strings.Contains(body, banned) {
+				t.Errorf("%s partial leaks framework path %q; describe the contract without naming files inside the bcc binary", name, banned)
+			}
+		}
+	}
+}
+
 func TestPartials_ComposableWithChild(t *testing.T) {
 	parent := Partials()
 	child, err := parent.New("child").Parse("BEGIN\n{{template \"wire_protocol\" .}}\nEND\n")
