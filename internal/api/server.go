@@ -43,6 +43,10 @@ type Mounts struct {
 	// leaves /mcp/* unauthenticated.
 	MCPAuth func(http.Handler) http.Handler
 	// WebUI is the embedded WebUI handler mounted at / when non-nil.
+	// When the Server has an auth token set via WithAuth, the WebUI
+	// mount is wrapped with SessionAuth so the dashboard URL printed
+	// by the run banner ("/?t=<token>") sets the session cookie and
+	// redirects to "/" with the token stripped.
 	WebUI http.Handler
 }
 
@@ -83,10 +87,11 @@ func (s *Server) WithMounts(m Mounts) *Server {
 }
 
 // WithAuth installs the per-run session token used by the SessionAuth
-// middleware on the /api/v1 subtree. An empty token leaves the
-// foundation usable in tests that exercise the router without auth.
-// The MCP and WebUI mounts get their own auth in P4/P5; this setter
-// does not touch them.
+// middleware on the /api/v1 subtree and on the WebUI mount when
+// present. An empty token leaves the foundation usable in tests that
+// exercise the router without auth. The MCP mount has its own
+// path-scoped auth supplied via Mounts.MCPAuth; this setter does not
+// touch it.
 func (s *Server) WithAuth(token string) *Server {
 	s.authToken = token
 	return s
@@ -155,7 +160,11 @@ func (s *Server) Routes() http.Handler {
 		root.Mount("/mcp", mcpHandler)
 	}
 	if s.mounts.WebUI != nil {
-		root.Mount("/", s.mounts.WebUI)
+		webuiHandler := s.mounts.WebUI
+		if s.authToken != "" {
+			webuiHandler = SessionAuth(s.authToken)(webuiHandler)
+		}
+		root.Mount("/", webuiHandler)
 	}
 
 	return root

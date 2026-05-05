@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -127,6 +128,91 @@ func TestAuthIntegration_ThroughChiRouter(t *testing.T) {
 		}
 		if !strings.Contains(loc, "keep=1") {
 			t.Errorf("Location must preserve other query params: %q", loc)
+		}
+	})
+
+	t.Run("webui root with query token sets cookie and redirects", func(t *testing.T) {
+		t.Parallel()
+
+		var hits int32
+		s := New(nil).WithAuth(token).WithMounts(Mounts{
+			WebUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				atomic.AddInt32(&hits, 1)
+				w.WriteHeader(http.StatusTeapot)
+			}),
+		})
+		srv := httptest.NewServer(s.Routes())
+		t.Cleanup(srv.Close)
+
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/?t="+token, nil)
+		resp, err := noFollow.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		if resp.StatusCode != http.StatusFound {
+			t.Fatalf("status: got %d, want 302", resp.StatusCode)
+		}
+		var found *http.Cookie
+		for _, c := range resp.Cookies() {
+			if c.Name == SessionCookieName {
+				found = c
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("session cookie missing")
+		}
+		if found.Value != token {
+			t.Errorf("cookie value: got %q, want token", found.Value)
+		}
+		loc := resp.Header.Get("Location")
+		if strings.Contains(loc, "t=") {
+			t.Errorf("Location must strip t param: %q", loc)
+		}
+		if !strings.HasSuffix(loc, "/") {
+			t.Errorf("Location must redirect to /, got %q", loc)
+		}
+		if got := atomic.LoadInt32(&hits); got != 0 {
+			t.Errorf("webui handler must not run on bootstrap redirect: got %d hits", got)
+		}
+
+		req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+		req2.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+		resp2, err := noFollow.Do(req2)
+		if err != nil {
+			t.Fatalf("follow-up do: %v", err)
+		}
+		t.Cleanup(func() { _ = resp2.Body.Close() })
+		if resp2.StatusCode != http.StatusTeapot {
+			t.Fatalf("follow-up status: got %d, want 418", resp2.StatusCode)
+		}
+		if got := atomic.LoadInt32(&hits); got != 1 {
+			t.Errorf("webui handler hits after cookie: got %d, want 1", got)
+		}
+	})
+
+	t.Run("webui root without credential returns 401 envelope", func(t *testing.T) {
+		t.Parallel()
+
+		s := New(nil).WithAuth(token).WithMounts(Mounts{
+			WebUI: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusTeapot)
+			}),
+		})
+		srv := httptest.NewServer(s.Routes())
+		t.Cleanup(srv.Close)
+
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+		resp, err := noFollow.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status: got %d, want 401", resp.StatusCode)
 		}
 	})
 
