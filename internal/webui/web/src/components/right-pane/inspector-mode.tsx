@@ -1,6 +1,7 @@
 import type { SeqEvent } from '../../hooks/use-events'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { Selection } from '../../hooks/use-selection'
+import { OverviewTab } from './inspector/overview-tab'
 
 // selectionLabel derives a human-readable label for the primary identifier
 // of the selection.
@@ -24,10 +25,9 @@ export interface InspectorModeProps {
   onClose: () => void
 }
 
-// InspectorMode is the placeholder Inspector shell for phase P7. It renders
-// a single card showing the selection kind and its primary id, plus a close
-// button that calls onClose. Tabs and full content land in P9.
-export function InspectorMode({ selection, onClose }: InspectorModeProps) {
+// InspectorMode renders the Inspector shell with the Overview tab (P9) and a
+// close button. Additional tabs (Briefing, Prompts, Events) land in T9.2-T9.5.
+export function InspectorMode({ selection, events, snapshot, onClose }: InspectorModeProps) {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header row */}
@@ -51,23 +51,22 @@ export function InspectorMode({ selection, onClose }: InspectorModeProps) {
         </button>
       </div>
 
-      {/* Placeholder body */}
+      {/* Tab strip placeholder: remaining tabs land in T9.2-T9.5 */}
       <div
-        className="flex-1 overflow-y-auto p-4"
-        style={{ backgroundColor: 'var(--surface-card)' }}
+        className="shrink-0 flex items-center gap-0 border-b border-border"
+        style={{ backgroundColor: 'var(--surface-panel)' }}
       >
-        <div
-          className="rounded border border-border p-4"
-          style={{ backgroundColor: 'var(--surface-elevated)' }}
+        <span
+          className="px-4 py-1.5 text-[11px] font-mono text-foreground border-b-2"
+          style={{ borderColor: 'var(--color-accent)' }}
         >
-          <p className="text-xs font-mono text-muted-foreground mb-1">kind</p>
-          <p className="text-sm font-mono text-foreground mb-3">{selection.kind}</p>
-          <p className="text-xs font-mono text-muted-foreground mb-1">id</p>
-          <p className="text-sm font-mono text-foreground">{selectionLabel(selection)}</p>
-          <p className="text-xs text-muted-foreground mt-4 italic">
-            Inspector tabs land in P9.
-          </p>
-        </div>
+          Overview
+        </span>
+      </div>
+
+      {/* Overview tab content */}
+      <div className="flex-1 min-h-0 overflow-hidden" style={{ backgroundColor: 'var(--surface-card)' }}>
+        <OverviewTab selection={selection} events={events} snapshot={snapshot} />
       </div>
     </div>
   )
