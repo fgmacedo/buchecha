@@ -341,9 +341,10 @@ func TestUpdate_EscalationModalRoutesKeysToGate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.key, func(t *testing.T) {
 			gate := make(chan loop.EscalationReply, 1)
-			events := make(chan loop.Event, 1)
+			ts := newTestSvc(t)
 			m := New(Options{
-				Events:         events,
+				Services:       ts.Svc,
+				SessionID:      ts.SessionID,
 				Cancel:         func() {},
 				Gate:           NewGate(),
 				SpecPath:       "spec.md",
@@ -378,8 +379,10 @@ func TestUpdate_EscalationModalRoutesKeysToGate(t *testing.T) {
 // an EscalationResume reply on the gate.
 func TestUpdate_EscalationResumeOpensHintInput(t *testing.T) {
 	gate := make(chan loop.EscalationReply, 1)
+	ts := newTestSvc(t)
 	m := New(Options{
-		Events:         make(chan loop.Event, 1),
+		Services:       ts.Svc,
+		SessionID:      ts.SessionID,
 		Cancel:         func() {},
 		Gate:           NewGate(),
 		SpecPath:       "spec.md",
@@ -424,8 +427,10 @@ func TestUpdate_EscalationResumeOpensHintInput(t *testing.T) {
 // touching the gate.
 func TestUpdate_EscalationHintEscReturnsToChoosing(t *testing.T) {
 	gate := make(chan loop.EscalationReply, 1)
+	ts := newTestSvc(t)
 	m := New(Options{
-		Events:         make(chan loop.Event, 1),
+		Services:       ts.Svc,
+		SessionID:      ts.SessionID,
 		Cancel:         func() {},
 		Gate:           NewGate(),
 		SpecPath:       "spec.md",
@@ -449,8 +454,10 @@ func TestUpdate_EscalationHintEscReturnsToChoosing(t *testing.T) {
 
 func TestUpdate_EscalationModalIgnoresUnboundKeys(t *testing.T) {
 	gate := make(chan loop.EscalationReply, 1)
+	ts := newTestSvc(t)
 	m := New(Options{
-		Events:         make(chan loop.Event, 1),
+		Services:       ts.Svc,
+		SessionID:      ts.SessionID,
 		Cancel:         func() {},
 		Gate:           NewGate(),
 		SpecPath:       "spec.md",

@@ -182,7 +182,6 @@ func (m *Model) SetProgram(p *tea.Program) {
 // Options bundles construction parameters for New. Optional fields may
 // be left zero.
 type Options struct {
-	Events    <-chan loop.Event
 	Cancel    context.CancelFunc
 	Gate      *Gate
 	SpecPath  string
@@ -194,15 +193,10 @@ type Options struct {
 
 	// Services, when non-nil, is the application services handle from
 	// which the TUI obtains its event stream via
-	// Services.Events.Subscribe. When set, the Events and NewEvents
-	// fields are ignored; the TUI subscribes directly to the shared
-	// services instance.
+	// Services.Events.Subscribe. The TUI subscribes directly to the
+	// shared services instance and derives its newEvents factory from
+	// the same handle.
 	Services *services.Services
-
-	// NewEvents is the host's factory for a fresh loop run. Invoked when
-	// the user presses [r] in the session menu. Nil disables the resume
-	// action.
-	NewEvents func() <-chan loop.Event
 
 	// EscalationGate is the channel the Model writes into when the user
 	// resolves a Director escalation modal. The host wires the same
@@ -217,14 +211,13 @@ type Options struct {
 	PlanningPending bool
 }
 
-// New returns a Model wired to the given event channel and cancel
-// callback. The gate is required; nil disables the pause feature
-// silently. GitProbe is optional: nil disables the commit-count and
-// dirty-file probes (panels still render with empty placeholders).
+// New returns a Model wired to the given services and cancel callback.
+// The gate is required; nil disables the pause feature silently.
+// GitProbe is optional: nil disables the commit-count and dirty-file
+// probes (panels still render with empty placeholders).
 func New(opts Options) Model {
 	now := time.Now()
 	m := Model{
-		events:   opts.Events,
 		cancel:   opts.Cancel,
 		gate:     opts.Gate,
 		gitProbe: opts.GitProbe,
@@ -245,12 +238,20 @@ func New(opts Options) Model {
 		sessionKeys:     defaultSessionKeyMap(),
 		directorKeys:    defaultDirectorKeyMap(),
 		helpView:        help.New(),
-		newEvents:       opts.NewEvents,
 		escalationGate:  opts.EscalationGate,
 		planningPending: opts.PlanningPending,
 	}
 	if m.gitCtx == nil {
 		m.gitCtx = context.Background()
+	}
+	if opts.Services != nil {
+		svc := opts.Services
+		sid := opts.SessionID
+		ctx := m.gitCtx
+		m.events = serviceEventsChan(ctx, svc, sid, 0)
+		m.newEvents = func() <-chan loop.Event {
+			return serviceEventsChan(context.Background(), svc, sid, 0)
+		}
 	}
 	return m
 }
@@ -785,4 +786,37 @@ func gitProbeNowCmd(ctx context.Context, probe GitProbe, baselineSHA string) tea
 	return func() tea.Msg {
 		return doGitProbe(ctx, probe, baselineSHA)
 	}
+}
+
+// serviceEventsChan subscribes to sessionID via svc.Events and returns a
+// <-chan loop.Event that emits each event in the SeqEvent. The goroutine
+// exits when ctx is cancelled or when the subscription channel closes (on
+// LoopFinished or fan-out shutdown). The returned channel is closed when
+// the goroutine exits so the caller's readEventCmd sees the terminal state.
+func serviceEventsChan(ctx context.Context, svc *services.Services, sessionID string, fromSeq int64) <-chan loop.Event {
+	out := make(chan loop.Event, 256)
+	sub, err := svc.Events.Subscribe(ctx, sessionID, fromSeq)
+	if err != nil {
+		close(out)
+		return out
+	}
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case se, ok := <-sub:
+				if !ok {
+					return
+				}
+				select {
+				case out <- se.Event:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
 }
