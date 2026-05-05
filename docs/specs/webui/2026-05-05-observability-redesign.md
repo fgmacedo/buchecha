@@ -674,6 +674,17 @@ After P11, the following must hold without manual fix-up:
 
 ## Execution Journal
 
+### 2026-05-05 21:30:00 , P11-docs-verify
+
+- End-to-end verification (T11.4): all automated gates pass from clean working tree
+- A1 (test): `go test -race ./...` passes; all 21 packages green (no failures, no races)
+- A2 (lint): `gofmt -l .` produces no output; `go vet ./...` reports zero issues
+- A3 (build): `make build` exits 0; `./bcc` binary produced successfully
+- A4 (bundle): gzipped main bundle is **392.3 KB**, well under the 600 KB budget (vendor-shiki 81 KB, vendor-react 61 KB, vendor-xyflow 59 KB, dag-view 36 KB)
+- A5 (code inspection): CostMeter mounted in `internal/webui/web/src/components/header/index.tsx` line 164; SpawnMarker imported and rendered in `timeline-mode.tsx` with `SPAWN_KINDS` set covering `spawn_started` and `spawn_finished`; Inspector Prompts tab fetches `GET /api/v1/sessions/${sessionId}/spawns/${selectedSpawnId}/prompt` at line 168 of `prompts-tab.tsx`; all three wiring checks verified by code inspection
+- A6 (commit): prefix is `refac:` (verification-only task with no code changes needed)
+- **Decisions**: items 3-10 in the verification checklist require a running `bcc run --webui` session and a browser; they cannot be verified by code inspection alone. Items 3, 4, 5, 6, 7, 8, and 10 (dashboard visual, spawn event lifecycle, Inspector Prompts tab, prompt bytes match, task selection, replay, TUI and API regression) are marked as requiring manual browser confirmation. The automated gates (A1-A4) and code-inspection gates (A5) all pass; the milestone is complete pending manual browser verification.
+
 ### 2026-05-05 21:00:00 , P11-docs-verify
 
 - CLAUDE.md (T11.1): added `spawn_started` and `spawn_finished` to the anti-drift contract callout; added session layout comment in tooling section listing `briefings/<iteration_id>.prompt.md` and `spawns/<spawn_id>.md` alongside existing paths
