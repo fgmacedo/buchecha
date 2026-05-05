@@ -79,6 +79,11 @@ type directorDeps struct {
 	// stats.jsonl in the session directory. Bound after session
 	// resolution; tests typically leave nil to opt out.
 	stats *director.StatsLog
+	// serviceEvents, when non-nil, is the long-lived loop.Event channel
+	// the services aggregator consumes. Per-run tees forward every loop
+	// event onto it (non-blocking) so /api/v1/sessions/{id}/events
+	// subscribers see the live stream. Tests leave nil to opt out.
+	serviceEvents chan<- loop.Event
 }
 
 // directorIO captures the I/O surface so tests can drive escalation
@@ -119,11 +124,21 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		ExitCode = loop.ExitInvalid
 		return err
 	}
+
+	// serviceEvents is the long-lived loop.Event channel the services
+	// aggregator subscribes to. Per-loop-run tees forward every event
+	// onto it without closing it so subscriber lifetimes are decoupled
+	// from any single l.Run invocation. The bcc run's defer closes the
+	// channel after the listener tears down.
+	serviceEvents := make(chan loop.Event, 256)
+	defer close(serviceEvents)
+
 	svc := services.New(services.Deps{
 		DAGHandler:      boot.handler,
 		SessionStore:    store,
 		SessionsBaseDir: filepath.Join(".bcc", "sessions"),
 		AuditPath:       directorAuditPath(cfg, store),
+		LoopEvents:      serviceEvents,
 	})
 
 	webuiHandler := resolveWebUIHandler(cfg, runWebUIDev)
@@ -157,6 +172,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 	deps := defaultDirectorDeps(cfg, listener.boot)
 	deps.boot = listener.boot
 	deps.store = store
+	deps.serviceEvents = serviceEvents
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
 }
 
@@ -187,6 +203,35 @@ func directorAuditPath(cfg *config.Config, store *director.Store) string {
 		return ""
 	}
 	return filepath.Join(store.SessionDir(), "mcp-log.jsonl")
+}
+
+// teeLoopEvents reads every event written to src and forwards it to the
+// transient consumer (TUI bridge, render dispatch) and to the persistent
+// services channel. transient is closed when src closes so the per-run
+// consumer's existing close-cascade keeps working; persistent stays open
+// because services subscribers outlive any single l.Run. Sends are
+// non-blocking so a slow consumer cannot stall its peer; the EventService
+// already documents the same drop-on-pressure contract for its own ring
+// buffer.
+//
+// persistent may be nil to opt out of services forwarding (tests).
+func teeLoopEvents(src <-chan loop.Event, transient chan<- loop.Event, persistent chan<- loop.Event) {
+	defer close(transient)
+	for ev := range src {
+		select {
+		case transient <- ev:
+		default:
+			slog.Warn("cli: tui events channel full; dropping event")
+		}
+		if persistent == nil {
+			continue
+		}
+		select {
+		case persistent <- ev:
+		default:
+			slog.Warn("cli: service events channel full; dropping event")
+		}
+	}
 }
 
 // resolveWebUIHandler picks the http.Handler the run-wide listener
@@ -513,7 +558,13 @@ func runDirectorWith(
 		return derr
 	}
 
-	code, runErr := l.Run(ctx, events)
+	// Tee every loop event into the long-lived services channel so live
+	// SSE subscribers see the headless run alongside the chosen render
+	// backend.
+	loopOut := make(chan loop.Event, 256)
+	go teeLoopEvents(loopOut, events, deps.serviceEvents)
+
+	code, runErr := l.Run(ctx, loopOut)
 	<-drained
 	ExitCode = code
 	return runErr
@@ -701,7 +752,14 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 	}
 
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// raw is the writer-side channel: loop.Loop.Run and the planner
+	// orchestrator both publish onto it. tuiCh is the read-side the
+	// bubbletea Model consumes. The tee goroutine in between forwards
+	// every event to tuiCh AND to deps.serviceEvents so the live SSE
+	// stream sees the same flow as the dashboard.
 	raw := make(chan loop.Event, 256)
+	tuiCh := make(chan loop.Event, 256)
+	go teeLoopEvents(raw, tuiCh, deps.serviceEvents)
 
 	type runResult struct {
 		code int
@@ -771,9 +829,10 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 
 	// newEvents is the host's Resume factory: the user pressed [r] in
 	// the session menu after the loop terminated. Build a fresh channel,
-	// spawn the loop on it (reusing the latched plan), and hand the
-	// channel back to the Model so panels live-update against the new
-	// run.
+	// spawn the loop on it (reusing the latched plan), tee it into a
+	// fresh TUI read channel plus the long-lived serviceEvents, and hand
+	// the read channel back to the Model so panels live-update against
+	// the new run.
 	newEvents := func() <-chan loop.Event {
 		plan := currentPlan()
 		if plan == nil {
@@ -782,13 +841,15 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 			close(ch)
 			return ch
 		}
-		ch := make(chan loop.Event, 256)
-		go runLoopOn(plan, ch)
-		return ch
+		runCh := make(chan loop.Event, 256)
+		tuiCh := make(chan loop.Event, 256)
+		go teeLoopEvents(runCh, tuiCh, deps.serviceEvents)
+		go runLoopOn(plan, runCh)
+		return tuiCh
 	}
 
 	model := tui.New(tui.Options{
-		Events:          raw,
+		Events:          tuiCh,
 		Cancel:          cancel,
 		Gate:            gate,
 		SpecPath:        specPath,
