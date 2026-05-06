@@ -21,9 +21,28 @@ const (
 // adapter. Only the field(s) relevant to the Kind are populated; the
 // rest are zero. The same envelope shape is used regardless of which
 // agent role (executor, planner, briefer, reviewer) produced the event.
+//
+// Origin fields (AgentID, Role, PhaseID, IterationID, Attempt) identify
+// which agent produced the event; adapters populate them before sending
+// on the events channel so downstream consumers (TUI, SSE, persistence)
+// can correlate stream-json output with the agent that emitted it. They
+// are required to support concurrent agents in the future. The empty
+// value remains acceptable for legacy callers and tests.
+//
+// TaskID is left empty by adapters and is populated by EventService at
+// fan-out time, derived from the active-task index keyed by AgentID. See
+// internal/services/events.go for the attribution mechanism.
 type AgentEvent struct {
 	Kind AgentEventKind
 	At   time.Time
+
+	// Origin: who emitted this event.
+	AgentID     string
+	Role        Role
+	PhaseID     string // empty for planner
+	IterationID string // empty for planner
+	Attempt     int    // 0 for planner, >=1 otherwise
+	TaskID      string // populated by EventService.fanout, not by adapters
 
 	Init  *InitInfo          // KindInit
 	Tool  *ToolCallInfo      // KindToolUse, KindToolResult

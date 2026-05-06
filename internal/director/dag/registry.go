@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // AgentID is the opaque per-spawn identifier bcc assigns to every
@@ -14,28 +16,21 @@ import (
 // prompt and passes it back on every MCP call.
 type AgentID string
 
-// Role names the cognitive role an agent plays for the run. The MCP
-// connection name (X-BCC-Role header) must agree with the role the
-// agent was registered under, otherwise the handler rejects the call.
-type Role string
+// Role aliases agentcontract.Role so existing call sites can keep
+// referring to dag.Role / dag.Role*; the canonical type lives in
+// agentcontract because it is part of the wire-level contract with the
+// agent (origin in events, MCP handshake, SSE envelopes).
+type Role = agentcontract.Role
 
 const (
-	RolePlanner  Role = "bcc-planner"
-	RoleBriefer  Role = "bcc-briefer"
-	RoleExecutor Role = "bcc-executor"
-	RoleReviewer Role = "bcc-reviewer"
+	RolePlanner  = agentcontract.RolePlanner
+	RoleBriefer  = agentcontract.RoleBriefer
+	RoleExecutor = agentcontract.RoleExecutor
+	RoleReviewer = agentcontract.RoleReviewer
 	// RoleLoop is reserved for internal calls bcc itself makes against
 	// the handler (force-approve in P7). Agents never see this name.
-	RoleLoop Role = "bcc-loop"
+	RoleLoop = agentcontract.RoleLoop
 )
-
-func (r Role) valid() bool {
-	switch r {
-	case RolePlanner, RoleBriefer, RoleExecutor, RoleReviewer, RoleLoop:
-		return true
-	}
-	return false
-}
 
 // AgentEntry is the registry record for one live agent. BriefingID and
 // PhaseID, when non-empty, scope what the agent may query and mutate;
@@ -87,7 +82,7 @@ func NewAgentRegistry(nowFn func() time.Time) *AgentRegistry {
 // The id has the shape "<role>-<8-hex>" and is unique per registry by
 // construction (the registry rejects accidental id collisions).
 func (r *AgentRegistry) Register(role Role, args RegisterArgs) (AgentID, error) {
-	if !role.valid() {
+	if !role.Valid() {
 		return "", fmt.Errorf("dag: invalid role %q", string(role))
 	}
 	id := AgentID(string(role) + "-" + randomHex(4))
