@@ -55,19 +55,20 @@ function miniMapNodeColor(node: Node): string {
   const data = node.data as Record<string, unknown>
   if (node.type === 'phaseNode') {
     const tasks = (data.tasks ?? []) as Array<{ status: string }>
-    // Compute aggregated status locally (mirrors aggregatePhaseStatus).
+    // Compute aggregated status locally (mirrors aggregatePhaseStatus):
+    // any task past pending and not all done means in_progress.
     let hasNeedsFix = false
-    let hasRunning = false
+    let pendingCount = 0
     let doneCount = 0
     for (const t of tasks) {
       if (t.status === 'needs_fix') hasNeedsFix = true
-      else if (t.status === 'in_progress') hasRunning = true
+      else if (t.status === 'pending') pendingCount++
       else if (t.status === 'done') doneCount++
     }
     if (hasNeedsFix) return 'var(--status-needs-fix, #f59e0b)'
-    if (hasRunning) return 'var(--status-running, #6ea8ff)'
     if (tasks.length > 0 && doneCount === tasks.length) return 'var(--status-done, #4ade80)'
-    return 'var(--status-pending, #6b7280)'
+    if (tasks.length === 0 || pendingCount === tasks.length) return 'var(--status-pending, #6b7280)'
+    return 'var(--status-running, #6ea8ff)'
   }
   if (node.type === 'taskNode') {
     const task = data.task as { status?: string } | undefined

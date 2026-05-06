@@ -4,40 +4,44 @@ import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, DAGPhase } from './types'
 
 // PhaseStatus is the aggregated status derived from all task statuses.
-// Priority: error > needs_fix > running > done > pending.
-export type PhaseStatus = 'error' | 'needs_fix' | 'running' | 'done' | 'pending'
+// Mirrors the task vocabulary so a phase is in_progress whenever it has
+// started, even between task transitions when no single task is currently
+// executing. Precedence: error > needs_fix > in_progress > done > pending.
+export type PhaseStatus = 'error' | 'needs_fix' | 'in_progress' | 'done' | 'pending'
 
 // aggregatePhaseStatus derives a single PhaseStatus from the task list.
-// Exported for unit testing.
+// A phase is in_progress as soon as any task has moved past pending and
+// not all tasks are done yet, so the phase visibly tracks progress even
+// in the gap between one task finishing and the next starting. Exported
+// for unit testing.
 export function aggregatePhaseStatus(tasks: DAGTask[]): PhaseStatus {
   if (tasks.length === 0) return 'pending'
 
   let hasNeedsFix = false
-  let hasRunning = false
+  let pendingCount = 0
   let doneCount = 0
 
   for (const t of tasks) {
     if (t.status === 'needs_fix') {
       hasNeedsFix = true
-    } else if (t.status === 'in_progress') {
-      hasRunning = true
+    } else if (t.status === 'pending') {
+      pendingCount++
     } else if (t.status === 'done') {
       doneCount++
     }
   }
 
-  // error > needs_fix > running > done > pending
   if (hasNeedsFix) return 'needs_fix'
-  if (hasRunning) return 'running'
   if (doneCount === tasks.length) return 'done'
-  return 'pending'
+  if (pendingCount === tasks.length) return 'pending'
+  return 'in_progress'
 }
 
 // PHASE_STATUS_COLOR maps PhaseStatus to CSS variable references.
 const PHASE_STATUS_COLOR: Record<PhaseStatus, string> = {
   error: 'var(--status-error)',
   needs_fix: 'var(--status-needs-fix)',
-  running: 'var(--status-running)',
+  in_progress: 'var(--status-running)',
   done: 'var(--status-done)',
   pending: 'var(--status-pending)',
 }

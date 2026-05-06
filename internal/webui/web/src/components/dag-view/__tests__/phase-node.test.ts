@@ -24,14 +24,14 @@ describe('aggregatePhaseStatus', () => {
       expected: 'pending',
     },
     {
-      name: 'any in_progress returns running',
+      name: 'any in_progress returns in_progress',
       tasks: [task('T1', 'pending'), task('T2', 'in_progress')],
-      expected: 'running',
+      expected: 'in_progress',
     },
     {
-      name: 'single in_progress returns running',
+      name: 'single in_progress returns in_progress',
       tasks: [task('T1', 'in_progress')],
-      expected: 'running',
+      expected: 'in_progress',
     },
     {
       name: 'any needs_fix returns needs_fix',
@@ -59,14 +59,14 @@ describe('aggregatePhaseStatus', () => {
       expected: 'done',
     },
     {
-      name: 'done and pending returns pending',
+      name: 'done and pending returns in_progress (phase has started)',
       tasks: [task('T1', 'done'), task('T2', 'pending')],
-      expected: 'pending',
+      expected: 'in_progress',
     },
     {
-      name: 'done and in_progress returns running',
+      name: 'done and in_progress returns in_progress',
       tasks: [task('T1', 'done'), task('T2', 'in_progress')],
-      expected: 'running',
+      expected: 'in_progress',
     },
     {
       name: 'needs_fix alone returns needs_fix',
@@ -84,9 +84,9 @@ describe('aggregatePhaseStatus', () => {
       expected: 'needs_fix',
     },
     {
-      name: 'mix done and in_progress (no needs_fix): running wins over done',
+      name: 'mix done and in_progress (no needs_fix): in_progress wins over done',
       tasks: [task('T1', 'done'), task('T2', 'done'), task('T3', 'in_progress')],
-      expected: 'running',
+      expected: 'in_progress',
     },
   ]
 
