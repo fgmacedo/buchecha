@@ -270,7 +270,15 @@ func teeLoopEvents(src <-chan loop.Event, transient chan<- loop.Event, persisten
 // work on the SPA.
 func resolveWebUIHandler(dev bool) http.Handler {
 	if dev {
-		return webui.NewDev()
+		// bcc run uses the default Vite upstream (loopback:5173); the
+		// configurable form lives on `bcc dev`. NewDev returns an error
+		// only on parse failure of the constant default, which is a
+		// programmer error and merits a panic.
+		h, err := webui.NewDev(webui.DefaultDevUpstream)
+		if err != nil {
+			panic(fmt.Errorf("cli: build webui dev proxy: %w", err))
+		}
+		return h
 	}
 	return webui.New()
 }
