@@ -177,6 +177,7 @@ export function buildLayout(
         position: taskPos,
         parentId: pid,
         extent: 'parent',
+        style: { width: TASK_W, height: TASK_H },
         data: {
           task,
           phaseId: phase.id,

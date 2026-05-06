@@ -74,7 +74,7 @@ export function TaskNodeComponent({ data }: NodeProps) {
         position: 'relative',
         boxSizing: 'border-box',
         transition: 'border-color 0.1s ease',
-        overflow: 'visible',
+        overflow: 'hidden',
       }}
     >
       <Handle
