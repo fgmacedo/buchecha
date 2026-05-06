@@ -1,9 +1,8 @@
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
 import { useEvents } from './hooks/use-events'
-import { applyEventToSnapshot } from './lib/dag-patch'
 import { useView } from './hooks/use-view'
 import { SelectionProvider, useSelection } from './hooks/use-selection'
 import { Header } from './components/header'
@@ -66,39 +65,8 @@ export function EscapeHandler() {
 function AppShell({ sessionId }: AppShellProps) {
   const [view, setView] = useView()
 
-  const { snapshot, refetch, patchSnapshot } = useSnapshot(sessionId)
+  const { snapshot, refetch } = useSnapshot(sessionId)
   const { events } = useEvents(sessionId, { onSeqGone: refetch })
-
-  // Apply canonical loop events (task_started, task_completed, ...) to the
-  // in-memory snapshot so the DAG view reflects state changes live without
-  // round-tripping through /snapshot. lastAppliedSeqRef tracks the high-water
-  // mark so a re-render or new event batch only patches what's new. Resets
-  // when sessionId changes.
-  const lastAppliedSeqRef = useRef(0)
-  useEffect(() => {
-    lastAppliedSeqRef.current = 0
-  }, [sessionId])
-  useEffect(() => {
-    if (!snapshot) return
-    if (events.length === 0) return
-    const high = lastAppliedSeqRef.current
-    let pending = high
-    let mutated = false
-    patchSnapshot((prev) => {
-      let next = prev
-      for (const ev of events) {
-        if (ev.seq <= high) continue
-        const patched = applyEventToSnapshot(next, ev)
-        if (patched !== next) {
-          next = patched
-          mutated = true
-        }
-        if (ev.seq > pending) pending = ev.seq
-      }
-      return mutated ? next : prev
-    })
-    lastAppliedSeqRef.current = pending
-  }, [events, snapshot, patchSnapshot])
 
   return (
     <SelectionProvider sessionId={sessionId}>
