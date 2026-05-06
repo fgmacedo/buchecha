@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "internal/webui/web"],
+      "port": 5174
+    },
+    {
+      "name": "bcc-dev",
+      "runtimeExecutable": "go",
+      "runtimeArgs": [
+        "run",
+        "./cmd/bcc",
+        "dev",
+        "fd08384b610c",
+        "--addr",
+        "127.0.0.1:8080",
+        "--webui-upstream",
+        "http://127.0.0.1:5174"
+      ],
+      "port": 8080
+    }
+  ]
+}

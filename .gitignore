@@ -35,6 +35,11 @@ go.work.sum
 *.swo
 .DS_Store
 
+# Claude Code per-machine state. The committed .claude/launch.json
+# sits alongside and is shared across contributors.
+.claude/settings.local.json
+.claude/projects/
+
 # Build output
 /dist/
 /build/
