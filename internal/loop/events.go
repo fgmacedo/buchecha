@@ -138,8 +138,11 @@ func (PhaseReviewed) isLoopEvent() {}
 
 // TaskStarted is emitted when an Executor or Planner reports a task
 // transition to in_progress through bcc_task_started. The "planning"
-// task uses the well-known PlanningTaskID.
+// task uses the well-known PlanningTaskID. AgentID identifies which
+// agent owns this task transition; the EventService uses it to keep an
+// active-task index and tag subsequent AgentEventReceived events.
 type TaskStarted struct {
+	AgentID string
 	PhaseID string
 	TaskID  string
 	At      time.Time
@@ -151,6 +154,7 @@ func (TaskStarted) isLoopEvent() {}
 // planning task) reports a task transition to done through
 // bcc_task_completed.
 type TaskCompleted struct {
+	AgentID string
 	PhaseID string
 	TaskID  string
 	At      time.Time
@@ -161,6 +165,7 @@ func (TaskCompleted) isLoopEvent() {}
 // TaskApproved is emitted when the Reviewer marks a task done through
 // bcc_task_approved.
 type TaskApproved struct {
+	AgentID string
 	PhaseID string
 	TaskID  string
 	At      time.Time
@@ -172,6 +177,7 @@ func (TaskApproved) isLoopEvent() {}
 // through bcc_task_needs_fix; Note carries the Reviewer's per-task
 // feedback when supplied.
 type TaskNeedsFix struct {
+	AgentID string
 	PhaseID string
 	TaskID  string
 	Note    string

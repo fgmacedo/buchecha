@@ -140,29 +140,41 @@ func jsonPayload(ev Event) map[string]any {
 			"reasoning": e.Reasoning,
 		}
 	case TaskStarted:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "task_started",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
 		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
+		}
+		return out
 	case TaskCompleted:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "task_completed",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
 		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
+		}
+		return out
 	case TaskApproved:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "task_approved",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
 		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
+		}
+		return out
 	case TaskNeedsFix:
 		out := map[string]any{
 			"type":     "task_needs_fix",
@@ -170,6 +182,9 @@ func jsonPayload(ev Event) map[string]any {
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
+		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
 		}
 		if e.Note != "" {
 			out["note"] = e.Note
