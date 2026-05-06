@@ -29,6 +29,7 @@ const (
 var (
 	devAddr          string
 	devWebuiUpstream string
+	devWorkdir       string
 )
 
 var devCmd = &cobra.Command{
@@ -60,6 +61,7 @@ at a Vite running elsewhere.`,
 func init() {
 	devCmd.Flags().StringVar(&devAddr, "addr", devDefaultAddr, "address to bind the API + WebUI listener (loopback recommended)")
 	devCmd.Flags().StringVar(&devWebuiUpstream, "webui-upstream", devDefaultUpstream, "URL of the local Vite dev server the WebUI proxies to")
+	devCmd.Flags().StringVar(&devWorkdir, "workdir", "", "chdir into this directory before resolving session paths (so .bcc/sessions/<id> is found there); useful when running from a git worktree pointed at the main checkout")
 	rootCmd.AddCommand(devCmd)
 }
 
@@ -68,6 +70,12 @@ func init() {
 // the on-disk session directory. No loop driver is started; SSE
 // queries fall through to EventService.Replay.
 func runDev(ctx context.Context, sessionID string) error {
+	if devWorkdir != "" {
+		if err := os.Chdir(devWorkdir); err != nil {
+			ExitCode = 1
+			return fmt.Errorf("dev: chdir %q: %w", devWorkdir, err)
+		}
+	}
 	baseDir := filepath.Join(".bcc", "sessions")
 	store, err := director.OpenSession(filepath.Join(".bcc"), sessionID)
 	if err != nil {
