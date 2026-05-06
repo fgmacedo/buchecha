@@ -16,12 +16,14 @@ import (
 var nowSpinnerStyle = spinner.Dot
 
 // nowPanel surfaces what the agent is doing at this instant: the latest
-// in-flight tool call, its elapsed time, and the most recent assistant
-// text. The active tool is cleared when its matching tool_result
-// arrives, so a stalled tool keeps showing while real work hangs.
+// in-flight tool call, its elapsed time, the task it is working on (when
+// known), and the most recent assistant text. The active tool is
+// cleared when its matching tool_result arrives, so a stalled tool
+// keeps showing while real work hangs.
 type nowPanel struct {
 	currentTool   *agentcontract.ToolCallInfo
 	currentToolAt time.Time
+	currentTaskID string
 	lastAssistant string
 	spinner       spinner.Model
 }
@@ -36,6 +38,12 @@ func newNowPanel() nowPanel {
 
 // onAgentEvent folds a single agent event into the panel state.
 func (n *nowPanel) onAgentEvent(ev agentcontract.AgentEvent) {
+	// Track the task the agent is currently working on. The
+	// EventService fan-out fills TaskID from its active-task index, so
+	// every event after a TaskStarted carries it until TaskCompleted.
+	if ev.TaskID != "" {
+		n.currentTaskID = ev.TaskID
+	}
 	switch ev.Kind {
 	case agentcontract.KindToolUse:
 		if ev.Tool != nil {
@@ -68,6 +76,7 @@ func (n *nowPanel) onAgentEvent(ev agentcontract.AgentEvent) {
 func (n *nowPanel) onIterStarted() {
 	n.currentTool = nil
 	n.currentToolAt = time.Time{}
+	n.currentTaskID = ""
 	// keep lastAssistant: between iterations the prior reasoning is
 	// still the most recent thing the agent said.
 }
@@ -88,6 +97,9 @@ func (n nowPanel) view(now time.Time, width int) string {
 		b.WriteString(n.spinner.View())
 		b.WriteByte(' ')
 		headline := formatToolHeadline(*n.currentTool)
+		if n.currentTaskID != "" {
+			headline = headline + "  [" + n.currentTaskID + "]"
+		}
 		if room := max - 4; room > 0 { // 2 indent + spinner + space
 			headline = truncate(headline, room)
 		}

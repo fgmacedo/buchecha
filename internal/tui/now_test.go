@@ -33,6 +33,35 @@ func TestNow_onAgentEvent_TracksToolUseAndClearsOnResult(t *testing.T) {
 	}
 }
 
+// TestNow_onAgentEvent_TracksTaskID covers the post-EventService
+// enrichment behavior: the AgentEvent now carries TaskID, set by the
+// fan-out from the active-task index. The headline shows it in
+// brackets so the user sees what task the visible tool call belongs
+// to. onIterStarted clears it.
+func TestNow_onAgentEvent_TracksTaskID(t *testing.T) {
+	n := newNowPanel()
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+
+	n.onAgentEvent(agentcontract.AgentEvent{
+		Kind:   agentcontract.KindToolUse,
+		At:     at,
+		TaskID: "T7.3",
+		Tool:   &agentcontract.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "foo.go"}},
+	})
+	if n.currentTaskID != "T7.3" {
+		t.Fatalf("currentTaskID = %q, want T7.3", n.currentTaskID)
+	}
+	out := n.view(at, 80)
+	if !strings.Contains(out, "[T7.3]") {
+		t.Errorf("headline missing task id: %q", out)
+	}
+
+	n.onIterStarted()
+	if n.currentTaskID != "" {
+		t.Errorf("onIterStarted must clear currentTaskID, got %q", n.currentTaskID)
+	}
+}
+
 func TestNow_onAgentEvent_RecordsLatestAssistantText(t *testing.T) {
 	n := nowPanel{}
 	n.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindAssistantText, Text: "first"})
