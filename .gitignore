@@ -39,6 +39,7 @@ go.work.sum
 # sits alongside and is shared across contributors.
 .claude/settings.local.json
 .claude/projects/
+.claude/worktrees/
 
 # Build output
 /dist/

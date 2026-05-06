@@ -4,7 +4,7 @@
 
 `bcc` runs a four-role pipeline against a Markdown spec: a Planner produces a typed DAG of phases and tasks, a Briefer picks the next sub-DAG to execute, an Executor edits the working tree, and a Reviewer audits per-task outcomes. All four roles communicate exclusively through an in-process MCP server. bcc owns the loop, per-session state, and the live status TUI.
 
-Status: **early development, not stable, not yet released.**
+Status: **early development, not stable.**
 
 ## Install
 
