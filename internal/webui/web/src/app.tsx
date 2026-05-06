@@ -68,7 +68,6 @@ function AppShell({ sessionId }: AppShellProps) {
 
   const { snapshot, refetch } = useSnapshot(sessionId)
   const { plan, refetch: refetchPlan } = usePlan(sessionId)
-  void plan
   const { events } = useEvents(sessionId, { onSeqGone: refetch })
 
   // Refetch the plan whenever a phase_planned event lands. The planner
@@ -137,7 +136,7 @@ function AppShell({ sessionId }: AppShellProps) {
                   display: view === 'dag' ? 'block' : 'none',
                 }}
               >
-                <DAGView snapshot={snapshot} sessionId={snapshot?.session.id ?? 'live'} events={events} />
+                <DAGView snapshot={snapshot} plan={plan} sessionId={snapshot?.session.id ?? 'live'} events={events} />
               </div>
               <div
                 style={{

@@ -13,8 +13,9 @@ import {
 import { PhaseNodeComponent } from './phase-node'
 import { TaskNodeComponent } from './task-node'
 import { buildLayout, type SavedPositions, type TaskTimestamps } from './layout'
-import type { DAGData } from './types'
+import type { DAGData, DAGPhase, DAGTask } from './types'
 import type { Snapshot } from '../../hooks/use-snapshot'
+import type { Plan } from '../../hooks/use-plan'
 import type { SeqEvent } from '../../hooks/use-events'
 
 // NODE_TYPES maps type strings to component implementations. Defined
@@ -82,8 +83,62 @@ function miniMapNodeColor(node: Node): string {
 
 export interface DAGViewProps {
   snapshot: Snapshot | null
+  plan: Plan | null
   sessionId: string
   events: SeqEvent[]
+}
+
+// mergePlanWithStatus combines the structural plan (titles, intent,
+// priority, parallelizable, dependencies, acceptance) with the live
+// status DAG (per-task status, retry budget) into a single DAGData
+// that the layout consumes. The plan is the source of truth for shape;
+// the DAG state overlays the runtime status. When the plan is absent
+// (legacy sessions or planner not yet emitted) it falls back to the
+// status DAG alone, which keeps the structure but renders without
+// titles or intents.
+function mergePlanWithStatus(
+  plan: Plan | null,
+  status: DAGData | null | undefined,
+): DAGData | null {
+  if (!plan?.phases?.length) {
+    return (status ?? null) as DAGData | null
+  }
+  const statusPhases = new Map<string, NonNullable<DAGData['phases']>[number]>()
+  for (const sp of status?.phases ?? []) {
+    if (sp?.id) statusPhases.set(sp.id, sp)
+  }
+  const phases: DAGPhase[] = plan.phases.map((p) => {
+    const sp = statusPhases.get(p.id)
+    const statusTasks = new Map<string, NonNullable<DAGData['phases']>[number]['tasks'][number]>()
+    for (const st of sp?.tasks ?? []) {
+      if (st?.id) statusTasks.set(st.id, st)
+    }
+    const tasks: DAGTask[] = (p.tasks ?? []).map((t) => {
+      const st = statusTasks.get(t.id)
+      return {
+        id: t.id,
+        title: t.title,
+        intent: t.intent,
+        depends_on: t.depends_on ?? [],
+        priority: t.priority,
+        acceptance: t.acceptance,
+        status: (st?.status as DAGTask['status']) ?? (t.status as DAGTask['status']) ?? 'pending',
+        retry_budget: st?.retry_budget ?? t.retry_budget ?? 0,
+      }
+    })
+    return {
+      id: p.id,
+      title: p.title,
+      intent: p.intent,
+      depends_on: p.depends_on ?? [],
+      parallelizable: p.parallelizable,
+      priority: p.priority,
+      scope_in: p.scope_in,
+      scope_out: p.scope_out,
+      tasks,
+    }
+  })
+  return { phases }
 }
 
 // DAGView renders the plan's DAG using @xyflow/react. Phase nodes are
@@ -95,9 +150,13 @@ export interface DAGViewProps {
 // background reads as gradient-textured rather than a flat slab. A MiniMap
 // reflects task/phase statuses in the bottom-right. Zoom controls sit in the
 // bottom-left.
-export function DAGView({ snapshot, sessionId, events }: DAGViewProps) {
-  // Cast the opaque dag field to the concrete runtime shape.
-  const dag = snapshot?.dag as unknown as DAGData | null | undefined
+export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
+  // Merge the structural plan (titles, intent, priority, parallelizable)
+  // with the live status DAG (per-task status). The plan endpoint is the
+  // source for human-facing fields; the snapshot's dag is the source for
+  // status. When the plan is missing the DAG renders from status alone.
+  const statusDag = snapshot?.dag as unknown as DAGData | null | undefined
+  const dag = useMemo(() => mergePlanWithStatus(plan, statusDag), [plan, statusDag])
 
   // Derive per-phase cost, per-phase attempt count, and per-task timestamps
   // from the events stream so phase/task nodes can display contextual data.
