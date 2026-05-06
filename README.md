@@ -10,7 +10,7 @@ Status: **early development, not stable, not yet released.**
 
 ```bash
 # macOS or Linux Homebrew
-brew install fgmacedo/tap/bcc
+brew install fgmacedo/tap/buchecha
 
 # Linux: detect OS/arch, verify checksum, install to /usr/local/bin
 curl -sSL https://raw.githubusercontent.com/fgmacedo/buchecha/main/scripts/install.sh | sh
