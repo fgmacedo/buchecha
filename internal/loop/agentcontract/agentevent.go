@@ -52,6 +52,24 @@ type AgentEvent struct {
 	Done  *ResultSummaryInfo // KindResultSummary
 }
 
+// WithOrigin returns a copy of ev with the origin fields (AgentID,
+// Role, PhaseID, IterationID, Attempt) set. Adapters call this on each
+// parsed AgentEvent before forwarding on the events channel so
+// downstream consumers can correlate the event with the agent that
+// produced it.
+//
+// TaskID is intentionally not set here; it is populated later by the
+// EventService at fan-out time, derived from the active-task index
+// keyed by AgentID.
+func (ev AgentEvent) WithOrigin(agentID string, role Role, phaseID, iterationID string, attempt int) AgentEvent {
+	ev.AgentID = agentID
+	ev.Role = role
+	ev.PhaseID = phaseID
+	ev.IterationID = iterationID
+	ev.Attempt = attempt
+	return ev
+}
+
 // UsageInfo carries per-message token usage attached to assistant text
 // events. The four fields sum to the total billable tokens for that
 // message. Cache fields are zero when caching was not involved.
