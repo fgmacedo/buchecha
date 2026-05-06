@@ -1,4 +1,5 @@
 import type { SeqEvent } from '../hooks/use-events'
+import { isBCCProtocolTool } from './mcp'
 
 // IterationGroup is the result shape for groupByIteration. Each group
 // corresponds to one loop iteration, identified by the iteration_id from
@@ -107,6 +108,11 @@ export interface TimelineFilters {
   levels: string[]
   // search: substring to filter on the payload JSON; empty means no filter.
   search: string
+  // showProtocol: when false (default) hides agent_event entries whose tool
+  // name has the bcc MCP prefix (mcp__bcc__*). Those tool_use/tool_result
+  // entries duplicate the canonical loop events (task_started, task_completed,
+  // ...) emitted server-side; they are protocol traffic, not work.
+  showProtocol: boolean
 }
 
 export const DEFAULT_FILTERS: TimelineFilters = {
@@ -115,6 +121,7 @@ export const DEFAULT_FILTERS: TimelineFilters = {
   phases: [],
   levels: [],
   search: '',
+  showProtocol: false,
 }
 
 const STORAGE_PREFIX = 'bcc.timeline.filters.'
@@ -132,6 +139,7 @@ export function loadFilters(sessionId: string): TimelineFilters {
       phases: Array.isArray(parsed.phases) ? parsed.phases : [],
       levels: Array.isArray(parsed.levels) ? parsed.levels : [],
       search: typeof parsed.search === 'string' ? parsed.search : '',
+      showProtocol: typeof parsed.showProtocol === 'boolean' ? parsed.showProtocol : false,
     }
   } catch {
     return { ...DEFAULT_FILTERS }
@@ -150,17 +158,41 @@ export function saveFilters(sessionId: string, filters: TimelineFilters): void {
 // applyFilters returns a copy of events that passes all active filters.
 // An empty array in a multi-select field means "include all".
 export function applyFilters(events: SeqEvent[], filters: TimelineFilters): SeqEvent[] {
-  const { kinds, roles, phases, levels, search } = filters
+  const { kinds, roles, phases, levels, search, showProtocol } = filters
   const hasKind = kinds.length > 0
   const hasRole = roles.length > 0
   const hasPhase = phases.length > 0
   const hasLevel = levels.length > 0
   const hasSearch = search.length > 0
+  const hideProtocol = !showProtocol
 
-  if (!hasKind && !hasRole && !hasPhase && !hasLevel && !hasSearch) return events
+  if (!hasKind && !hasRole && !hasPhase && !hasLevel && !hasSearch && !hideProtocol) {
+    return events
+  }
+
+  // tool_result events carry tool.id but not tool.name. Pre-collect the
+  // set of tool ids whose tool_use was a bcc protocol call so the paired
+  // result drops out alongside the use.
+  const protocolIDs = new Set<string>()
+  if (hideProtocol) {
+    for (const ev of events) {
+      if (ev.event.type !== 'agent_event') continue
+      const kind = typeof ev.event.kind === 'string' ? ev.event.kind : ''
+      if (kind !== 'tool_use') continue
+      const tool = ev.event.tool as { id?: string; name?: string } | undefined
+      if (tool?.id && isBCCProtocolTool(tool.name)) protocolIDs.add(tool.id)
+    }
+  }
 
   return events.filter((ev) => {
     const { event } = ev
+
+    if (hideProtocol && event.type === 'agent_event') {
+      const kind = typeof event.kind === 'string' ? event.kind : ''
+      const tool = event.tool as { id?: string; name?: string } | undefined
+      if (kind === 'tool_use' && isBCCProtocolTool(tool?.name)) return false
+      if (kind === 'tool_result' && tool?.id && protocolIDs.has(tool.id)) return false
+    }
 
     if (hasKind && !kinds.includes(event.type)) return false
 

@@ -40,6 +40,7 @@ export function useSnapshot(sessionId: string): {
   error: Error | null
   loading: boolean
   refetch: () => void
+  patchSnapshot: (next: Snapshot | ((prev: Snapshot) => Snapshot)) => void
 } {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [error, setError] = useState<Error | null>(null)
@@ -51,6 +52,20 @@ export function useSnapshot(sessionId: string): {
   const refetch = useCallback(() => {
     setRefetchCounter((n) => n + 1)
   }, [])
+
+  // patchSnapshot lets the caller mutate the in-memory snapshot in
+  // response to live events. The DAG live-update path uses it to apply
+  // task_started/task_completed/... locally instead of round-tripping
+  // through the snapshot endpoint on every event.
+  const patchSnapshot = useCallback(
+    (next: Snapshot | ((prev: Snapshot) => Snapshot)) => {
+      setSnapshot((prev) => {
+        if (prev === null) return prev
+        return typeof next === 'function' ? (next as (p: Snapshot) => Snapshot)(prev) : next
+      })
+    },
+    [],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -85,5 +100,5 @@ export function useSnapshot(sessionId: string): {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, refetchCounter])
 
-  return { snapshot, error, loading, refetch }
+  return { snapshot, error, loading, refetch, patchSnapshot }
 }
