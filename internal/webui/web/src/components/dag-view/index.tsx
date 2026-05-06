@@ -122,7 +122,7 @@ function mergePlanWithStatus(
         intent: t.intent,
         depends_on: t.depends_on ?? [],
         priority: t.priority,
-        acceptance: t.acceptance,
+        acceptance: t.acceptance ?? undefined,
         status: (st?.status as DAGTask['status']) ?? (t.status as DAGTask['status']) ?? 'pending',
         retry_budget: st?.retry_budget ?? t.retry_budget ?? 0,
       }
@@ -134,8 +134,8 @@ function mergePlanWithStatus(
       depends_on: p.depends_on ?? [],
       parallelizable: p.parallelizable,
       priority: p.priority,
-      scope_in: p.scope_in,
-      scope_out: p.scope_out,
+      scope_in: p.scope_in ?? undefined,
+      scope_out: p.scope_out ?? undefined,
       executor_assignment: p.executor_assignment ?? null,
       tasks,
     }
