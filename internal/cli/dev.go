@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fgmacedo/buchecha/internal/api"
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/services"
 	"github.com/fgmacedo/buchecha/internal/webui"
@@ -104,28 +104,47 @@ func runDev(ctx context.Context, sessionID string) error {
 		return fmt.Errorf("dev: build webui dev proxy: %w", werr)
 	}
 
-	listener, err := startRunListener(ctx, nil, svc, webuiHandler, devAddr)
-	if err != nil {
-		ExitCode = 1
-		return fmt.Errorf("dev: start listener: %w", err)
-	}
-	defer func() {
-		if cerr := listener.Stop(); cerr != nil {
-			fmt.Fprintf(os.Stderr, "bcc dev: listener stop: %v\n", cerr)
-		}
+	// bcc dev binds loopback by default and runs against archived
+	// data only; there is nothing here for an out-of-band attacker
+	// to compromise. Skip the per-run session token so the dashboard
+	// URL is plain http://<addr>/ instead of the token-bearing
+	// query-string the live run prints. WithAuth("") leaves the
+	// /api/v1 and / subtrees unauthenticated.
+	apiServer := api.New(svc).
+		WithMounts(api.Mounts{WebUI: webuiHandler}).
+		WithAuth("")
+
+	listenCtx, cancelListen := context.WithCancel(ctx)
+	defer cancelListen()
+	addrCh := make(chan string, 1)
+	serveErrCh := make(chan error, 1)
+	go func() {
+		serveErrCh <- apiServer.ListenAndNotify(listenCtx, devAddr, func(addr string) {
+			addrCh <- addr
+		})
 	}()
 
-	url := fmt.Sprintf("http://%s/?t=%s", listener.addr, listener.sessionToken)
+	var addr string
+	select {
+	case addr = <-addrCh:
+	case err := <-serveErrCh:
+		ExitCode = 1
+		if err == nil {
+			err = fmt.Errorf("dev: listener exited before binding")
+		}
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	fmt.Fprintf(os.Stderr, "bcc dev: replaying session %s\n", sessionID)
-	fmt.Fprintf(os.Stderr, "bcc dev: dashboard at %s\n", url)
+	fmt.Fprintf(os.Stderr, "bcc dev: dashboard at http://%s/\n", addr)
 	fmt.Fprintf(os.Stderr, "bcc dev: webui upstream  %s (Vite must be running there)\n", devWebuiUpstream)
 	fmt.Fprintf(os.Stderr, "bcc dev: ctrl+c to stop\n")
 
 	<-ctx.Done()
-
-	// http.Handler is never closed by the listener stop, but the
-	// pattern matches the live run cleanup; bcc dev's signal-driven
-	// exit is fine without explicit handler teardown.
-	_ = http.Handler(webuiHandler)
+	if err := <-serveErrCh; err != nil {
+		return err
+	}
 	return nil
 }
