@@ -147,6 +147,16 @@ type DebugConfig struct {
 	// can be large; opt-in independently for cases where the user wants
 	// to reconstruct the model narrative offline.
 	CaptureSubprocessStdout *bool `toml:"capture_subprocess_stdout"`
+
+	// PersistEventsLog persists the canonical SeqEvent stream to
+	// .bcc/sessions/<id>/events.ndjson, the same format the
+	// EventService.Replay reads back. The file is the source of truth
+	// for replay-driven dev modes (bcc dev) and for SSE clients that
+	// reconnect after the live ring buffer rolled over. Tristate via
+	// pointer; default true. Set to false (CLI: --no-events-log) when
+	// disk pressure outweighs the diagnostic value, e.g. on long
+	// runs.
+	PersistEventsLog *bool `toml:"persist_events_log"`
 }
 
 // IsCaptureSubprocessLogsEnabled returns the effective value of the
@@ -167,6 +177,15 @@ func (d DebugConfig) IsCaptureSubprocessStdoutEnabled() bool {
 		return false
 	}
 	return *d.CaptureSubprocessStdout
+}
+
+// IsPersistEventsLogEnabled returns the effective value of the
+// PersistEventsLog tristate, applying the default (true) when absent.
+func (d DebugConfig) IsPersistEventsLogEnabled() bool {
+	if d.PersistEventsLog == nil {
+		return true
+	}
+	return *d.PersistEventsLog
 }
 
 // Webui carries the embedded web dashboard surface toggles, mapped to

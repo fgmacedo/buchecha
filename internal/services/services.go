@@ -58,6 +58,14 @@ type Deps struct {
 	// Empty disables audit log writing; the aggregator still
 	// constructs an Audit so callers do not branch on nil.
 	AuditPath string
+
+	// EventsLogPath, when non-empty, is the absolute path the
+	// EventService appends each post-enrichment SeqEvent to
+	// (.bcc/sessions/<id>/events.ndjson). The same file is read back
+	// by EventService.Replay for archived sessions. Empty disables
+	// persistence; the live fan-out continues to ring-and-broadcast
+	// in memory either way.
+	EventsLogPath string
 }
 
 // Services is the aggregator handed to every protocol adapter. Each

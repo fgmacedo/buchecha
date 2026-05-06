@@ -165,6 +165,78 @@ func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
 	}
 }
 
+// TestEventService_Fanout_PersistsEventsLog verifies that when
+// EventsLogPath is set, fanout writes one envelope per SeqEvent so the
+// file round-trips through Replay. The persistence layer is the basis
+// for bcc dev's replay-driven UI development: each live run leaves a
+// fixture on disk that another bcc invocation can subscribe to.
+func TestEventService_Fanout_PersistsEventsLog(t *testing.T) {
+	t.Parallel()
+	deps, ch := liveDeps(t, "e2222200aaaa")
+	logPath := filepath.Join(deps.SessionStore.SessionDir(), "events.ndjson")
+	deps.EventsLogPath = logPath
+	svc := newEventService(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub, err := svc.Subscribe(ctx, "e2222200aaaa", 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	ch <- loop.IterationStarted{Index: 1, MaxIter: 3}
+	ch <- loop.TaskStarted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindToolUse,
+		AgentID: "exec-A",
+		Role:    agentcontract.RoleExecutor,
+		Tool:    &agentcontract.ToolCallInfo{ID: "t1", Name: "Read"},
+	}}
+	ch <- loop.LoopFinished{Reason: "ok", ExitCode: 0}
+
+	for range sub {
+		// drain
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read events.ndjson: %v", err)
+	}
+	lines := 0
+	for _, b := range data {
+		if b == '\n' {
+			lines++
+		}
+	}
+	if lines != 4 {
+		t.Fatalf("events.ndjson has %d lines, want 4: %s", lines, string(data))
+	}
+
+	// Round-trip: Replay must read back the persisted events with the
+	// same Seq order and types.
+	replayCtx, replayCancel := context.WithCancel(context.Background())
+	defer replayCancel()
+	replay, err := svc.Replay(replayCtx, "e2222200aaaa", 0)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	var got []SeqEvent
+	for se := range replay {
+		got = append(got, se)
+	}
+	if len(got) != 4 {
+		t.Fatalf("replay got %d events, want 4", len(got))
+	}
+	if _, ok := got[0].Event.(loop.IterationStarted); !ok {
+		t.Fatalf("got[0] type = %T", got[0].Event)
+	}
+	if are, ok := got[2].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[2] type = %T", got[2].Event)
+	} else if are.Event.TaskID != "T1.1" {
+		t.Fatalf("got[2] task_id = %q, want T1.1 (set by enrichment, persisted post-enrichment)", are.Event.TaskID)
+	}
+}
+
 // TestEventService_Subscribe_LiveAlias covers the SPA's bootstrap path:
 // the dashboard opens an EventSource at /api/v1/sessions/live/events
 // before it has a real session id. Subscribe must accept the alias and

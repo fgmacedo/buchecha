@@ -149,6 +149,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		SessionStore:    store,
 		SessionsBaseDir: filepath.Join(".bcc", "sessions"),
 		AuditPath:       directorAuditPath(cfg, store),
+		EventsLogPath:   directorEventsLogPath(cfg, store),
 		LoopEvents:      serviceEvents,
 	})
 
@@ -217,6 +218,17 @@ func directorAuditPath(cfg *config.Config, store *director.Store) string {
 		return ""
 	}
 	return filepath.Join(store.SessionDir(), "mcp-log.jsonl")
+}
+
+// directorEventsLogPath returns the per-session events.ndjson path when
+// the persist_events_log toggle is on, otherwise empty. The same file
+// is later read back by EventService.Replay for archived sessions and
+// by bcc dev for replay-driven UI development.
+func directorEventsLogPath(cfg *config.Config, store *director.Store) string {
+	if cfg == nil || store == nil || !cfg.Debug.IsPersistEventsLogEnabled() {
+		return ""
+	}
+	return filepath.Join(store.SessionDir(), "events.ndjson")
 }
 
 // teeLoopEvents reads every event written to src and forwards it to the
