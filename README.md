@@ -29,6 +29,11 @@ When installed via tar.gz or `install.sh` on macOS, Gatekeeper may quarantine th
 
 Driving a single agent through a long Markdown spec is unreliable: the agent loses focus, declares premature `done`, drifts on scope. `bcc` replaces the single-loop pattern with separate cognitive roles (plan, brief, execute, review), each with its own context, all coordinated by bcc through MCP. The discipline that made the pattern work (typed plan, explicit acceptance criteria, clean working tree per iteration) is preserved; the supervision tax that one agent could not pay for itself moves into the Director.
 
+## Web UI
+
+<img width="1719" height="987" alt="image" src="https://github.com/user-attachments/assets/056ec745-150d-4769-94ac-8d9f129f52ea" />
+
+
 ## Quick start
 
 ```bash
