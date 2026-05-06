@@ -153,7 +153,7 @@ func TestHandlePlanEmit_RejectsAssignmentOutsideRegistry(t *testing.T) {
 	id, _ := registry.Register(RolePlanner, RegisterArgs{})
 	caps := &director.CapabilityRegistry{
 		Models: []director.Capability{
-			{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
+			{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
 		},
 	}
 	h := NewHandlerWithOptions(nil, registry, HandlerOptions{CapabilityRegistry: caps})

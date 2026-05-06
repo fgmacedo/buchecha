@@ -260,8 +260,8 @@ func TestPlan_RegistryRendersInPrompt(t *testing.T) {
 	a := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
 	registry := director.CapabilityRegistry{
 		Models: []director.Capability{
-			{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "high"}, Description: "Strongest reasoning."},
-			{Family: "claude", Model: "claude-haiku-4-5", Tier: "fast", Description: "Cheapest."},
+			{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "high"}, Description: "Strongest reasoning."},
+			{Provider: "claude", Model: "claude-haiku-4-5", Tier: "fast", Description: "Cheapest."},
 		},
 	}
 	_, _, err := a.Plan(context.Background(), director.PlannerInput{

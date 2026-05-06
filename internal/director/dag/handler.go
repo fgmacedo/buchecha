@@ -576,6 +576,7 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
 	director.FillPlanDefaults(&plan, h.planDefaults)
+	director.FillProviderFromRegistry(&plan, h.capabilityRegistry)
 	newState := NewStateFromPlan(&plan)
 
 	h.mu.Lock()

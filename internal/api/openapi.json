@@ -332,6 +332,9 @@
           },
           "model": {
             "type": "string"
+          },
+          "provider": {
+            "type": "string"
           }
         },
         "type": "object"

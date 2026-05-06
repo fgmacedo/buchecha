@@ -22,6 +22,12 @@ export interface DAGTask {
   retry_budget: number
 }
 
+export interface RoleAssignment {
+  provider?: string
+  model?: string
+  effort?: string
+}
+
 export interface DAGPhase {
   id: string
   title?: string
@@ -32,6 +38,7 @@ export interface DAGPhase {
   scope_in?: string[]
   scope_out?: string[]
   tasks: DAGTask[]
+  executor_assignment?: RoleAssignment | null
 }
 
 // DAGData is the runtime shape of services.Snapshot.DAG after JSON

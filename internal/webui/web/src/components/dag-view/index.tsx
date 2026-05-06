@@ -136,6 +136,7 @@ function mergePlanWithStatus(
       priority: p.priority,
       scope_in: p.scope_in,
       scope_out: p.scope_out,
+      executor_assignment: p.executor_assignment ?? null,
       tasks,
     }
   })

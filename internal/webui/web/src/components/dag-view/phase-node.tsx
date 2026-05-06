@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useSelection } from '../../hooks/use-selection'
-import type { DAGTask, DAGPhase } from './types'
+import type { DAGTask, DAGPhase, RoleAssignment } from './types'
 
 // PhaseStatus is the aggregated status derived from all task statuses.
 // Mirrors the task vocabulary so a phase is in_progress whenever it has
@@ -35,6 +35,16 @@ export function aggregatePhaseStatus(tasks: DAGTask[]): PhaseStatus {
   if (doneCount === tasks.length) return 'done'
   if (pendingCount === tasks.length) return 'pending'
   return 'in_progress'
+}
+
+// formatRoleAssignment renders an assignment as `provider / model / effort`,
+// dropping segments that are empty so partial assignments still read cleanly.
+// Returns null when nothing meaningful is set, letting callers skip the
+// rendering entirely.
+export function formatRoleAssignment(a: RoleAssignment | null | undefined): string | null {
+  if (!a) return null
+  const parts = [a.provider, a.model, a.effort].filter((s): s is string => !!s && s.length > 0)
+  return parts.length === 0 ? null : parts.join(' / ')
 }
 
 // PHASE_STATUS_COLOR maps PhaseStatus to CSS variable references.
@@ -72,6 +82,7 @@ export function PhaseNodeComponent({ data }: NodeProps) {
   const aggStatus = aggregatePhaseStatus(tasks)
   const statusColor = PHASE_STATUS_COLOR[aggStatus]
   const doneCount = tasks.filter((t) => t.status === 'done').length
+  const execLabel = formatRoleAssignment(phase.executor_assignment)
 
   const title =
     phase.title && phase.title.trim().length > 0 ? phase.title : phase.id
@@ -248,6 +259,23 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         >
           {doneCount}/{tasks.length}
         </span>
+        {execLabel && (
+          <span
+            title={`executor: ${execLabel}`}
+            style={{
+              fontSize: 10,
+              color: 'var(--color-muted-foreground)',
+              fontFamily: 'var(--font-mono)',
+              opacity: 0.85,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}
+          >
+            {execLabel}
+          </span>
+        )}
         {attempt > 1 && (
           <span
             style={{
