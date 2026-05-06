@@ -307,7 +307,7 @@ describe('AgentBlock', () => {
         type: 'agent_event',
         kind: 'tool_use',
         tool_use_id: 'tu_abc',
-        tool: { name: 'Bash', input: { command: 'ls' } },
+        tool: { name: 'Bash', args: { command: 'ls' } },
       },
     }
     const toolResultEvent: SeqEvent = {
@@ -316,7 +316,7 @@ describe('AgentBlock', () => {
         type: 'agent_event',
         kind: 'tool_result',
         tool_use_id: 'tu_abc',
-        tool: { content: 'file1.ts\nfile2.ts', is_error: false },
+        tool: { summary: 'file1.ts\nfile2.ts', is_error: false },
       },
     }
 
@@ -339,7 +339,7 @@ describe('AgentBlock', () => {
         type: 'agent_event',
         kind: 'tool_use',
         tool_use_id: 'tu_1',
-        tool: { name: 'Read', input: { path: 'foo.ts' } },
+        tool: { name: 'Read', args: { path: 'foo.ts' } },
       },
     }
     const tr1: SeqEvent = {
@@ -348,7 +348,7 @@ describe('AgentBlock', () => {
         type: 'agent_event',
         kind: 'tool_result',
         tool_use_id: 'tu_1',
-        tool: { content: 'file contents', is_error: false },
+        tool: { summary: 'file contents', is_error: false },
       },
     }
     const tu2: SeqEvent = {
@@ -357,7 +357,7 @@ describe('AgentBlock', () => {
         type: 'agent_event',
         kind: 'tool_use',
         tool_use_id: 'tu_2',
-        tool: { name: 'Write', input: { path: 'bar.ts', content: '...' } },
+        tool: { name: 'Write', args: { path: 'bar.ts', content: '...' } },
       },
     }
     const tr2: SeqEvent = {
@@ -366,7 +366,7 @@ describe('AgentBlock', () => {
         type: 'agent_event',
         kind: 'tool_result',
         tool_use_id: 'tu_2',
-        tool: { content: 'ok', is_error: false },
+        tool: { summary: 'ok', is_error: false },
       },
     }
 

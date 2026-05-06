@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useSelection } from '../../hooks/use-selection'
-import type { DAGTask, DAGPhase, TaskStatus } from './types'
+import type { DAGTask, DAGPhase } from './types'
 
 // PhaseStatus is the aggregated status derived from all task statuses.
 // Priority: error > needs_fix > running > done > pending.
@@ -40,18 +40,6 @@ const PHASE_STATUS_COLOR: Record<PhaseStatus, string> = {
   running: 'var(--status-running)',
   done: 'var(--status-done)',
   pending: 'var(--status-pending)',
-}
-
-// TASK_CHIP_COLOR maps TaskStatus to CSS variable references for chip cells.
-const TASK_CHIP_COLOR: Record<TaskStatus, string> = {
-  pending: 'var(--status-pending)',
-  in_progress: 'var(--status-running)',
-  done: 'var(--status-done)',
-  needs_fix: 'var(--status-needs-fix)',
-}
-
-function taskChipColor(status: string): string {
-  return TASK_CHIP_COLOR[status as TaskStatus] ?? 'var(--status-pending)'
 }
 
 export interface PhaseNodeData {
@@ -174,34 +162,8 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         </span>
       </div>
 
-      {/* Body: 4xN task chip grid (visual summary; xyflow child task nodes render here) */}
-      <div
-        style={{
-          flex: 1,
-          padding: '8px 12px 4px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 4,
-          alignContent: 'start',
-          pointerEvents: 'none',
-        }}
-      >
-        {tasks.map((task) => {
-          const chipColor = taskChipColor(task.status)
-          return (
-            <div
-              key={task.id}
-              title={`${task.id}: ${task.status.replace(/_/g, ' ')}`}
-              style={{
-                height: 14,
-                borderRadius: 2,
-                backgroundColor: `color-mix(in srgb, ${chipColor} 22%, var(--surface-card))`,
-                border: `1px solid color-mix(in srgb, ${chipColor} 60%, transparent)`,
-              }}
-            />
-          )
-        })}
-      </div>
+      {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}
+      <div style={{ flex: 1, pointerEvents: 'none' }} />
 
       {/* Footer: tasks done/total, attempt, USD */}
       <div

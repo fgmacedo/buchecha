@@ -36,13 +36,24 @@ const TASK_LINE_KINDS = new Set([
 ])
 const SPAWN_KINDS = new Set(['spawn_started', 'spawn_finished'])
 
-// pairedToolResults builds a map from tool_use_id to the SeqEvent that carries
+// agentEventToolID extracts the wire-level tool id carried under
+// `ev.event.tool.id` for both tool_use and tool_result kinds.
+function agentEventToolID(ev: SeqEvent): string {
+  const tool = ev.event.tool
+  if (tool && typeof tool === 'object' && 'id' in tool) {
+    const id = (tool as { id?: unknown }).id
+    if (typeof id === 'string') return id
+  }
+  return ''
+}
+
+// pairedToolResults builds a map from tool id to the SeqEvent that carries
 // the corresponding tool_result, enabling AgentBlock to render the pair inline.
 function pairedToolResults(evs: SeqEvent[]): Map<string, SeqEvent> {
   const map = new Map<string, SeqEvent>()
   for (const ev of evs) {
     if (ev.event.type === 'agent_event' && ev.event.kind === 'tool_result') {
-      const id = typeof ev.event.tool_use_id === 'string' ? ev.event.tool_use_id : ''
+      const id = agentEventToolID(ev)
       if (id) map.set(id, ev)
     }
   }
@@ -66,7 +77,7 @@ function renderEvent(
     const kind = typeof ev.event.kind === 'string' ? ev.event.kind : ''
     let pairedResult: SeqEvent | undefined
     if (kind === 'tool_use') {
-      const toolUseId = typeof ev.event.tool_use_id === 'string' ? ev.event.tool_use_id : ''
+      const toolUseId = agentEventToolID(ev)
       pairedResult = pairedMap.get(toolUseId)
       if (pairedResult) consumedSeqs.add(pairedResult.seq)
     } else if (kind === 'tool_result') {

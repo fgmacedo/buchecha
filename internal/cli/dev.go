@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -30,6 +30,7 @@ var (
 	devAddr          string
 	devWebuiUpstream string
 	devWorkdir       string
+	devReplayDelay   time.Duration
 )
 
 var devCmd = &cobra.Command{
@@ -62,6 +63,7 @@ func init() {
 	devCmd.Flags().StringVar(&devAddr, "addr", devDefaultAddr, "address to bind the API + WebUI listener (loopback recommended)")
 	devCmd.Flags().StringVar(&devWebuiUpstream, "webui-upstream", devDefaultUpstream, "URL of the local Vite dev server the WebUI proxies to")
 	devCmd.Flags().StringVar(&devWorkdir, "workdir", "", "chdir into this directory before resolving session paths (so .bcc/sessions/<id> is found there); useful when running from a git worktree pointed at the main checkout")
+	devCmd.Flags().DurationVar(&devReplayDelay, "replay-delay", 500*time.Millisecond, "pause between replayed events so the SPA timeline animates instead of dumping every event in one frame; set to 0 for an instant replay")
 	rootCmd.AddCommand(devCmd)
 }
 
@@ -76,8 +78,8 @@ func runDev(ctx context.Context, sessionID string) error {
 			return fmt.Errorf("dev: chdir %q: %w", devWorkdir, err)
 		}
 	}
-	baseDir := filepath.Join(".bcc", "sessions")
-	store, err := director.OpenSession(filepath.Join(".bcc"), sessionID)
+	baseDir := ".bcc"
+	store, err := director.OpenSession(baseDir, sessionID)
 	if err != nil {
 		ExitCode = 1
 		return fmt.Errorf("dev: open session %q: %w", sessionID, err)
@@ -93,6 +95,11 @@ func runDev(ctx context.Context, sessionID string) error {
 		// Intentionally no SessionStore: bcc dev exposes the session as
 		// archived rather than live so EventService routes through
 		// Replay. The on-disk store is discoverable via SessionsBaseDir.
+		// LiveAliasArchivedID makes the SPA's default "live" id resolve
+		// to this archived session for snapshot/get/event reads while
+		// preserving the Replay-only event path.
+		LiveAliasArchivedID:   sessionID,
+		ReplayInterEventDelay: devReplayDelay,
 	})
 	_ = store // store is opened to validate the session id; the read
 	// services re-open via SessionsBaseDir so they see the same on-disk

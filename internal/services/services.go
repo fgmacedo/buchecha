@@ -17,6 +17,8 @@
 package services
 
 import (
+	"time"
+
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/loop"
@@ -66,6 +68,20 @@ type Deps struct {
 	// persistence; the live fan-out continues to ring-and-broadcast
 	// in memory either way.
 	EventsLogPath string
+
+	// LiveAliasArchivedID, when non-empty, makes the LiveSessionAlias
+	// resolve to this archived session id even when no SessionStore is
+	// bound. bcc dev sets this so the SPA's default "live" id maps to
+	// the replayed archived session for snapshot, get, and event reads;
+	// SessionStore stays nil so events route through Replay.
+	LiveAliasArchivedID string
+
+	// ReplayInterEventDelay throttles EventService.Replay so each
+	// emitted event is followed by this pause before the next one is
+	// read. Zero (default) emits as fast as the channel can drain. bcc
+	// dev sets a small delay so the SPA's timeline animates instead of
+	// dumping every event in a single frame.
+	ReplayInterEventDelay time.Duration
 }
 
 // Services is the aggregator handed to every protocol adapter. Each

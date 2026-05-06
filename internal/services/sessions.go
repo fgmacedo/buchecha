@@ -129,7 +129,11 @@ func (s *SessionService) Get(ctx context.Context, id string) (SessionMeta, error
 		if live := s.liveSession(); live != nil {
 			return sessionMetaFrom(*live), nil
 		}
-		return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+		if s.deps.LiveAliasArchivedID != "" {
+			id = s.deps.LiveAliasArchivedID
+		} else {
+			return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+		}
 	}
 	if live := s.liveSession(); live != nil && live.ID == id {
 		return sessionMetaFrom(*live), nil
@@ -164,7 +168,11 @@ func (s *SessionService) Snapshot(ctx context.Context, id string) (Snapshot, err
 		if live := s.liveSession(); live != nil {
 			return s.liveSnapshot(*live)
 		}
-		return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+		if s.deps.LiveAliasArchivedID != "" {
+			id = s.deps.LiveAliasArchivedID
+		} else {
+			return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+		}
 	}
 	if live := s.liveSession(); live != nil && live.ID == id {
 		return s.liveSnapshot(*live)

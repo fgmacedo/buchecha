@@ -252,8 +252,9 @@ func writeManifest(t *testing.T, baseDir string, sess director.Session) {
 }
 
 // seedBriefingFile mirrors the helper in briefings_test.go. Writes the
-// briefings/<iter>.json metadata pair plus runs/<iter>/briefing.md so
-// BriefingService.Get has the on-disk shape it expects.
+// briefings/<iter>.json metadata pair plus
+// briefings/<iter>.prompt.md so BriefingService.Get has the on-disk
+// shape it expects.
 func seedBriefingFile(t *testing.T, sessionDir, iterationID, phaseID, markdown string, mtimeOffset time.Duration) {
 	t.Helper()
 	briefingsDir := filepath.Join(sessionDir, "briefings")
@@ -269,12 +270,8 @@ func seedBriefingFile(t *testing.T, sessionDir, iterationID, phaseID, markdown s
 	if err := os.Chtimes(jsonPath, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	runDir := filepath.Join(sessionDir, "runs", iterationID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		t.Fatalf("mkdir run: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "briefing.md"), []byte(markdown), 0o644); err != nil {
-		t.Fatalf("write briefing.md: %v", err)
+	if err := os.WriteFile(filepath.Join(briefingsDir, iterationID+".prompt.md"), []byte(markdown), 0o644); err != nil {
+		t.Fatalf("write prompt.md: %v", err)
 	}
 }
 

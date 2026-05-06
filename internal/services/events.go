@@ -100,11 +100,19 @@ type subscriber struct {
 }
 
 func newEventService(deps Deps) *EventService {
-	return &EventService{
+	s := &EventService{
 		deps:    deps,
 		nextSeq: 1,
 		subs:    make(map[*subscriber]struct{}),
 	}
+	// Persistence to events.ndjson lives inside the fanout goroutine,
+	// which Subscribe lazily starts. Without an SSE client (headless run,
+	// TUI-only mode) the file would never be written, defeating bcc dev
+	// replay. Start the fanout eagerly when persistence is configured.
+	if deps.EventsLogPath != "" && deps.LoopEvents != nil {
+		s.ensureFanout()
+	}
+	return s
 }
 
 // Subscribe registers a live subscriber for sessionID and returns a
@@ -215,6 +223,9 @@ func (s *EventService) archivedSessionDir(sessionID string) (string, error) {
 				return s.deps.SessionStore.SessionDir(), nil
 			}
 		}
+	}
+	if sessionID == LiveSessionAlias && s.deps.LiveAliasArchivedID != "" {
+		sessionID = s.deps.LiveAliasArchivedID
 	}
 	if s.deps.SessionsBaseDir == "" {
 		return "", ErrSessionNotFound.WithDetails(map[string]any{"id": sessionID})
@@ -447,6 +458,13 @@ func (s *EventService) replayLoop(ctx context.Context, sessionDir string, fromSe
 		case <-ctx.Done():
 			return
 		case out <- se:
+		}
+		if d := s.deps.ReplayInterEventDelay; d > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(d):
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

@@ -31,13 +31,25 @@ const TASK_LINE_KINDS = new Set([
 ])
 const SPAWN_KINDS = new Set(['spawn_started', 'spawn_finished'])
 
-// pairedToolResults builds a Map<toolUseId, SeqEvent> of tool_result events
-// indexed by their tool_use_id so AgentBlock can look up its pair in O(1).
+// agentEventToolID extracts the wire-level tool id carried under
+// `ev.event.tool.id` for both tool_use and tool_result kinds. Returns ''
+// when the field is missing or malformed.
+function agentEventToolID(ev: SeqEvent): string {
+  const tool = ev.event.tool
+  if (tool && typeof tool === 'object' && 'id' in tool) {
+    const id = (tool as { id?: unknown }).id
+    if (typeof id === 'string') return id
+  }
+  return ''
+}
+
+// pairedToolResults builds a Map<toolID, SeqEvent> of tool_result events
+// indexed by their tool id so AgentBlock can look up its pair in O(1).
 function pairedToolResults(events: SeqEvent[]): Map<string, SeqEvent> {
   const map = new Map<string, SeqEvent>()
   for (const ev of events) {
     if (ev.event.type === 'agent_event' && ev.event.kind === 'tool_result') {
-      const id = typeof ev.event.tool_use_id === 'string' ? ev.event.tool_use_id : ''
+      const id = agentEventToolID(ev)
       if (id) map.set(id, ev)
     }
   }
@@ -73,7 +85,7 @@ function renderEvent(
     let pairedResult: SeqEvent | undefined
 
     if (kind === 'tool_use') {
-      const toolUseId = typeof ev.event.tool_use_id === 'string' ? ev.event.tool_use_id : ''
+      const toolUseId = agentEventToolID(ev)
       pairedResult = pairedMap.get(toolUseId)
       if (pairedResult) consumedSeqs.add(pairedResult.seq)
     } else if (kind === 'tool_result') {
@@ -123,7 +135,22 @@ function GroupSection({ group, defaultExpanded = true }: GroupSectionProps) {
   const { iterationIndex, iterationId, summary, events: grpEvents } = group
 
   const pairedMap = useMemo(() => pairedToolResults(grpEvents), [grpEvents])
-  const consumedSeqs = new Set<number>()
+  // Pre-compute which tool_result seqs are consumed by a paired tool_use so
+  // the render pass can iterate newest-first without breaking the pairing
+  // (renderEvent's mutation of consumedSeqs assumes original order).
+  const consumedSeqs = useMemo(() => {
+    const set = new Set<number>()
+    for (const ev of grpEvents) {
+      if (ev.event.type !== 'agent_event') continue
+      const kind = typeof ev.event.kind === 'string' ? ev.event.kind : ''
+      if (kind !== 'tool_use') continue
+      const toolUseId = agentEventToolID(ev)
+      const paired = pairedMap.get(toolUseId)
+      if (paired) set.add(paired.seq)
+    }
+    return set
+  }, [grpEvents, pairedMap])
+  const reversedEvents = useMemo(() => [...grpEvents].reverse(), [grpEvents])
 
   return (
     <div>
@@ -181,7 +208,7 @@ function GroupSection({ group, defaultExpanded = true }: GroupSectionProps) {
       {/* Collapsible event list */}
       {expanded && (
         <div>
-          {grpEvents.map((ev) => renderEvent(ev, pairedMap, consumedSeqs))}
+          {reversedEvents.map((ev) => renderEvent(ev, pairedMap, consumedSeqs))}
         </div>
       )}
     </div>
