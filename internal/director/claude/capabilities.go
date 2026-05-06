@@ -9,21 +9,21 @@ import "github.com/fgmacedo/buchecha/internal/director"
 // invocation envelope and may diverge later.
 var capabilities = []director.Capability{
 	{
-		Provider:      "claude",
+		Provider:    "claude",
 		Model:       "claude-opus-4-7",
 		Tier:        "frontier",
 		Efforts:     []string{"low", "medium", "high", "xhigh", "max"},
 		Description: "Strongest reasoning. Use for the Reviewer on architecturally-loaded phases.",
 	},
 	{
-		Provider:      "claude",
+		Provider:    "claude",
 		Model:       "claude-sonnet-4-6",
 		Tier:        "balanced",
 		Efforts:     []string{"low", "medium", "high"},
 		Description: "Default. Good balance for the Briefer and most Reviewer work.",
 	},
 	{
-		Provider:      "claude",
+		Provider:    "claude",
 		Model:       "claude-haiku-4-5",
 		Tier:        "fast",
 		Efforts:     []string{"low", "medium"},
