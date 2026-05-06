@@ -176,7 +176,7 @@ function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, 
         {data.boundaries.map((b, i) => {
           const x = xScale(new Date(b.ms))
           return (
-            <g key={i}>
+            <g key={`boundary-${i}`}>
               <line
                 x1={x}
                 x2={x}
@@ -215,7 +215,7 @@ function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, 
 
           return (
             <rect
-              key={i}
+              key={`bar-${i}`}
               x={x}
               y={y}
               width={barW}
@@ -252,7 +252,7 @@ function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, 
           const y = yScale(rm.phaseId) ?? 0
           return (
             <line
-              key={i}
+              key={`retry-${i}`}
               x1={x}
               x2={x}
               y1={y}
