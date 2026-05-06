@@ -78,6 +78,7 @@ func Register(api huma.API, router chi.Router, svc *services.Services, deps Deps
 	registerSessions(api, svc, deps)
 	registerSnapshot(api, svc, deps)
 	registerDAG(api, svc, deps)
+	registerPlan(api, svc, deps)
 	registerBriefings(api, svc, deps)
 	registerPrompts(api, svc, deps)
 	registerEvents(router, svc, deps)

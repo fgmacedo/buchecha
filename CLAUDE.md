@@ -301,3 +301,5 @@ The absolute restrictions embedded in [`internal/loop/agentcontract/absolute_res
 The state of the project is in [`docs/specs/director/index.md`](docs/specs/director/index.md), with the normative model in [`docs/specs/director/2026-05-02-executable-plan-dag.md`](docs/specs/director/2026-05-02-executable-plan-dag.md) and the implemented migration captured by [`docs/specs/director/2026-05-02-reviewed-execution-corrections.md`](docs/specs/director/2026-05-02-reviewed-execution-corrections.md). Read those first.
 
 How-to: troubleshoot the SSE event stream end to end (cooperative-spec methodology, wire contract, common pitfalls) in [`docs/how-to/event-stream-troubleshooting.md`](docs/how-to/event-stream-troubleshooting.md).
+
+How-to: develop the WebUI without spawning agents using `bcc dev` (replay-driven shell paired with Vite HMR, proxy direction, common pitfalls) in [`docs/how-to/webui-dev-loop.md`](docs/how-to/webui-dev-loop.md).

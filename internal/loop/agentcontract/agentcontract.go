@@ -28,6 +28,22 @@ import (
 	"text/template"
 )
 
+// MCPServerName is the connection name registered for bcc's run-wide
+// MCP server in the per-spawn mcp-config. Claude's MCP transport
+// prefixes every tool name with `mcp__<connection>__` on the agent
+// side, so any tool_use whose tool.name starts with MCPToolNamePrefix
+// came from a call to a bcc MCP method. Single source of truth for
+// both wire emission (executor/director adapters that name the
+// connection) and observability filters (UI, logs) that recognise bcc
+// protocol traffic without hard-coding the literal.
+const MCPServerName = "bcc"
+
+// MCPToolNamePrefix is the wire prefix every bcc MCP tool call carries
+// in the agent's tool_use stream (e.g. `mcp__bcc__bcc_task_started`).
+// Mirrored in the SPA at internal/webui/web/src/lib/mcp.ts; both must
+// stay in lockstep with this constant.
+const MCPToolNamePrefix = "mcp__" + MCPServerName + "__"
+
 // Signal is the decision-relevant outcome of an iteration as reported
 // by the agent over the wire protocol. The values are canonical
 // English; format adapters localize human-facing artifacts (journal

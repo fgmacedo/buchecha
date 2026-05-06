@@ -9,21 +9,21 @@ import "github.com/fgmacedo/buchecha/internal/director"
 // and the loop surfaces that as a per-iteration failure.
 var capabilities = []director.Capability{
 	{
-		Family:      "claude",
+		Provider:    "claude",
 		Model:       "claude-opus-4-7",
 		Tier:        "frontier",
 		Efforts:     []string{"low", "medium", "high", "xhigh", "max"},
 		Description: "Strongest reasoning. Use for phases with non-obvious design choices or cross-cutting trade-offs.",
 	},
 	{
-		Family:      "claude",
+		Provider:    "claude",
 		Model:       "claude-sonnet-4-6",
 		Tier:        "balanced",
 		Efforts:     []string{"low", "medium", "high"},
 		Description: "Default. Good balance of cost and capability for the typical phase.",
 	},
 	{
-		Family:      "claude",
+		Provider:    "claude",
 		Model:       "claude-haiku-4-5",
 		Tier:        "fast",
 		Efforts:     []string{"low", "medium"},

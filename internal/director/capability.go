@@ -12,7 +12,7 @@ import (
 // in its prompt so per-phase model and effort assignments can be made
 // from a known-valid set.
 type Capability struct {
-	Family      string   `json:"family"`
+	Provider    string   `json:"provider"`
 	Model       string   `json:"model"`
 	Tier        string   `json:"tier"`
 	Efforts     []string `json:"efforts,omitempty"`

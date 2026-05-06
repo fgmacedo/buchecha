@@ -140,29 +140,41 @@ func jsonPayload(ev Event) map[string]any {
 			"reasoning": e.Reasoning,
 		}
 	case TaskStarted:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "task_started",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
 		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
+		}
+		return out
 	case TaskCompleted:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "task_completed",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
 		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
+		}
+		return out
 	case TaskApproved:
-		return map[string]any{
+		out := map[string]any{
 			"type":     "task_approved",
 			"at":       formatAt(e.At),
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
 		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
+		}
+		return out
 	case TaskNeedsFix:
 		out := map[string]any{
 			"type":     "task_needs_fix",
@@ -170,6 +182,9 @@ func jsonPayload(ev Event) map[string]any {
 			"level":    level,
 			"phase_id": e.PhaseID,
 			"task_id":  e.TaskID,
+		}
+		if e.AgentID != "" {
+			out["agent_id"] = e.AgentID
 		}
 		if e.Note != "" {
 			out["note"] = e.Note
@@ -245,6 +260,28 @@ func agentEventJSON(ae agentcontract.AgentEvent, level string) map[string]any {
 		"at":    formatAt(ae.At),
 		"level": level,
 		"kind":  string(ae.Kind),
+	}
+	// Origin is populated by adapters (agent_id, role, phase_id,
+	// iteration_id, attempt) and by the EventService fan-out (task_id).
+	// Each field is optional on the wire so legacy fixtures and tests
+	// that build AgentEvents with zero values keep working.
+	if ae.AgentID != "" {
+		out["agent_id"] = ae.AgentID
+	}
+	if ae.Role != "" {
+		out["role"] = string(ae.Role)
+	}
+	if ae.PhaseID != "" {
+		out["phase_id"] = ae.PhaseID
+	}
+	if ae.IterationID != "" {
+		out["iteration_id"] = ae.IterationID
+	}
+	if ae.Attempt > 0 {
+		out["attempt"] = ae.Attempt
+	}
+	if ae.TaskID != "" {
+		out["task_id"] = ae.TaskID
 	}
 	switch ae.Kind {
 	case agentcontract.KindInit:

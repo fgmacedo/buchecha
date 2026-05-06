@@ -1,17 +1,20 @@
 package webui
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
 )
 
-// devUpstreamURL is the Vite dev server bcc expects to be running when
-// --webui-dev is set. It is loopback-only by design: the dev proxy is
-// a contributor convenience and must not forward to a remote target
-// that an attacker could supply via configuration.
-const devUpstreamURL = "http://127.0.0.1:5173"
+// DefaultDevUpstream is the Vite dev server bcc expects to be running
+// when --webui-dev is set with no override. Loopback-only by default:
+// the dev proxy is a contributor convenience, not a generic proxy. The
+// CLI exposes --webui-upstream / --webui-dev-upstream so power users
+// can point bcc at a Vite running on another port (dev container, SSH
+// tunnel, alternate process).
+const DefaultDevUpstream = "http://127.0.0.1:5173"
 
 // apiV1Prefix is the request-path prefix the api package owns on the
 // shared listener. NewDev refuses to proxy paths under this prefix
@@ -20,9 +23,10 @@ const devUpstreamURL = "http://127.0.0.1:5173"
 const apiV1Prefix = "/api/v1/"
 
 // NewDev returns an http.Handler that reverse-proxies every non-API
-// request to the local Vite dev server at devUpstreamURL. Requests
-// under /api/v1/ short-circuit with 404 so a misconfigured mount
-// cannot accidentally tunnel API calls through the dev server.
+// request to the configured Vite dev server upstream. An empty
+// upstream falls back to DefaultDevUpstream. Requests under /api/v1/
+// short-circuit with 404 so a misconfigured mount cannot accidentally
+// tunnel API calls through the dev server.
 //
 // The proxy is mounted at / on the api.Server alongside /api/v1/. In
 // the production mount layout chi routes /api/v1/* to the API router
@@ -34,15 +38,20 @@ const apiV1Prefix = "/api/v1/"
 // reads naturally and so any host-aware Vite middleware (HMR's WS
 // upgrade, in particular) sees a stable origin.
 //
-// NewDev panics if devUpstreamURL ever fails to parse; the constant is
-// fixed at compile time so a panic here is a programmer error, not a
-// runtime condition.
-func NewDev() http.Handler {
-	target, err := url.Parse(devUpstreamURL)
-	if err != nil {
-		panic("webui: parse dev upstream: " + err.Error())
+// NewDev returns an error when upstream cannot be parsed; callers
+// surface it to the user instead of panicking.
+func NewDev(upstream string) (http.Handler, error) {
+	if upstream == "" {
+		upstream = DefaultDevUpstream
 	}
-	return newDevProxy(target)
+	target, err := url.Parse(upstream)
+	if err != nil {
+		return nil, fmt.Errorf("webui: parse dev upstream %q: %w", upstream, err)
+	}
+	if target.Scheme == "" || target.Host == "" {
+		return nil, fmt.Errorf("webui: dev upstream %q must include scheme and host", upstream)
+	}
+	return newDevProxy(target), nil
 }
 
 // newDevProxy is the constructor used by both NewDev (production

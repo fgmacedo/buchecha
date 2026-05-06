@@ -4,12 +4,12 @@ import "testing"
 
 func TestMergeCapabilityRegistries_DedupesByModel(t *testing.T) {
 	executor := []Capability{
-		{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
-		{Family: "claude", Model: "claude-sonnet-4-6", Tier: "balanced"},
+		{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
+		{Provider: "claude", Model: "claude-sonnet-4-6", Tier: "balanced"},
 	}
 	director := []Capability{
-		{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
-		{Family: "claude", Model: "claude-haiku-4-5", Tier: "fast"},
+		{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
+		{Provider: "claude", Model: "claude-haiku-4-5", Tier: "fast"},
 	}
 	merged := MergeCapabilityRegistries(executor, director)
 	if len(merged.Models) != 3 {

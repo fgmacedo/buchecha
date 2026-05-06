@@ -50,5 +50,31 @@ func FillPlanDefaults(plan *Plan, defaults PlanDefaults) {
 }
 
 func (a RoleAssignment) isZero() bool {
-	return a.Model == "" && a.Effort == ""
+	return a.Model == "" && a.Effort == "" && a.Provider == ""
+}
+
+// FillProviderFromRegistry stamps Provider onto every non-nil
+// RoleAssignment whose Model is known in the registry and whose
+// Provider was left empty. Called after FillPlanDefaults so default
+// assignments inherit the same vendor metadata as Planner-emitted
+// ones. Mutates plan in place; safe with a nil plan or nil registry
+// (no-op).
+func FillProviderFromRegistry(plan *Plan, registry *CapabilityRegistry) {
+	if plan == nil || registry == nil {
+		return
+	}
+	stamp := func(a *RoleAssignment) {
+		if a == nil || a.Model == "" || a.Provider != "" {
+			return
+		}
+		if cap, ok := registry.ByModel(a.Model); ok {
+			a.Provider = cap.Provider
+		}
+	}
+	for i := range plan.Phases {
+		ph := &plan.Phases[i]
+		stamp(ph.BrieferAssignment)
+		stamp(ph.ExecutorAssignment)
+		stamp(ph.ReviewerAssignment)
+	}
 }

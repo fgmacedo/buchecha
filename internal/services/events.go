@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // SeqEvent is the value type subscribers receive: a monotonic
@@ -98,11 +100,19 @@ type subscriber struct {
 }
 
 func newEventService(deps Deps) *EventService {
-	return &EventService{
+	s := &EventService{
 		deps:    deps,
 		nextSeq: 1,
 		subs:    make(map[*subscriber]struct{}),
 	}
+	// Persistence to events.ndjson lives inside the fanout goroutine,
+	// which Subscribe lazily starts. Without an SSE client (headless run,
+	// TUI-only mode) the file would never be written, defeating bcc dev
+	// replay. Start the fanout eagerly when persistence is configured.
+	if deps.EventsLogPath != "" && deps.LoopEvents != nil {
+		s.ensureFanout()
+	}
+	return s
 }
 
 // Subscribe registers a live subscriber for sessionID and returns a
@@ -214,6 +224,9 @@ func (s *EventService) archivedSessionDir(sessionID string) (string, error) {
 			}
 		}
 	}
+	if sessionID == LiveSessionAlias && s.deps.LiveAliasArchivedID != "" {
+		sessionID = s.deps.LiveAliasArchivedID
+	}
 	if s.deps.SessionsBaseDir == "" {
 		return "", ErrSessionNotFound.WithDetails(map[string]any{"id": sessionID})
 	}
@@ -244,13 +257,81 @@ func (s *EventService) ensureFanout() {
 // appends to the ring, and pushes to each live subscriber's inbox.
 // On LoopFinished (or LoopEvents close) every subscriber inbox is
 // closed and the relay goroutines drain.
+//
+// Before stamping seq the fan-out enriches AgentEventReceived events
+// with the active task id of the agent that produced them. The active
+// task is tracked locally via TaskStarted / TaskCompleted /
+// TaskApproved / TaskNeedsFix events that pass through the same
+// channel, all of which now carry an AgentID. The map lives in the
+// goroutine's stack so no lock is needed.
+//
+// Window-of-race: TaskStarted (handler-side) and the subsequent
+// AgentEventReceived (adapter-side) are produced by different
+// publishers; under unlikely interleavings an event may arrive before
+// its TaskStarted and miss attribution. Best-effort by design; if it
+// becomes a problem we can buffer-and-reorder by timestamp here.
 func (s *EventService) fanout() {
+	activeTaskByAgent := make(map[string]string)
+	var logFile *os.File
+	if s.deps.EventsLogPath != "" {
+		f, err := os.OpenFile(s.deps.EventsLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			slog.Error("services events: open events log failed",
+				"path", s.deps.EventsLogPath,
+				"err", err,
+			)
+		} else {
+			logFile = f
+			defer func() {
+				if cerr := logFile.Close(); cerr != nil {
+					slog.Warn("services events: close events log",
+						"path", s.deps.EventsLogPath,
+						"err", cerr,
+					)
+				}
+			}()
+		}
+	}
 	for ev := range s.deps.LoopEvents {
+		switch e := ev.(type) {
+		case loop.TaskStarted:
+			if e.AgentID != "" {
+				activeTaskByAgent[e.AgentID] = e.TaskID
+			}
+		case loop.TaskCompleted:
+			if e.AgentID != "" {
+				delete(activeTaskByAgent, e.AgentID)
+			}
+		case loop.TaskApproved:
+			if e.AgentID != "" {
+				delete(activeTaskByAgent, e.AgentID)
+			}
+		case loop.TaskNeedsFix:
+			if e.AgentID != "" {
+				delete(activeTaskByAgent, e.AgentID)
+			}
+		case loop.AgentEventReceived:
+			if id := e.Event.AgentID; id != "" && e.Event.TaskID == "" {
+				if t, ok := activeTaskByAgent[id]; ok {
+					e.Event.TaskID = t
+					ev = e
+				}
+			}
+		}
 		s.mu.Lock()
 		seq := s.nextSeq
 		s.nextSeq++
 		se := SeqEvent{Seq: seq, Event: ev}
 		s.appendRingLocked(se)
+		if logFile != nil {
+			if werr := writeEventLine(logFile, se); werr != nil {
+				slog.Error("services events: write events log",
+					"path", s.deps.EventsLogPath,
+					"seq", seq,
+					"err", werr,
+				)
+			}
+		}
 		recipients := make([]*subscriber, 0, len(s.subs))
 		for sub := range s.subs {
 			if seq >= sub.minSeq {
@@ -378,6 +459,13 @@ func (s *EventService) replayLoop(ctx context.Context, sessionDir string, fromSe
 			return
 		case out <- se:
 		}
+		if d := s.deps.ReplayInterEventDelay; d > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(d):
+			}
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		slog.Warn("services events: replay scan failed",
@@ -394,6 +482,34 @@ func (s *EventService) replayLoop(ctx context.Context, sessionDir string, fromSe
 type replayEnvelope struct {
 	Seq   int64           `json:"seq"`
 	Event json.RawMessage `json:"event"`
+}
+
+// writeEventLine serializes one SeqEvent as the canonical NDJSON
+// envelope: {"seq": N, "event": <loop.MarshalJSONEvent body>}\n. The
+// envelope shape mirrors replayEnvelope so the decoder round-trips
+// what the writer emits. Errors propagate to the fanout caller for
+// logging; a single write failure does not abort the run.
+func writeEventLine(w io.Writer, se SeqEvent) error {
+	body, err := loop.MarshalJSONEvent(se.Event)
+	if err != nil {
+		return fmt.Errorf("marshal event: %w", err)
+	}
+	env := struct {
+		Seq   int64           `json:"seq"`
+		Event json.RawMessage `json:"event"`
+	}{
+		Seq:   se.Seq,
+		Event: body,
+	}
+	line, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("marshal envelope: %w", err)
+	}
+	line = append(line, '\n')
+	if _, err := w.Write(line); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
 }
 
 // decodeReplayLine parses one JSON line into a SeqEvent. Lines whose
@@ -509,6 +625,7 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 		}, true
 	case "task_started":
 		var body struct {
+			AgentID string `json:"agent_id"`
 			PhaseID string `json:"phase_id"`
 			TaskID  string `json:"task_id"`
 		}
@@ -516,12 +633,14 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 			return nil, false
 		}
 		return loop.TaskStarted{
+			AgentID: body.AgentID,
 			PhaseID: body.PhaseID,
 			TaskID:  body.TaskID,
 			At:      at,
 		}, true
 	case "task_completed":
 		var body struct {
+			AgentID string `json:"agent_id"`
 			PhaseID string `json:"phase_id"`
 			TaskID  string `json:"task_id"`
 		}
@@ -529,12 +648,14 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 			return nil, false
 		}
 		return loop.TaskCompleted{
+			AgentID: body.AgentID,
 			PhaseID: body.PhaseID,
 			TaskID:  body.TaskID,
 			At:      at,
 		}, true
 	case "task_approved":
 		var body struct {
+			AgentID string `json:"agent_id"`
 			PhaseID string `json:"phase_id"`
 			TaskID  string `json:"task_id"`
 		}
@@ -542,12 +663,14 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 			return nil, false
 		}
 		return loop.TaskApproved{
+			AgentID: body.AgentID,
 			PhaseID: body.PhaseID,
 			TaskID:  body.TaskID,
 			At:      at,
 		}, true
 	case "task_needs_fix":
 		var body struct {
+			AgentID string `json:"agent_id"`
 			PhaseID string `json:"phase_id"`
 			TaskID  string `json:"task_id"`
 			Note    string `json:"note"`
@@ -556,14 +679,126 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 			return nil, false
 		}
 		return loop.TaskNeedsFix{
+			AgentID: body.AgentID,
 			PhaseID: body.PhaseID,
 			TaskID:  body.TaskID,
 			Note:    body.Note,
 			At:      at,
 		}, true
+	case "agent_event":
+		ev, ok := decodeAgentEvent(raw, at)
+		if !ok {
+			return nil, false
+		}
+		return loop.AgentEventReceived{Event: ev}, true
 	default:
 		return nil, false
 	}
+}
+
+// decodeAgentEvent inverts the loop.MarshalJSONEvent shape for an
+// AgentEventReceived envelope so Replay can rehydrate a recorded
+// agent_event line back into the typed value the SSE handler expects.
+// Mirrors agentEventJSON in internal/loop/eventjson.go; keep the two in
+// sync when adding new AgentEvent kinds.
+func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEvent, bool) {
+	var body struct {
+		Kind        string `json:"kind"`
+		AgentID     string `json:"agent_id"`
+		Role        string `json:"role"`
+		PhaseID     string `json:"phase_id"`
+		IterationID string `json:"iteration_id"`
+		Attempt     int    `json:"attempt"`
+		TaskID      string `json:"task_id"`
+		Init        *struct {
+			SessionID string `json:"session_id"`
+			Model     string `json:"model"`
+			CWD       string `json:"cwd"`
+		} `json:"init"`
+		Tool *struct {
+			ID      string         `json:"id"`
+			Name    string         `json:"name"`
+			Args    map[string]any `json:"args"`
+			IsError bool           `json:"is_error"`
+			Summary string         `json:"summary"`
+		} `json:"tool"`
+		Text  string `json:"text"`
+		Usage *struct {
+			InputTokens              int64 `json:"input_tokens"`
+			OutputTokens             int64 `json:"output_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+		Rate *struct {
+			Status  string `json:"status"`
+			ResetAt string `json:"reset_at"`
+		} `json:"rate"`
+		Done *struct {
+			NumTurns                 int     `json:"num_turns"`
+			TotalCostUSD             float64 `json:"total_cost_usd"`
+			InputTokens              int64   `json:"input_tokens"`
+			OutputTokens             int64   `json:"output_tokens"`
+			CacheReadInputTokens     int64   `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64   `json:"cache_creation_input_tokens"`
+			DurationMS               int64   `json:"duration_ms"`
+		} `json:"done"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return agentcontract.AgentEvent{}, false
+	}
+	ev := agentcontract.AgentEvent{
+		Kind:        agentcontract.AgentEventKind(body.Kind),
+		At:          at,
+		AgentID:     body.AgentID,
+		Role:        agentcontract.Role(body.Role),
+		PhaseID:     body.PhaseID,
+		IterationID: body.IterationID,
+		Attempt:     body.Attempt,
+		TaskID:      body.TaskID,
+		Text:        body.Text,
+	}
+	if body.Init != nil {
+		ev.Init = &agentcontract.InitInfo{
+			SessionID: body.Init.SessionID,
+			Model:     body.Init.Model,
+			CWD:       body.Init.CWD,
+		}
+	}
+	if body.Tool != nil {
+		ev.Tool = &agentcontract.ToolCallInfo{
+			ID:      body.Tool.ID,
+			Name:    body.Tool.Name,
+			Args:    body.Tool.Args,
+			IsError: body.Tool.IsError,
+			Summary: body.Tool.Summary,
+		}
+	}
+	if body.Usage != nil {
+		ev.Usage = &agentcontract.UsageInfo{
+			InputTokens:              body.Usage.InputTokens,
+			OutputTokens:             body.Usage.OutputTokens,
+			CacheReadInputTokens:     body.Usage.CacheReadInputTokens,
+			CacheCreationInputTokens: body.Usage.CacheCreationInputTokens,
+		}
+	}
+	if body.Rate != nil {
+		ev.Rate = &agentcontract.RateLimitInfo{
+			Status:  body.Rate.Status,
+			ResetAt: parseAt(body.Rate.ResetAt),
+		}
+	}
+	if body.Done != nil {
+		ev.Done = &agentcontract.ResultSummaryInfo{
+			NumTurns:                 body.Done.NumTurns,
+			TotalCostUSD:             body.Done.TotalCostUSD,
+			InputTokens:              body.Done.InputTokens,
+			OutputTokens:             body.Done.OutputTokens,
+			CacheReadInputTokens:     body.Done.CacheReadInputTokens,
+			CacheCreationInputTokens: body.Done.CacheCreationInputTokens,
+			DurationMS:               body.Done.DurationMS,
+		}
+	}
+	return ev, true
 }
 
 func parseAt(s string) time.Time {

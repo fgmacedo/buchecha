@@ -199,8 +199,8 @@ func TestValidatePlan(t *testing.T) {
 func TestValidatePlan_CapabilityChecks(t *testing.T) {
 	registry := &CapabilityRegistry{
 		Models: []Capability{
-			{Family: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "medium", "high"}},
-			{Family: "claude", Model: "claude-sonnet-4-6", Tier: "balanced", Efforts: []string{"low"}},
+			{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "medium", "high"}},
+			{Provider: "claude", Model: "claude-sonnet-4-6", Tier: "balanced", Efforts: []string{"low"}},
 		},
 	}
 

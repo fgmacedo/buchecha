@@ -149,6 +149,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 		SessionStore:    store,
 		SessionsBaseDir: filepath.Join(".bcc", "sessions"),
 		AuditPath:       directorAuditPath(cfg, store),
+		EventsLogPath:   directorEventsLogPath(cfg, store),
 		LoopEvents:      serviceEvents,
 	})
 
@@ -219,6 +220,17 @@ func directorAuditPath(cfg *config.Config, store *director.Store) string {
 	return filepath.Join(store.SessionDir(), "mcp-log.jsonl")
 }
 
+// directorEventsLogPath returns the per-session events.ndjson path when
+// the persist_events_log toggle is on, otherwise empty. The same file
+// is later read back by EventService.Replay for archived sessions and
+// by bcc dev for replay-driven UI development.
+func directorEventsLogPath(cfg *config.Config, store *director.Store) string {
+	if cfg == nil || store == nil || !cfg.Debug.IsPersistEventsLogEnabled() {
+		return ""
+	}
+	return filepath.Join(store.SessionDir(), "events.ndjson")
+}
+
 // teeLoopEvents reads every event written to src and forwards it to the
 // transient consumer (TUI bridge, render dispatch) and to the persistent
 // services channel. transient is closed when src closes so the per-run
@@ -258,7 +270,15 @@ func teeLoopEvents(src <-chan loop.Event, transient chan<- loop.Event, persisten
 // work on the SPA.
 func resolveWebUIHandler(dev bool) http.Handler {
 	if dev {
-		return webui.NewDev()
+		// bcc run uses the default Vite upstream (loopback:5173); the
+		// configurable form lives on `bcc dev`. NewDev returns an error
+		// only on parse failure of the constant default, which is a
+		// programmer error and merits a panic.
+		h, err := webui.NewDev(webui.DefaultDevUpstream)
+		if err != nil {
+			panic(fmt.Errorf("cli: build webui dev proxy: %w", err))
+		}
+		return h
 	}
 	return webui.New()
 }

@@ -1,6 +1,26 @@
 {
   "components": {
     "schemas": {
+      "AcceptanceItem": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "evidence"
+        ],
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -128,6 +148,89 @@
         ],
         "type": "object"
       },
+      "Phase": {
+        "additionalProperties": false,
+        "properties": {
+          "briefer_assignment": {
+            "$ref": "#/components/schemas/RoleAssignment"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "executor_assignment": {
+            "$ref": "#/components/schemas/RoleAssignment"
+          },
+          "id": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "parallelizable": {
+            "type": "boolean"
+          },
+          "prepared_briefing": {
+            "$ref": "#/components/schemas/PreparedBriefing"
+          },
+          "priority": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reviewer_assignment": {
+            "$ref": "#/components/schemas/RoleAssignment"
+          },
+          "scope_in": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "scope_out": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "skip_review": {
+            "type": "boolean"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "intent",
+          "depends_on",
+          "parallelizable",
+          "scope_in",
+          "scope_out",
+          "tasks"
+        ],
+        "type": "object"
+      },
       "PhaseBriefedRef": {
         "additionalProperties": false,
         "properties": {
@@ -147,6 +250,93 @@
           "attempt",
           "iteration_id"
         ],
+        "type": "object"
+      },
+      "Plan": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/Plan.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/Phase"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "planned_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "spec_hash": {
+            "type": "string"
+          },
+          "success_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "goal",
+          "success_criteria",
+          "phases",
+          "spec_hash",
+          "planned_at"
+        ],
+        "type": "object"
+      },
+      "PreparedBriefing": {
+        "additionalProperties": false,
+        "properties": {
+          "instructions": {
+            "type": "string"
+          },
+          "sub_dag_task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "sub_dag_task_ids",
+          "instructions"
+        ],
+        "type": "object"
+      },
+      "RoleAssignment": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "RootCatalog": {
@@ -291,6 +481,59 @@
       },
       "State": {
         "additionalProperties": false,
+        "type": "object"
+      },
+      "Task": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance": {
+            "items": {
+              "$ref": "#/components/schemas/AcceptanceItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "priority": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "retry_budget": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "intent",
+          "depends_on",
+          "acceptance",
+          "status",
+          "retry_budget"
+        ],
         "type": "object"
       }
     }
@@ -527,6 +770,51 @@
           }
         },
         "summary": "DAG fragment for one session",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/sessions/{id}/plan": {
+      "get": {
+        "description": "Returns the Director's persisted plan.json for the session: goal, success criteria, phases, and tasks with their structural fields. The status field on each task reflects the planner's emit moment (pending) and is not the live state; consumers tracking running progress merge in updates from the events stream.",
+        "operationId": "get-session-plan",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Plan"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Persisted plan for one session",
         "tags": [
           "sessions"
         ]

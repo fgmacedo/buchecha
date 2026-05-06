@@ -1,5 +1,5 @@
 import '@xyflow/react/dist/style.css'
-import { useCallback, useMemo, useEffect } from 'react'
+import { useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   ReactFlow,
   Background,
@@ -13,8 +13,9 @@ import {
 import { PhaseNodeComponent } from './phase-node'
 import { TaskNodeComponent } from './task-node'
 import { buildLayout, type SavedPositions, type TaskTimestamps } from './layout'
-import type { DAGData } from './types'
+import type { DAGData, DAGPhase, DAGTask } from './types'
 import type { Snapshot } from '../../hooks/use-snapshot'
+import type { Plan } from '../../hooks/use-plan'
 import type { SeqEvent } from '../../hooks/use-events'
 
 // NODE_TYPES maps type strings to component implementations. Defined
@@ -54,19 +55,20 @@ function miniMapNodeColor(node: Node): string {
   const data = node.data as Record<string, unknown>
   if (node.type === 'phaseNode') {
     const tasks = (data.tasks ?? []) as Array<{ status: string }>
-    // Compute aggregated status locally (mirrors aggregatePhaseStatus).
+    // Compute aggregated status locally (mirrors aggregatePhaseStatus):
+    // any task past pending and not all done means in_progress.
     let hasNeedsFix = false
-    let hasRunning = false
+    let pendingCount = 0
     let doneCount = 0
     for (const t of tasks) {
       if (t.status === 'needs_fix') hasNeedsFix = true
-      else if (t.status === 'in_progress') hasRunning = true
+      else if (t.status === 'pending') pendingCount++
       else if (t.status === 'done') doneCount++
     }
     if (hasNeedsFix) return 'var(--status-needs-fix, #f59e0b)'
-    if (hasRunning) return 'var(--status-running, #6ea8ff)'
     if (tasks.length > 0 && doneCount === tasks.length) return 'var(--status-done, #4ade80)'
-    return 'var(--status-pending, #6b7280)'
+    if (tasks.length === 0 || pendingCount === tasks.length) return 'var(--status-pending, #6b7280)'
+    return 'var(--status-running, #6ea8ff)'
   }
   if (node.type === 'taskNode') {
     const task = data.task as { status?: string } | undefined
@@ -82,8 +84,63 @@ function miniMapNodeColor(node: Node): string {
 
 export interface DAGViewProps {
   snapshot: Snapshot | null
+  plan: Plan | null
   sessionId: string
   events: SeqEvent[]
+}
+
+// mergePlanWithStatus combines the structural plan (titles, intent,
+// priority, parallelizable, dependencies, acceptance) with the live
+// status DAG (per-task status, retry budget) into a single DAGData
+// that the layout consumes. The plan is the source of truth for shape;
+// the DAG state overlays the runtime status. When the plan is absent
+// (legacy sessions or planner not yet emitted) it falls back to the
+// status DAG alone, which keeps the structure but renders without
+// titles or intents.
+function mergePlanWithStatus(
+  plan: Plan | null,
+  status: DAGData | null | undefined,
+): DAGData | null {
+  if (!plan?.phases?.length) {
+    return (status ?? null) as DAGData | null
+  }
+  const statusPhases = new Map<string, NonNullable<DAGData['phases']>[number]>()
+  for (const sp of status?.phases ?? []) {
+    if (sp?.id) statusPhases.set(sp.id, sp)
+  }
+  const phases: DAGPhase[] = plan.phases.map((p) => {
+    const sp = statusPhases.get(p.id)
+    const statusTasks = new Map<string, NonNullable<DAGData['phases']>[number]['tasks'][number]>()
+    for (const st of sp?.tasks ?? []) {
+      if (st?.id) statusTasks.set(st.id, st)
+    }
+    const tasks: DAGTask[] = (p.tasks ?? []).map((t) => {
+      const st = statusTasks.get(t.id)
+      return {
+        id: t.id,
+        title: t.title,
+        intent: t.intent,
+        depends_on: t.depends_on ?? [],
+        priority: t.priority,
+        acceptance: t.acceptance ?? undefined,
+        status: (st?.status as DAGTask['status']) ?? (t.status as DAGTask['status']) ?? 'pending',
+        retry_budget: st?.retry_budget ?? t.retry_budget ?? 0,
+      }
+    })
+    return {
+      id: p.id,
+      title: p.title,
+      intent: p.intent,
+      depends_on: p.depends_on ?? [],
+      parallelizable: p.parallelizable,
+      priority: p.priority,
+      scope_in: p.scope_in ?? undefined,
+      scope_out: p.scope_out ?? undefined,
+      executor_assignment: p.executor_assignment ?? null,
+      tasks,
+    }
+  })
+  return { phases }
 }
 
 // DAGView renders the plan's DAG using @xyflow/react. Phase nodes are
@@ -95,9 +152,13 @@ export interface DAGViewProps {
 // background reads as gradient-textured rather than a flat slab. A MiniMap
 // reflects task/phase statuses in the bottom-right. Zoom controls sit in the
 // bottom-left.
-export function DAGView({ snapshot, sessionId, events }: DAGViewProps) {
-  // Cast the opaque dag field to the concrete runtime shape.
-  const dag = snapshot?.dag as unknown as DAGData | null | undefined
+export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
+  // Merge the structural plan (titles, intent, priority, parallelizable)
+  // with the live status DAG (per-task status). The plan endpoint is the
+  // source for human-facing fields; the snapshot's dag is the source for
+  // status. When the plan is missing the DAG renders from status alone.
+  const statusDag = snapshot?.dag as unknown as DAGData | null | undefined
+  const dag = useMemo(() => mergePlanWithStatus(plan, statusDag), [plan, statusDag])
 
   // Derive per-phase cost, per-phase attempt count, and per-task timestamps
   // from the events stream so phase/task nodes can display contextual data.
@@ -131,14 +192,18 @@ export function DAGView({ snapshot, sessionId, events }: DAGViewProps) {
         }
       }
 
-      // Collect per-task started/ended timestamps.
+      // Collect per-task started/ended timestamps. agent_id, when
+      // present, identifies which agent owns this task; the post-
+      // origin enrichment fills it on the wire so consumers can
+      // surface it in the UI without grouping by event ordering.
       if (ev.type === 'task_started') {
         const taskId = ev.task_id as string | undefined
         const phaseId = ev.phase_id as string | undefined
         const at = ev.at as string | undefined
+        const agentId = ev.agent_id as string | undefined
         if (taskId && phaseId && at) {
           const key = `${phaseId}:${taskId}`
-          tsMap[key] = { ...(tsMap[key] ?? {}), startedAt: at }
+          tsMap[key] = { ...(tsMap[key] ?? {}), startedAt: at, agentId }
         }
       }
       if (ev.type === 'task_completed') {
@@ -175,6 +240,60 @@ export function DAGView({ snapshot, sessionId, events }: DAGViewProps) {
   useEffect(() => {
     setNodes(layoutNodes)
   }, [layoutNodes, setNodes])
+
+  // Live status patch: apply task_started / task_completed / task_approved
+  // / task_needs_fix events to the matching task nodes via setNodes(prev =>
+  // prev.map(...)). Returning prev when nothing changed keeps the node
+  // refs stable for unchanged nodes so xyflow's StoreUpdater does not
+  // re-process the whole list. lastAppliedSeqRef tracks the high-water
+  // mark; resets on session switch. The bulk setNodes(layoutNodes) above
+  // runs only on plan/dag refetches, so this effect carries the in-between
+  // status changes during a live run without rebuilding layoutNodes.
+  const lastTaskSeqRef = useRef(0)
+  useEffect(() => {
+    lastTaskSeqRef.current = 0
+  }, [sessionId])
+  useEffect(() => {
+    if (events.length === 0) return
+    const high = lastTaskSeqRef.current
+    const updates = new Map<string, string>()
+    let pending = high
+    for (const ev of events) {
+      if (ev.seq <= high) continue
+      if (ev.seq > pending) pending = ev.seq
+      const t = ev.event.type
+      let nextStatus = ''
+      if (t === 'task_started') nextStatus = 'in_progress'
+      else if (t === 'task_completed' || t === 'task_approved') nextStatus = 'done'
+      else if (t === 'task_needs_fix') nextStatus = 'needs_fix'
+      else continue
+      const phaseId = typeof ev.event.phase_id === 'string' ? ev.event.phase_id : ''
+      const taskId = typeof ev.event.task_id === 'string' ? ev.event.task_id : ''
+      if (!phaseId || !taskId) continue
+      updates.set(`task:${phaseId}:${taskId}`, nextStatus)
+    }
+    lastTaskSeqRef.current = pending
+    if (updates.size === 0) return
+    setNodes((prev) => {
+      let changed = false
+      const next = prev.map((n) => {
+        const status = updates.get(n.id)
+        if (!status) return n
+        const data = n.data as { task?: { status?: string } } | undefined
+        const current = data?.task?.status
+        if (current === status) return n
+        changed = true
+        return {
+          ...n,
+          data: {
+            ...(data ?? {}),
+            task: { ...(data?.task ?? {}), status },
+          },
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [events, setNodes])
 
   // Persist user-dragged positions after a drag completes.
   const handleNodesChange = useCallback(

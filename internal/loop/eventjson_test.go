@@ -313,6 +313,22 @@ func TestMarshalJSONEvent_TaskStarted(t *testing.T) {
 	}
 }
 
+// TestMarshalJSONEvent_TaskStartedWithAgentID covers the post-enrichment
+// wire shape where the EventService keys its active-task index by
+// AgentID. Consumers that group activity per agent rely on this field.
+func TestMarshalJSONEvent_TaskStartedWithAgentID(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ev := loop.TaskStarted{AgentID: "bcc-executor-deadbeef", PhaseID: "P1", TaskID: "T1.1", At: at}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"agent_id":"bcc-executor-deadbeef","at":"2026-05-05T12:00:00Z","level":"info","phase_id":"P1","task_id":"T1.1","type":"task_started"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
 func TestMarshalJSONEvent_TaskCompleted(t *testing.T) {
 	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	ev := loop.TaskCompleted{PhaseID: "P1", TaskID: "T1.1", At: at}
@@ -376,6 +392,33 @@ func TestMarshalJSONEvent_AgentInit(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	want := `{"at":"2026-04-29T14:32:00Z","init":{"cwd":"/tmp","model":"claude-sonnet-4","session_id":"s1"},"kind":"init","level":"debug","type":"agent_event"}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// TestMarshalJSONEvent_AgentEventWithOrigin covers the post-decoration
+// wire shape carrying agent_id, role, phase_id, iteration_id, attempt
+// (set by adapters) and task_id (set by the EventService fan-out).
+// These are what lets the SPA group activity per agent and per task.
+func TestMarshalJSONEvent_AgentEventWithOrigin(t *testing.T) {
+	at := time.Date(2026, 4, 29, 14, 32, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:        agentcontract.KindToolUse,
+		At:          at,
+		AgentID:     "bcc-executor-deadbeef",
+		Role:        agentcontract.RoleExecutor,
+		PhaseID:     "P7",
+		IterationID: "P7-01",
+		Attempt:     1,
+		TaskID:      "T7.3",
+		Tool:        &agentcontract.ToolCallInfo{ID: "t1", Name: "Edit", Args: map[string]any{"file_path": "foo.go"}},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"agent_id":"bcc-executor-deadbeef","at":"2026-04-29T14:32:00Z","attempt":1,"iteration_id":"P7-01","kind":"tool_use","level":"info","phase_id":"P7","role":"bcc-executor","task_id":"T7.3","tool":{"args":{"file_path":"foo.go"},"id":"t1","name":"Edit"},"type":"agent_event"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}

@@ -345,6 +345,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 		for sc.Scan() {
 			line := slices.Clone(sc.Bytes())
 			for _, ev := range streamjson.ParseLine(line, time.Now()) {
+				ev = ev.WithOrigin(e.cfg.AgentID, agentcontract.RoleExecutor, e.cfg.PhaseID, e.cfg.IterationID, e.cfg.Attempt)
 				parsedEvents = append(parsedEvents, ev)
 				select {
 				case events <- ev:

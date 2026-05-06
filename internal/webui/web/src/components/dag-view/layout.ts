@@ -3,18 +3,21 @@ import type { Node, Edge } from '@xyflow/react'
 import type { DAGData, DAGPhase } from './types'
 
 // Task chip dimensions for the compact grid layout inside each phase.
-const TASK_W = 128
-const TASK_H = 48
-const TASK_GAP_X = 8
-const TASK_GAP_Y = 8
+// Width grew to fit a wrapped title and a 2-line intent clamp; height grew
+// to accommodate the headline plus intent block plus the meta footer row.
+const TASK_W = 200
+const TASK_H = 104
+const TASK_GAP_X = 10
+const TASK_GAP_Y = 10
 
 // Columns per row in the task grid.
 const GRID_COLS = 4
 
 // Phase layout constants.
 const PHASE_PAD_X = 16
-const PHASE_PAD_Y = 8
-const PHASE_HEADER_H = 56
+const PHASE_PAD_Y = 10
+// Header now stacks: id+badges row, title row, intent clamp.
+const PHASE_HEADER_H = 96
 const PHASE_FOOTER_H = 36
 
 // SavedPositions is the localStorage shape keyed by xyflow node id.
@@ -68,9 +71,13 @@ function layoutTasksInPhase(phase: DAGPhase): {
 
 // TaskTimestamps holds optional start/end timestamps for a task, keyed by
 // "<phaseId>:<taskId>" in the outer map that callers build from events.
+// agentId, when present, is the agent_id captured from the latest
+// task_started for this task; renderers may color or label the node
+// per agent once concurrent agents become a thing.
 export interface TaskTimestamps {
   startedAt?: string
   endedAt?: string
+  agentId?: string
 }
 
 // buildLayout computes the full xyflow node+edge list from dag data.
@@ -170,6 +177,7 @@ export function buildLayout(
         position: taskPos,
         parentId: pid,
         extent: 'parent',
+        style: { width: TASK_W, height: TASK_H },
         data: {
           task,
           phaseId: phase.id,

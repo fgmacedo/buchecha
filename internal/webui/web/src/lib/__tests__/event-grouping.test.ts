@@ -253,6 +253,7 @@ describe('loadFilters / saveFilters', () => {
       phases: ['P1'],
       levels: ['info'],
       search: 'foo',
+      showProtocol: true,
     }
     saveFilters('session-1', filters)
     const loaded = loadFilters('session-1')

@@ -159,11 +159,33 @@ func TestNewDevProxy_RejectsAPIV1(t *testing.T) {
 // non-loopback host.
 func TestNewDev_ProductionTargetsLoopback(t *testing.T) {
 	t.Parallel()
-	// Pure smoke: NewDev must not panic and must return a non-nil
-	// handler. Pointing it at a real running Vite is out of scope for
-	// unit tests; integration coverage lives with the contributor
-	// guide.
-	if h := NewDev(); h == nil {
+	// Pure smoke: NewDev must not error and must return a non-nil
+	// handler when the default upstream is used. Pointing it at a
+	// real running Vite is out of scope for unit tests; integration
+	// coverage lives with the contributor guide.
+	h, err := NewDev("")
+	if err != nil {
+		t.Fatalf("NewDev: %v", err)
+	}
+	if h == nil {
 		t.Error("NewDev returned nil")
+	}
+}
+
+func TestNewDev_RejectsInvalidUpstream(t *testing.T) {
+	t.Parallel()
+	if _, err := NewDev("not-a-url"); err == nil {
+		t.Error("NewDev accepted upstream with no scheme/host")
+	}
+}
+
+func TestNewDev_AcceptsCustomUpstream(t *testing.T) {
+	t.Parallel()
+	h, err := NewDev("http://localhost:9999")
+	if err != nil {
+		t.Fatalf("NewDev: %v", err)
+	}
+	if h == nil {
+		t.Error("NewDev returned nil with custom upstream")
 	}
 }

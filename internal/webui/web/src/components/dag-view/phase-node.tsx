@@ -1,57 +1,59 @@
 import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useSelection } from '../../hooks/use-selection'
-import type { DAGTask, DAGPhase, TaskStatus } from './types'
+import type { DAGTask, DAGPhase, RoleAssignment } from './types'
 
 // PhaseStatus is the aggregated status derived from all task statuses.
-// Priority: error > needs_fix > running > done > pending.
-export type PhaseStatus = 'error' | 'needs_fix' | 'running' | 'done' | 'pending'
+// Mirrors the task vocabulary so a phase is in_progress whenever it has
+// started, even between task transitions when no single task is currently
+// executing. Precedence: error > needs_fix > in_progress > done > pending.
+export type PhaseStatus = 'error' | 'needs_fix' | 'in_progress' | 'done' | 'pending'
 
 // aggregatePhaseStatus derives a single PhaseStatus from the task list.
-// Exported for unit testing.
+// A phase is in_progress as soon as any task has moved past pending and
+// not all tasks are done yet, so the phase visibly tracks progress even
+// in the gap between one task finishing and the next starting. Exported
+// for unit testing.
 export function aggregatePhaseStatus(tasks: DAGTask[]): PhaseStatus {
   if (tasks.length === 0) return 'pending'
 
   let hasNeedsFix = false
-  let hasRunning = false
+  let pendingCount = 0
   let doneCount = 0
 
   for (const t of tasks) {
     if (t.status === 'needs_fix') {
       hasNeedsFix = true
-    } else if (t.status === 'in_progress') {
-      hasRunning = true
+    } else if (t.status === 'pending') {
+      pendingCount++
     } else if (t.status === 'done') {
       doneCount++
     }
   }
 
-  // error > needs_fix > running > done > pending
   if (hasNeedsFix) return 'needs_fix'
-  if (hasRunning) return 'running'
   if (doneCount === tasks.length) return 'done'
-  return 'pending'
+  if (pendingCount === tasks.length) return 'pending'
+  return 'in_progress'
+}
+
+// formatRoleAssignment renders an assignment as `provider / model / effort`,
+// dropping segments that are empty so partial assignments still read cleanly.
+// Returns null when nothing meaningful is set, letting callers skip the
+// rendering entirely.
+export function formatRoleAssignment(a: RoleAssignment | null | undefined): string | null {
+  if (!a) return null
+  const parts = [a.provider, a.model, a.effort].filter((s): s is string => !!s && s.length > 0)
+  return parts.length === 0 ? null : parts.join(' / ')
 }
 
 // PHASE_STATUS_COLOR maps PhaseStatus to CSS variable references.
 const PHASE_STATUS_COLOR: Record<PhaseStatus, string> = {
   error: 'var(--status-error)',
   needs_fix: 'var(--status-needs-fix)',
-  running: 'var(--status-running)',
-  done: 'var(--status-done)',
-  pending: 'var(--status-pending)',
-}
-
-// TASK_CHIP_COLOR maps TaskStatus to CSS variable references for chip cells.
-const TASK_CHIP_COLOR: Record<TaskStatus, string> = {
-  pending: 'var(--status-pending)',
   in_progress: 'var(--status-running)',
   done: 'var(--status-done)',
-  needs_fix: 'var(--status-needs-fix)',
-}
-
-function taskChipColor(status: string): string {
-  return TASK_CHIP_COLOR[status as TaskStatus] ?? 'var(--status-pending)'
+  pending: 'var(--status-pending)',
 }
 
 export interface PhaseNodeData {
@@ -62,10 +64,13 @@ export interface PhaseNodeData {
   [key: string]: unknown
 }
 
-// PhaseNodeComponent renders a phase container group with a header (id, deps,
-// status pill), a 4xN task chip grid in the body, and a footer (done/total,
-// attempt, USD). Child task nodes are positioned by xyflow in the body area.
-// Click anywhere on the header invokes select({ kind: "phase", phaseId }).
+// PhaseNodeComponent renders a phase container group. The header puts the
+// phase title front and center, with the id, dependencies, priority badge,
+// parallelizable indicator, and aggregated status pill arranged as small
+// meta around it; the intent reads as a clamped subtitle. The body hosts
+// xyflow-positioned child task nodes; the footer surfaces done/total,
+// attempt, and cost. Click anywhere on the header invokes
+// select({ kind: "phase", phaseId }).
 export function PhaseNodeComponent({ data }: NodeProps) {
   const { phase, tasks, costUSD, attempt } = data as PhaseNodeData
   const [hovered, setHovered] = useState(false)
@@ -77,6 +82,11 @@ export function PhaseNodeComponent({ data }: NodeProps) {
   const aggStatus = aggregatePhaseStatus(tasks)
   const statusColor = PHASE_STATUS_COLOR[aggStatus]
   const doneCount = tasks.filter((t) => t.status === 'done').length
+  const execLabel = formatRoleAssignment(phase.executor_assignment)
+
+  const title =
+    phase.title && phase.title.trim().length > 0 ? phase.title : phase.id
+  const intent = phase.intent ?? ''
 
   return (
     <div
@@ -108,100 +118,126 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         }}
       />
 
-      {/* Header: phase id, depends_on chips, aggregated status pill */}
+      {/* Header: title is the headline; id, deps, priority, parallelizable,
+          and the aggregated status sit around it as small meta. The intent
+          reads as a clamped subtitle below. */}
       <div
         data-testid={`phase-header-${phase.id}`}
         onClick={() => select({ kind: 'phase', phaseId: phase.id })}
         style={{
-          padding: '6px 12px',
+          padding: '8px 12px',
           display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          flexWrap: 'wrap',
+          flexDirection: 'column',
+          gap: 4,
           borderBottom: '1px solid var(--color-border)',
           borderRadius: '7px 7px 0 0',
           cursor: 'pointer',
           flexShrink: 0,
-          minHeight: 40,
         }}
       >
-        <span
+        {/* Meta row: id chip, deps, parallelizable, priority, status. */}
+        <div
           style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            fontWeight: 700,
-            color: 'var(--color-foreground)',
-            letterSpacing: '0.04em',
-            userSelect: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'wrap',
+            minHeight: 16,
           }}
         >
-          {phase.id}
-        </span>
-
-        {(phase.depends_on ?? []).map((dep) => (
           <span
-            key={dep}
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: 9,
               color: 'var(--color-muted-foreground)',
-              border: '1px solid var(--color-border)',
+              letterSpacing: '0.04em',
+              userSelect: 'none',
+              opacity: 0.85,
+            }}
+            title={phase.id}
+          >
+            {phase.id}
+          </span>
+
+          {(phase.depends_on ?? []).map((dep) => (
+            <span
+              key={dep}
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9,
+                color: 'var(--color-muted-foreground)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 3,
+                padding: '1px 5px',
+                lineHeight: 1.5,
+                userSelect: 'none',
+              }}
+            >
+              {dep}
+            </span>
+          ))}
+
+          {phase.parallelizable && <ParallelChip />}
+
+          {typeof phase.priority === 'number' && (
+            <PriorityBadge priority={phase.priority} />
+          )}
+
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: 9,
+              color: statusColor,
+              border: `1px solid ${statusColor}`,
               borderRadius: 3,
-              padding: '1px 5px',
+              padding: '1px 6px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
               lineHeight: 1.5,
               userSelect: 'none',
             }}
           >
-            {dep}
+            {aggStatus.replace(/_/g, ' ')}
           </span>
-        ))}
+        </div>
 
-        <span
+        {/* Headline: phase title is the primary label. */}
+        <div
           style={{
-            marginLeft: 'auto',
-            fontSize: 9,
-            color: statusColor,
-            border: `1px solid ${statusColor}`,
-            borderRadius: 3,
-            padding: '1px 6px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-            lineHeight: 1.5,
-            userSelect: 'none',
+            fontFamily: 'var(--font-sans)',
+            fontSize: 15,
+            fontWeight: 600,
+            color: 'var(--color-foreground)',
+            lineHeight: 1.25,
+            wordBreak: 'break-word',
           }}
+          title={title}
         >
-          {aggStatus.replace(/_/g, ' ')}
-        </span>
+          {title}
+        </div>
+
+        {/* Intent: clamped to two lines; native tooltip shows full text. */}
+        {intent && (
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--color-muted-foreground)',
+              lineHeight: 1.35,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              wordBreak: 'break-word',
+            }}
+            title={intent}
+          >
+            {intent}
+          </div>
+        )}
       </div>
 
-      {/* Body: 4xN task chip grid (visual summary; xyflow child task nodes render here) */}
-      <div
-        style={{
-          flex: 1,
-          padding: '8px 12px 4px',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 4,
-          alignContent: 'start',
-          pointerEvents: 'none',
-        }}
-      >
-        {tasks.map((task) => {
-          const chipColor = taskChipColor(task.status)
-          return (
-            <div
-              key={task.id}
-              title={`${task.id}: ${task.status.replace(/_/g, ' ')}`}
-              style={{
-                height: 14,
-                borderRadius: 2,
-                backgroundColor: `color-mix(in srgb, ${chipColor} 22%, var(--surface-card))`,
-                border: `1px solid color-mix(in srgb, ${chipColor} 60%, transparent)`,
-              }}
-            />
-          )
-        })}
-      </div>
+      {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}
+      <div style={{ flex: 1, pointerEvents: 'none' }} />
 
       {/* Footer: tasks done/total, attempt, USD */}
       <div
@@ -223,6 +259,23 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         >
           {doneCount}/{tasks.length}
         </span>
+        {execLabel && (
+          <span
+            title={`executor: ${execLabel}`}
+            style={{
+              fontSize: 10,
+              color: 'var(--color-muted-foreground)',
+              fontFamily: 'var(--font-mono)',
+              opacity: 0.85,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}
+          >
+            {execLabel}
+          </span>
+        )}
         {attempt > 1 && (
           <span
             style={{
@@ -259,5 +312,64 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         }}
       />
     </div>
+  )
+}
+
+// PriorityBadge renders the priority as a compact numeric chip, mirroring
+// the task-level badge so users learn one visual pattern.
+function PriorityBadge({ priority }: { priority: number }) {
+  return (
+    <span
+      title={`priority ${priority}`}
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9,
+        fontWeight: 700,
+        color: 'var(--color-accent)',
+        backgroundColor:
+          'color-mix(in srgb, var(--color-accent) 18%, transparent)',
+        border:
+          '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)',
+        borderRadius: 3,
+        padding: '1px 5px',
+        lineHeight: 1.5,
+      }}
+    >
+      P{priority}
+    </span>
+  )
+}
+
+// ParallelChip surfaces the parallelizable flag with a compact glyph plus
+// label. The double-vertical-bar character reads as a parallel marker
+// without leaning on emoji.
+function ParallelChip() {
+  return (
+    <span
+      title="parallelizable"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9,
+        fontWeight: 600,
+        color: 'var(--status-running)',
+        backgroundColor:
+          'color-mix(in srgb, var(--status-running) 14%, transparent)',
+        border:
+          '1px solid color-mix(in srgb, var(--status-running) 40%, transparent)',
+        borderRadius: 3,
+        padding: '1px 5px',
+        lineHeight: 1.5,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+      }}
+    >
+      <span aria-hidden="true" style={{ fontWeight: 700 }}>
+        {'∥'}
+      </span>
+      par
+    </span>
   )
 }

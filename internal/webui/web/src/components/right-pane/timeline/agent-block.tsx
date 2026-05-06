@@ -34,20 +34,49 @@ function kindBadgeClass(kind: AgentEventKind): string {
   }
 }
 
+// formatToolUseDetail extracts a short, tool-aware preview of the
+// arguments. The wire format is {tool: {name, args: {...}}}. The header
+// badge already shows the tool name, so the detail must NOT repeat it.
+function formatToolUseDetail(name: string, args: Record<string, unknown>): string {
+  const str = (k: string): string => (typeof args[k] === 'string' ? (args[k] as string) : '')
+  switch (name) {
+    case 'Write':
+    case 'Edit': {
+      const path = str('file_path')
+      const content = str('content') || str('new_string')
+      const size = content ? ` (${content.length} B)` : ''
+      return `${path}${size}`
+    }
+    case 'Read': {
+      const path = str('file_path')
+      const offset = typeof args.offset === 'number' ? `:${args.offset}` : ''
+      return `${path}${offset}`
+    }
+    case 'Bash':
+      return str('command').slice(0, 160)
+    case 'Glob':
+    case 'Grep':
+      return str('pattern') || str('query')
+    default: {
+      const json = JSON.stringify(args)
+      return json.length > 160 ? `${json.slice(0, 160)}...` : json
+    }
+  }
+}
+
 // extractText returns the most salient text string from an agent event.
 function extractText(event: SeqEvent['event']): string {
   const kind = typeof event.kind === 'string' ? event.kind : ''
   if (kind === 'tool_use') {
-    const tool = event.tool as { name?: string; input?: unknown } | undefined
-    const inputPreview = tool?.input
-      ? JSON.stringify(tool.input).slice(0, 120)
-      : ''
-    return tool?.name ? `${tool.name} ${inputPreview}` : inputPreview
+    const tool = event.tool as { name?: string; args?: Record<string, unknown> } | undefined
+    const name = tool?.name ?? ''
+    const args = tool?.args ?? {}
+    return formatToolUseDetail(name, args)
   }
   if (kind === 'tool_result') {
-    const tool = event.tool as { content?: string; is_error?: boolean } | undefined
-    if (tool?.is_error) return `error: ${tool.content ?? ''}`
-    return tool?.content ?? ''
+    const tool = event.tool as { summary?: string; is_error?: boolean } | undefined
+    if (tool?.is_error) return `error: ${tool.summary ?? ''}`
+    return tool?.summary ?? ''
   }
   if (kind === 'thinking' || kind === 'assistant_text') {
     return typeof event.text === 'string' ? event.text : ''
@@ -91,7 +120,7 @@ export function AgentBlock({ event, pairedResult }: AgentBlockProps) {
   if (kind === 'tool_result' && !pairedResult) {
     // Render a minimal line so the event is still visible if the parent did
     // not skip it (e.g. orphan tool_result with no matching tool_use).
-    const tool = event.event.tool as { is_error?: boolean; content?: string } | undefined
+    const tool = event.event.tool as { is_error?: boolean; summary?: string } | undefined
     return (
       <div
         data-testid="agent-block"
@@ -102,7 +131,7 @@ export function AgentBlock({ event, pairedResult }: AgentBlockProps) {
           tool_result
         </span>
         <span className="flex-1 min-w-0 text-xs font-mono text-muted-foreground truncate">
-          {tool?.is_error ? 'error' : tool?.content?.slice(0, 80) ?? ''}
+          {tool?.is_error ? 'error' : tool?.summary?.slice(0, 80) ?? ''}
         </span>
         <span className="shrink-0 text-[10px] font-mono text-muted-foreground/50">
           #{event.seq}
@@ -123,9 +152,7 @@ export function AgentBlock({ event, pairedResult }: AgentBlockProps) {
       : false
 
   const isPaired = pairedResult !== undefined
-  const headerLabel = isPaired
-    ? toolName || kind
-    : kind
+  const headerLabel = toolName || kind
 
   return (
     <div
@@ -140,39 +167,38 @@ export function AgentBlock({ event, pairedResult }: AgentBlockProps) {
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
       >
-        {/* Kind / tool-name badge */}
-        <span className={`shrink-0 text-[10px] font-mono leading-tight mt-0.5 ${kindBadgeClass(kind)}`}>
-          {headerLabel}
-        </span>
-
-        {/* Error indicator for paired tool results */}
-        {isPaired && isError && (
+        {/* Stacked label + content */}
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <span
+              title={headerLabel}
+              className={`shrink min-w-0 truncate text-[10px] font-mono leading-tight ${kindBadgeClass(kind)}`}
+            >
+              {headerLabel}
+            </span>
+            {isPaired && isError && (
+              <span
+                className="shrink-0 text-[10px] font-mono leading-tight"
+                style={{ color: 'var(--accent-warn)' }}
+              >
+                err
+              </span>
+            )}
+          </div>
           <span
-            className="shrink-0 text-[10px] font-mono leading-tight mt-0.5"
-            style={{ color: 'var(--accent-warn)' }}
+            className={`min-w-0 text-xs font-mono text-muted-foreground break-words ${
+              expanded ? '' : 'line-clamp-3'
+            }`}
           >
-            err
+            {primaryText || '-'}
           </span>
-        )}
+        </div>
 
-        {/* Primary text preview, collapsed to 3 lines */}
-        <span
-          className={`flex-1 min-w-0 text-xs font-mono text-muted-foreground break-words ${
-            expanded ? '' : 'line-clamp-3'
-          }`}
-        >
-          {primaryText || '-'}
-        </span>
-
-        {/* Chevron */}
-        <span className="shrink-0 text-[10px] font-mono text-muted-foreground/50 mt-0.5">
-          {expanded ? '▲' : '▼'}
-        </span>
-
-        {/* Seq */}
-        <span className="shrink-0 text-[10px] font-mono text-muted-foreground/50 mt-0.5">
-          #{event.seq}
-        </span>
+        {/* Chevron + seq column */}
+        <div className="shrink-0 flex flex-col items-end gap-0.5 text-[10px] font-mono text-muted-foreground/50">
+          <span>{expanded ? '▲' : '▼'}</span>
+          <span>#{event.seq}</span>
+        </div>
       </button>
 
       {expanded && (

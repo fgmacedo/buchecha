@@ -176,7 +176,7 @@ function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, 
         {data.boundaries.map((b, i) => {
           const x = xScale(new Date(b.ms))
           return (
-            <g key={i}>
+            <g key={`boundary-${i}`}>
               <line
                 x1={x}
                 x2={x}
@@ -215,7 +215,7 @@ function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, 
 
           return (
             <rect
-              key={i}
+              key={`bar-${i}`}
               x={x}
               y={y}
               width={barW}
@@ -252,7 +252,7 @@ function GanttPlot({ data, width, height, snapshot, costAgg: _costAgg, onHover, 
           const y = yScale(rm.phaseId) ?? 0
           return (
             <line
-              key={i}
+              key={`retry-${i}`}
               x1={x}
               x2={x}
               y1={y}
@@ -432,6 +432,9 @@ function TooltipContent({ bar, snapshot, costAgg }: TooltipContentProps) {
       </div>
       <TooltipRow label="Phase" value={bar.phaseId} />
       <TooltipRow label="Attempt" value={String(bar.attempt)} />
+      {bar.agentId && (
+        <TooltipRow label="Agent" value={bar.agentId} />
+      )}
       <TooltipRow label="Model" value={model} />
       <TooltipRow label="Effort" value={effort} />
       <TooltipRow label="Duration" value={duration} />

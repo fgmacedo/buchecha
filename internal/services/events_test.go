@@ -12,6 +12,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // liveDeps builds a Deps wired with a freshly created live session,
@@ -79,6 +80,160 @@ func TestEventService_Subscribe_LiveOrderingAndSeq(t *testing.T) {
 		if ev.Index != i+1 {
 			t.Fatalf("got[%d].Index = %d, want %d", i, ev.Index, i+1)
 		}
+	}
+}
+
+// TestEventService_Fanout_EnrichesAgentEventWithActiveTask covers the
+// active-task attribution: when a TaskStarted event opens a task for
+// AgentID X, every AgentEventReceived bearing AgentID X that follows
+// (until TaskCompleted/Approved/NeedsFix) inherits the task id on its
+// embedded AgentEvent. Concurrent agents work because the index is
+// keyed by AgentID. The task id is only inherited when the adapter
+// left it empty; explicit values from upstream are preserved.
+func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
+	t.Parallel()
+	deps, ch := liveDeps(t, "e1234500aaaa")
+	svc := newEventService(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub, err := svc.Subscribe(ctx, "e1234500aaaa", 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Two concurrent agents each working on different tasks.
+	ch <- loop.TaskStarted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
+	ch <- loop.TaskStarted{AgentID: "exec-B", PhaseID: "P2", TaskID: "T2.1"}
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindToolUse,
+		AgentID: "exec-A",
+		Role:    agentcontract.RoleExecutor,
+	}}
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindAssistantText,
+		AgentID: "exec-B",
+		Role:    agentcontract.RoleExecutor,
+	}}
+	// AgentEvent without AgentID stays empty.
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindThinking,
+	}}
+	ch <- loop.TaskCompleted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
+	// After TaskCompleted, exec-A's task is cleared.
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindToolUse,
+		AgentID: "exec-A",
+	}}
+	close(ch)
+
+	var got []SeqEvent
+	for se := range sub {
+		got = append(got, se)
+	}
+	if len(got) != 7 {
+		t.Fatalf("got %d events, want 7", len(got))
+	}
+
+	// got[2]: AgentEventReceived for exec-A with TaskID "T1.1".
+	if are, ok := got[2].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[2] type = %T", got[2].Event)
+	} else if are.Event.TaskID != "T1.1" {
+		t.Fatalf("got[2].TaskID = %q, want %q", are.Event.TaskID, "T1.1")
+	}
+
+	// got[3]: AgentEventReceived for exec-B with TaskID "T2.1".
+	if are, ok := got[3].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[3] type = %T", got[3].Event)
+	} else if are.Event.TaskID != "T2.1" {
+		t.Fatalf("got[3].TaskID = %q, want %q", are.Event.TaskID, "T2.1")
+	}
+
+	// got[4]: AgentEventReceived without AgentID stays unattributed.
+	if are, ok := got[4].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[4] type = %T", got[4].Event)
+	} else if are.Event.TaskID != "" {
+		t.Fatalf("got[4].TaskID = %q, want empty", are.Event.TaskID)
+	}
+
+	// got[6]: AgentEventReceived for exec-A after TaskCompleted; index
+	// was cleared, so no attribution.
+	if are, ok := got[6].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[6] type = %T", got[6].Event)
+	} else if are.Event.TaskID != "" {
+		t.Fatalf("got[6].TaskID = %q, want empty", are.Event.TaskID)
+	}
+}
+
+// TestEventService_Fanout_PersistsEventsLog verifies that when
+// EventsLogPath is set, fanout writes one envelope per SeqEvent so the
+// file round-trips through Replay. The persistence layer is the basis
+// for bcc dev's replay-driven UI development: each live run leaves a
+// fixture on disk that another bcc invocation can subscribe to.
+func TestEventService_Fanout_PersistsEventsLog(t *testing.T) {
+	t.Parallel()
+	deps, ch := liveDeps(t, "e2222200aaaa")
+	logPath := filepath.Join(deps.SessionStore.SessionDir(), "events.ndjson")
+	deps.EventsLogPath = logPath
+	svc := newEventService(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub, err := svc.Subscribe(ctx, "e2222200aaaa", 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	ch <- loop.IterationStarted{Index: 1, MaxIter: 3}
+	ch <- loop.TaskStarted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindToolUse,
+		AgentID: "exec-A",
+		Role:    agentcontract.RoleExecutor,
+		Tool:    &agentcontract.ToolCallInfo{ID: "t1", Name: "Read"},
+	}}
+	ch <- loop.LoopFinished{Reason: "ok", ExitCode: 0}
+
+	for range sub {
+		// drain
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read events.ndjson: %v", err)
+	}
+	lines := 0
+	for _, b := range data {
+		if b == '\n' {
+			lines++
+		}
+	}
+	if lines != 4 {
+		t.Fatalf("events.ndjson has %d lines, want 4: %s", lines, string(data))
+	}
+
+	// Round-trip: Replay must read back the persisted events with the
+	// same Seq order and types.
+	replayCtx, replayCancel := context.WithCancel(context.Background())
+	defer replayCancel()
+	replay, err := svc.Replay(replayCtx, "e2222200aaaa", 0)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	var got []SeqEvent
+	for se := range replay {
+		got = append(got, se)
+	}
+	if len(got) != 4 {
+		t.Fatalf("replay got %d events, want 4", len(got))
+	}
+	if _, ok := got[0].Event.(loop.IterationStarted); !ok {
+		t.Fatalf("got[0] type = %T", got[0].Event)
+	}
+	if are, ok := got[2].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[2] type = %T", got[2].Event)
+	} else if are.Event.TaskID != "T1.1" {
+		t.Fatalf("got[2] task_id = %q, want T1.1 (set by enrichment, persisted post-enrichment)", are.Event.TaskID)
 	}
 }
 

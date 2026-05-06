@@ -12,7 +12,7 @@ import (
 )
 
 // seedBriefing writes both <sessionDir>/briefings/<iter>.json and
-// <sessionDir>/runs/<iter>/briefing.md so the BriefingService has the
+// <sessionDir>/briefings/<iter>.prompt.md so the BriefingService has the
 // same on-disk shape the loop produces. The mtime of the json file is
 // shifted to mtimeOffset so tests can control attempt order
 // deterministically.
@@ -31,12 +31,8 @@ func seedBriefing(t *testing.T, sessionDir, iterationID, phaseID, markdown strin
 	if err := os.Chtimes(jsonPath, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	runDir := filepath.Join(sessionDir, "runs", iterationID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		t.Fatalf("mkdir run: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "briefing.md"), []byte(markdown), 0o644); err != nil {
-		t.Fatalf("write briefing.md: %v", err)
+	if err := os.WriteFile(filepath.Join(briefingsDir, iterationID+".prompt.md"), []byte(markdown), 0o644); err != nil {
+		t.Fatalf("write prompt.md: %v", err)
 	}
 }
 

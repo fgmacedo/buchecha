@@ -33,6 +33,7 @@ var codeStatus = map[services.ErrorCode]int{
 	services.CodePhaseNotFound:   http.StatusNotFound,
 	services.CodeTaskNotFound:    http.StatusNotFound,
 	services.CodeAttemptNotFound: http.StatusNotFound,
+	services.CodePlanNotFound:    http.StatusNotFound,
 	services.CodeRoleNotFound:    http.StatusNotFound,
 	services.CodeSeqGone:         http.StatusGone,
 	services.CodeNotImplemented:  http.StatusNotImplemented,

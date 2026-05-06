@@ -52,9 +52,11 @@ const dtf = new Intl.DateTimeFormat('en', {
 interface SessionRowProps {
   session: SessionMeta
   active: boolean
+  onNavigate?: () => void
+  buttonRef?: React.Ref<HTMLButtonElement>
 }
 
-function SessionRow({ session, active }: SessionRowProps) {
+function SessionRow({ session, active, onNavigate, buttonRef }: SessionRowProps) {
   const [, navigate] = useLocation()
   const [showTooltip, setShowTooltip] = useState(false)
 
@@ -66,11 +68,13 @@ function SessionRow({ session, active }: SessionRowProps) {
 
   const handleClick = useCallback(() => {
     navigate(`/archived/${session.id}`)
-  }, [navigate, session.id])
+    onNavigate?.()
+  }, [navigate, session.id, onNavigate])
 
   return (
     <button
       type="button"
+      ref={buttonRef}
       onClick={handleClick}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
@@ -133,6 +137,12 @@ function SessionRow({ session, active }: SessionRowProps) {
 
 export interface SessionsSidebarProps {
   activeSessionId: string | null
+  // onNavigate fires after the user clicks a session row. The drawer wrapper
+  // uses this to close itself once a selection happens.
+  onNavigate?: () => void
+  // firstButtonRef receives the first session row's button element so a
+  // wrapper (e.g. drawer) can move focus there after opening.
+  firstButtonRef?: React.Ref<HTMLButtonElement>
 }
 
 // SessionsSidebar fetches the session list from GET /api/v1/sessions and
@@ -141,7 +151,7 @@ export interface SessionsSidebarProps {
 // a tooltip with the full spec path and started_at timestamp.
 // The active session row uses --surface-elevated background with a 2px left
 // border in --status-running. Click navigates to /archived/{id} via wouter.
-export function SessionsSidebar({ activeSessionId }: SessionsSidebarProps) {
+export function SessionsSidebar({ activeSessionId, onNavigate, firstButtonRef }: SessionsSidebarProps) {
   const [sessions, setSessions] = useState<SessionMeta[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -197,11 +207,13 @@ export function SessionsSidebar({ activeSessionId }: SessionsSidebarProps) {
         {!loading && !error && sessions.length === 0 && (
           <p className="text-xs text-muted-foreground px-1">No sessions found.</p>
         )}
-        {sessions.map((session) => (
+        {sessions.map((session, idx) => (
           <SessionRow
             key={session.id}
             session={session}
             active={session.id === activeSessionId}
+            onNavigate={onNavigate}
+            buttonRef={idx === 0 ? firstButtonRef : undefined}
           />
         ))}
       </div>

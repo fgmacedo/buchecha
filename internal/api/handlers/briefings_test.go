@@ -16,8 +16,9 @@ import (
 )
 
 // seedBriefing mirrors internal/services.seedBriefing: writes the
-// briefings/<iter>.json metadata pair plus the runs/<iter>/briefing.md
-// content so BriefingService.Get has the on-disk shape it expects. The
+// briefings/<iter>.json metadata pair plus the
+// briefings/<iter>.prompt.md content so BriefingService.Get has the
+// on-disk shape it expects. The
 // mtime offset controls attempt ordering on filesystems that round to
 // the second.
 func seedBriefing(t *testing.T, sessionDir, iterationID, phaseID, markdown string, mtimeOffset time.Duration) {
@@ -35,12 +36,8 @@ func seedBriefing(t *testing.T, sessionDir, iterationID, phaseID, markdown strin
 	if err := os.Chtimes(jsonPath, at, at); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	runDir := filepath.Join(sessionDir, "runs", iterationID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		t.Fatalf("mkdir run: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "briefing.md"), []byte(markdown), 0o644); err != nil {
-		t.Fatalf("write briefing.md: %v", err)
+	if err := os.WriteFile(filepath.Join(briefingsDir, iterationID+".prompt.md"), []byte(markdown), 0o644); err != nil {
+		t.Fatalf("write prompt.md: %v", err)
 	}
 }
 

@@ -501,6 +501,7 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 		for sc.Scan() {
 			line := slices.Clone(sc.Bytes())
 			for _, ev := range streamjson.ParseLine(line, a.timeNow()) {
+				ev = ev.WithOrigin(agentID, role, phaseID, iterationID, attempt)
 				mu.Lock()
 				parsedEvents = append(parsedEvents, ev)
 				if ev.Kind == agentcontract.KindResultSummary && ev.Done != nil {

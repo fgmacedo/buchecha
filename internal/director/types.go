@@ -86,12 +86,16 @@ type AcceptanceItem struct {
 // RoleAssignment carries the Planner's per-phase routing for one role
 // (Briefer, Executor, or Reviewer). Model picks a member of the
 // CapabilityRegistry exposed at planning time; Effort, when present,
-// must be supported by that model. Empty fields fall back to the
-// configured default for the corresponding role; the loop and adapters
-// never invent a value.
+// must be supported by that model. Provider names the vendor that owns
+// the model (e.g. "claude") and is derived from the registry at
+// bcc_plan_emit time so the persisted plan and the SPA can render
+// vendor/model/effort without re-resolving the registry. Empty fields
+// fall back to the configured default for the corresponding role; the
+// loop and adapters never invent a value.
 type RoleAssignment struct {
-	Model  string `json:"model,omitempty"`
-	Effort string `json:"effort,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 }
 
 // PreparedBriefing lets the Planner skip the Briefer agent for a phase

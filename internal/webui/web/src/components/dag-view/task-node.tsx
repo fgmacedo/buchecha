@@ -27,8 +27,10 @@ export interface TaskNodeData {
   [key: string]: unknown
 }
 
-// TaskNodeComponent renders a compact task card with status, retry-budget
-// dots, and a hover tooltip that shows dependencies and timestamps.
+// TaskNodeComponent renders a task card with the title as the headline, the
+// intent clamped to two lines underneath, and small meta in the corners
+// (id, status pill, priority badge, retry-budget dots). A hover tooltip
+// surfaces dependencies, full intent, and timestamps.
 // Clicking the card invokes select({ kind: "task", phaseId, taskId }).
 // Selected state outlines the card: --accent-warn for needs_fix, otherwise
 // --status-running.
@@ -48,6 +50,9 @@ export function TaskNodeComponent({ data }: NodeProps) {
   const outlineColor =
     task.status === 'needs_fix' ? 'var(--accent-warn)' : 'var(--status-running)'
 
+  const title = task.title && task.title.trim().length > 0 ? task.title : task.id
+  const intent = task.intent ?? ''
+
   return (
     <div
       onClick={() => select({ kind: 'task', phaseId, taskId: task.id })}
@@ -56,20 +61,20 @@ export function TaskNodeComponent({ data }: NodeProps) {
       style={{
         width: '100%',
         height: '100%',
-        borderRadius: 4,
+        borderRadius: 6,
         border: selected
           ? `2px solid ${outlineColor}`
           : `1px solid color-mix(in srgb, ${color} 60%, transparent)`,
         backgroundColor: `color-mix(in srgb, ${color} 12%, var(--surface-card))`,
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
-        padding: '0 8px',
+        gap: 4,
+        padding: '8px 10px',
         cursor: 'pointer',
         position: 'relative',
         boxSizing: 'border-box',
         transition: 'border-color 0.1s ease',
-        overflow: 'visible',
+        overflow: 'hidden',
       }}
     >
       <Handle
@@ -93,38 +98,81 @@ export function TaskNodeComponent({ data }: NodeProps) {
         }}
       />
 
-      {/* Top row: task id and status pill */}
+      {/* Headline: task title is the primary label. */}
       <div
         style={{
+          fontFamily: 'var(--font-sans)',
+          fontSize: 12,
+          fontWeight: 600,
+          color: 'var(--color-foreground)',
+          lineHeight: 1.25,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          wordBreak: 'break-word',
+        }}
+        title={title}
+      >
+        {title}
+      </div>
+
+      {/* Intent: 2-line clamp with native title tooltip as a fallback. */}
+      {intent && (
+        <div
+          style={{
+            fontSize: 10,
+            color: 'var(--color-muted-foreground)',
+            lineHeight: 1.35,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            wordBreak: 'break-word',
+          }}
+          title={intent}
+        >
+          {intent}
+        </div>
+      )}
+
+      {/* Meta footer: id (small, muted), status pill, priority, retry dots. */}
+      <div
+        style={{
+          marginTop: 'auto',
           display: 'flex',
           alignItems: 'center',
-          gap: 4,
-          overflow: 'hidden',
+          gap: 6,
+          minWidth: 0,
         }}
       >
         <span
           style={{
             fontFamily: 'var(--font-mono)',
-            fontSize: 10,
-            fontWeight: 700,
-            color,
+            fontSize: 9,
+            color: 'var(--color-muted-foreground)',
             letterSpacing: '0.03em',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            flex: 1,
-            minWidth: 0,
+            opacity: 0.8,
           }}
+          title={task.id}
         >
           {task.id}
         </span>
+        {typeof task.priority === 'number' && (
+          <PriorityBadge priority={task.priority} />
+        )}
+        {task.retry_budget > 0 && <RetryDots budget={task.retry_budget} />}
         <span
           style={{
+            marginLeft: 'auto',
             fontSize: 8,
             color,
             border: `1px solid color-mix(in srgb, ${color} 50%, transparent)`,
             borderRadius: 2,
-            padding: '0 3px',
+            padding: '0 4px',
             textTransform: 'uppercase',
             letterSpacing: '0.04em',
             flexShrink: 0,
@@ -135,15 +183,39 @@ export function TaskNodeComponent({ data }: NodeProps) {
         </span>
       </div>
 
-      {/* Retry budget dots */}
-      {task.retry_budget > 0 && (
-        <RetryDots budget={task.retry_budget} />
-      )}
-
       {hovered && (
-        <TaskTooltip task={task} startedAt={startedAt} endedAt={endedAt} />
+        <TaskTooltip
+          task={task}
+          startedAt={startedAt}
+          endedAt={endedAt}
+        />
       )}
     </div>
+  )
+}
+
+// PriorityBadge renders the priority as a compact numeric chip. Higher
+// numbers carry more accent saturation so the eye picks them up faster.
+function PriorityBadge({ priority }: { priority: number }) {
+  return (
+    <span
+      title={`priority ${priority}`}
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9,
+        fontWeight: 700,
+        color: 'var(--color-accent)',
+        backgroundColor:
+          'color-mix(in srgb, var(--color-accent) 18%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)',
+        borderRadius: 3,
+        padding: '0 4px',
+        lineHeight: 1.5,
+        flexShrink: 0,
+      }}
+    >
+      P{priority}
+    </span>
   )
 }
 
@@ -152,7 +224,10 @@ export function TaskNodeComponent({ data }: NodeProps) {
 function RetryDots({ budget }: { budget: number }) {
   const count = Math.min(budget, 8)
   return (
-    <div style={{ display: 'flex', gap: 3, marginTop: 3 }}>
+    <div
+      style={{ display: 'flex', gap: 3, alignItems: 'center' }}
+      title={`retry budget ${budget}`}
+    >
       {Array.from({ length: count }).map((_, i) => (
         <span
           key={i}
@@ -171,8 +246,8 @@ function RetryDots({ budget }: { budget: number }) {
   )
 }
 
-// TaskTooltip floats above the task card on hover. Displays dependencies and
-// the started/ended timestamps when available.
+// TaskTooltip floats above the task card on hover. Displays full intent,
+// dependencies, and the started/ended timestamps when available.
 function TaskTooltip({
   task,
   startedAt,
@@ -191,8 +266,8 @@ function TaskTooltip({
         bottom: 'calc(100% + 8px)',
         left: 0,
         zIndex: 200,
-        minWidth: 200,
-        maxWidth: 300,
+        minWidth: 220,
+        maxWidth: 320,
         backgroundColor: 'var(--surface-overlay)',
         border: '1px solid var(--color-border)',
         borderRadius: 6,
@@ -201,19 +276,40 @@ function TaskTooltip({
         pointerEvents: 'none',
       }}
     >
-      <div style={{ fontSize: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div
+        style={{
+          fontSize: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
+        <TooltipRow label="ID" value={task.id} mono />
+        {task.intent && <TooltipRow label="Intent" value={task.intent} />}
         <TooltipRow
           label="Depends on"
           value={deps.length > 0 ? deps.join(', ') : 'none'}
+          mono
         />
-        {startedAt && <TooltipRow label="Started" value={startedAt} />}
-        {endedAt && <TooltipRow label="Ended" value={endedAt} />}
+        {typeof task.priority === 'number' && (
+          <TooltipRow label="Priority" value={String(task.priority)} mono />
+        )}
+        {startedAt && <TooltipRow label="Started" value={startedAt} mono />}
+        {endedAt && <TooltipRow label="Ended" value={endedAt} mono />}
       </div>
     </div>
   )
 }
 
-function TooltipRow({ label, value }: { label: string; value: string }) {
+function TooltipRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
   return (
     <div style={{ display: 'flex', gap: 6 }}>
       <span
@@ -227,9 +323,9 @@ function TooltipRow({ label, value }: { label: string; value: string }) {
       </span>
       <span
         style={{
-          fontFamily: 'var(--font-mono)',
+          fontFamily: mono ? 'var(--font-mono)' : 'var(--font-sans)',
           color: 'var(--color-foreground)',
-          wordBreak: 'break-all',
+          wordBreak: 'break-word',
         }}
       >
         {value}

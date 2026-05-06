@@ -24,7 +24,7 @@ type Briefing struct {
 }
 
 // BriefingService reads rendered briefings under
-// .bcc/sessions/<id>/runs/<iteration>/briefing.md. The service does
+// .bcc/sessions/<id>/briefings/<iteration>.prompt.md. The service does
 // not parse the markdown; the file shape is whatever the Briefer
 // agent and the loop materialize at run time.
 type BriefingService struct {
@@ -77,7 +77,7 @@ func (s *BriefingService) Get(ctx context.Context, sessionID, phaseID string, at
 		})
 	}
 	chosen := matches[attempt-1]
-	body, err := os.ReadFile(filepath.Join(sessionDir, "runs", chosen.IterationID, "briefing.md"))
+	body, err := os.ReadFile(filepath.Join(sessionDir, "briefings", chosen.IterationID+".prompt.md"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Briefing{}, ErrAttemptNotFound.WithDetails(map[string]any{

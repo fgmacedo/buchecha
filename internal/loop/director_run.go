@@ -636,14 +636,14 @@ func (b *taskEventBridge) OnCall(method, agentID string, _ dag.Role, input map[s
 	var ev Event
 	switch method {
 	case dag.MethodTaskStarted:
-		ev = TaskStarted{PhaseID: phase, TaskID: id, At: now}
+		ev = TaskStarted{AgentID: agentID, PhaseID: phase, TaskID: id, At: now}
 	case dag.MethodTaskCompleted:
-		ev = TaskCompleted{PhaseID: phase, TaskID: id, At: now}
+		ev = TaskCompleted{AgentID: agentID, PhaseID: phase, TaskID: id, At: now}
 	case dag.MethodTaskApproved:
-		ev = TaskApproved{PhaseID: phase, TaskID: id, At: now}
+		ev = TaskApproved{AgentID: agentID, PhaseID: phase, TaskID: id, At: now}
 	case dag.MethodTaskNeedsFix:
 		feedback, _ := input["feedback"].(string)
-		ev = TaskNeedsFix{PhaseID: phase, TaskID: id, Note: feedback, At: now}
+		ev = TaskNeedsFix{AgentID: agentID, PhaseID: phase, TaskID: id, Note: feedback, At: now}
 	default:
 		return
 	}
