@@ -197,6 +197,62 @@ func (s *SessionService) Snapshot(ctx context.Context, id string) (Snapshot, err
 	}, nil
 }
 
+// Plan reads <sessionDir>/plan.json for the session id and returns the
+// Director's persisted plan. The structural fields (phases, tasks,
+// acceptance) are stable after the planner emits; status fields on
+// each task track the disk write at the moment the loop persisted the
+// plan, which is "pending" for every task right after planning. Live
+// status changes flow over the events stream; consumers that need the
+// running DAG snapshot still go through Snapshot. LiveSessionAlias
+// resolves to the bound live session, then to LiveAliasArchivedID for
+// dev mode; ErrSessionNotFound covers unknown ids and ErrPlanNotFound
+// covers a session whose planner has not emitted yet.
+func (s *SessionService) Plan(ctx context.Context, id string) (*director.Plan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return nil, ErrInvalidRequest.WithMessage("session service: empty id")
+	}
+	if id == LiveSessionAlias {
+		if live := s.liveSession(); live != nil {
+			id = live.ID
+		} else if s.deps.LiveAliasArchivedID != "" {
+			id = s.deps.LiveAliasArchivedID
+		} else {
+			return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+		}
+	}
+	if s.deps.SessionStore != nil {
+		if live := s.deps.SessionStore.Session(); live != nil && live.ID == id {
+			plan, err := s.deps.SessionStore.ReadPlan()
+			return resolvePlanReadError(plan, err, id)
+		}
+	}
+	if s.deps.SessionsBaseDir == "" {
+		return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+	}
+	store, err := director.OpenSession(s.deps.SessionsBaseDir, id)
+	if err != nil {
+		if errors.Is(err, director.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+			return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
+		}
+		return nil, fmt.Errorf("services: plan session %q: %w", id, err)
+	}
+	plan, err := store.ReadPlan()
+	return resolvePlanReadError(plan, err, id)
+}
+
+func resolvePlanReadError(plan *director.Plan, err error, id string) (*director.Plan, error) {
+	if err == nil {
+		return plan, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrPlanNotFound.WithDetails(map[string]any{"id": id})
+	}
+	return nil, fmt.Errorf("services: read plan %q: %w", id, err)
+}
+
 func (s *SessionService) liveSession() *director.Session {
 	if s.deps.SessionStore == nil {
 		return nil

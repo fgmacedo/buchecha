@@ -22,6 +22,7 @@ const (
 	CodePhaseNotFound   ErrorCode = "phase_not_found"
 	CodeTaskNotFound    ErrorCode = "task_not_found"
 	CodeAttemptNotFound ErrorCode = "attempt_not_found"
+	CodePlanNotFound    ErrorCode = "plan_not_found"
 	CodeRoleNotFound    ErrorCode = "role_not_found"
 	CodeSeqGone         ErrorCode = "seq_gone"
 	CodeNotImplemented  ErrorCode = "not_implemented"
@@ -137,6 +138,7 @@ var (
 	ErrPhaseNotFound   = newError(CodePhaseNotFound, "phase not found")
 	ErrTaskNotFound    = newError(CodeTaskNotFound, "task not found")
 	ErrAttemptNotFound = newError(CodeAttemptNotFound, "attempt not found")
+	ErrPlanNotFound    = newError(CodePlanNotFound, "plan not found")
 	ErrRoleNotFound    = newError(CodeRoleNotFound, "role not found")
 	ErrSeqGone         = newError(CodeSeqGone, "sequence number predates the ring buffer")
 	ErrNotImplemented  = newError(CodeNotImplemented, "not implemented")

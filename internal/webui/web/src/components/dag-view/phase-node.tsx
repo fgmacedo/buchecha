@@ -50,10 +50,13 @@ export interface PhaseNodeData {
   [key: string]: unknown
 }
 
-// PhaseNodeComponent renders a phase container group with a header (id, deps,
-// status pill), a 4xN task chip grid in the body, and a footer (done/total,
-// attempt, USD). Child task nodes are positioned by xyflow in the body area.
-// Click anywhere on the header invokes select({ kind: "phase", phaseId }).
+// PhaseNodeComponent renders a phase container group. The header puts the
+// phase title front and center, with the id, dependencies, priority badge,
+// parallelizable indicator, and aggregated status pill arranged as small
+// meta around it; the intent reads as a clamped subtitle. The body hosts
+// xyflow-positioned child task nodes; the footer surfaces done/total,
+// attempt, and cost. Click anywhere on the header invokes
+// select({ kind: "phase", phaseId }).
 export function PhaseNodeComponent({ data }: NodeProps) {
   const { phase, tasks, costUSD, attempt } = data as PhaseNodeData
   const [hovered, setHovered] = useState(false)
@@ -65,6 +68,10 @@ export function PhaseNodeComponent({ data }: NodeProps) {
   const aggStatus = aggregatePhaseStatus(tasks)
   const statusColor = PHASE_STATUS_COLOR[aggStatus]
   const doneCount = tasks.filter((t) => t.status === 'done').length
+
+  const title =
+    phase.title && phase.title.trim().length > 0 ? phase.title : phase.id
+  const intent = phase.intent ?? ''
 
   return (
     <div
@@ -96,70 +103,122 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         }}
       />
 
-      {/* Header: phase id, depends_on chips, aggregated status pill */}
+      {/* Header: title is the headline; id, deps, priority, parallelizable,
+          and the aggregated status sit around it as small meta. The intent
+          reads as a clamped subtitle below. */}
       <div
         data-testid={`phase-header-${phase.id}`}
         onClick={() => select({ kind: 'phase', phaseId: phase.id })}
         style={{
-          padding: '6px 12px',
+          padding: '8px 12px',
           display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          flexWrap: 'wrap',
+          flexDirection: 'column',
+          gap: 4,
           borderBottom: '1px solid var(--color-border)',
           borderRadius: '7px 7px 0 0',
           cursor: 'pointer',
           flexShrink: 0,
-          minHeight: 40,
         }}
       >
-        <span
+        {/* Meta row: id chip, deps, parallelizable, priority, status. */}
+        <div
           style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            fontWeight: 700,
-            color: 'var(--color-foreground)',
-            letterSpacing: '0.04em',
-            userSelect: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'wrap',
+            minHeight: 16,
           }}
         >
-          {phase.id}
-        </span>
-
-        {(phase.depends_on ?? []).map((dep) => (
           <span
-            key={dep}
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: 9,
               color: 'var(--color-muted-foreground)',
-              border: '1px solid var(--color-border)',
+              letterSpacing: '0.04em',
+              userSelect: 'none',
+              opacity: 0.85,
+            }}
+            title={phase.id}
+          >
+            {phase.id}
+          </span>
+
+          {(phase.depends_on ?? []).map((dep) => (
+            <span
+              key={dep}
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 9,
+                color: 'var(--color-muted-foreground)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 3,
+                padding: '1px 5px',
+                lineHeight: 1.5,
+                userSelect: 'none',
+              }}
+            >
+              {dep}
+            </span>
+          ))}
+
+          {phase.parallelizable && <ParallelChip />}
+
+          {typeof phase.priority === 'number' && (
+            <PriorityBadge priority={phase.priority} />
+          )}
+
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: 9,
+              color: statusColor,
+              border: `1px solid ${statusColor}`,
               borderRadius: 3,
-              padding: '1px 5px',
+              padding: '1px 6px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
               lineHeight: 1.5,
               userSelect: 'none',
             }}
           >
-            {dep}
+            {aggStatus.replace(/_/g, ' ')}
           </span>
-        ))}
+        </div>
 
-        <span
+        {/* Headline: phase title is the primary label. */}
+        <div
           style={{
-            marginLeft: 'auto',
-            fontSize: 9,
-            color: statusColor,
-            border: `1px solid ${statusColor}`,
-            borderRadius: 3,
-            padding: '1px 6px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-            lineHeight: 1.5,
-            userSelect: 'none',
+            fontFamily: 'var(--font-sans)',
+            fontSize: 15,
+            fontWeight: 600,
+            color: 'var(--color-foreground)',
+            lineHeight: 1.25,
+            wordBreak: 'break-word',
           }}
+          title={title}
         >
-          {aggStatus.replace(/_/g, ' ')}
-        </span>
+          {title}
+        </div>
+
+        {/* Intent: clamped to two lines; native tooltip shows full text. */}
+        {intent && (
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--color-muted-foreground)',
+              lineHeight: 1.35,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              wordBreak: 'break-word',
+            }}
+            title={intent}
+          >
+            {intent}
+          </div>
+        )}
       </div>
 
       {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}
@@ -221,5 +280,64 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         }}
       />
     </div>
+  )
+}
+
+// PriorityBadge renders the priority as a compact numeric chip, mirroring
+// the task-level badge so users learn one visual pattern.
+function PriorityBadge({ priority }: { priority: number }) {
+  return (
+    <span
+      title={`priority ${priority}`}
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9,
+        fontWeight: 700,
+        color: 'var(--color-accent)',
+        backgroundColor:
+          'color-mix(in srgb, var(--color-accent) 18%, transparent)',
+        border:
+          '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)',
+        borderRadius: 3,
+        padding: '1px 5px',
+        lineHeight: 1.5,
+      }}
+    >
+      P{priority}
+    </span>
+  )
+}
+
+// ParallelChip surfaces the parallelizable flag with a compact glyph plus
+// label. The double-vertical-bar character reads as a parallel marker
+// without leaning on emoji.
+function ParallelChip() {
+  return (
+    <span
+      title="parallelizable"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        fontFamily: 'var(--font-mono)',
+        fontSize: 9,
+        fontWeight: 600,
+        color: 'var(--status-running)',
+        backgroundColor:
+          'color-mix(in srgb, var(--status-running) 14%, transparent)',
+        border:
+          '1px solid color-mix(in srgb, var(--status-running) 40%, transparent)',
+        borderRadius: 3,
+        padding: '1px 5px',
+        lineHeight: 1.5,
+        letterSpacing: '0.04em',
+        textTransform: 'uppercase',
+      }}
+    >
+      <span aria-hidden="true" style={{ fontWeight: 700 }}>
+        {'∥'}
+      </span>
+      par
+    </span>
   )
 }

@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
 import { useEvents } from './hooks/use-events'
+import { usePlan } from './hooks/use-plan'
 import { useView } from './hooks/use-view'
 import { SelectionProvider, useSelection } from './hooks/use-selection'
 import { Header } from './components/header'
@@ -66,7 +67,30 @@ function AppShell({ sessionId }: AppShellProps) {
   const [view, setView] = useView()
 
   const { snapshot, refetch } = useSnapshot(sessionId)
+  const { plan, refetch: refetchPlan } = usePlan(sessionId)
+  void plan
   const { events } = useEvents(sessionId, { onSeqGone: refetch })
+
+  // Refetch the plan whenever a phase_planned event lands. The planner
+  // only emits once per spec hash, but bcc replans on drift, so the
+  // SPA needs to pick up the new structure incrementally without a
+  // full snapshot reload. Tracks the high-water seq with a ref so a
+  // re-render or a new event batch only acts on what just arrived;
+  // resets on session switch.
+  const lastPhasePlannedSeqRef = useRef(0)
+  useEffect(() => {
+    lastPhasePlannedSeqRef.current = 0
+  }, [sessionId])
+  useEffect(() => {
+    if (events.length === 0) return
+    let triggered = false
+    for (const ev of events) {
+      if (ev.seq <= lastPhasePlannedSeqRef.current) continue
+      lastPhasePlannedSeqRef.current = ev.seq
+      if (ev.event.type === 'phase_planned') triggered = true
+    }
+    if (triggered) refetchPlan()
+  }, [events, refetchPlan])
 
   return (
     <SelectionProvider sessionId={sessionId}>
