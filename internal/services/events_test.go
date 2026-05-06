@@ -12,6 +12,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // liveDeps builds a Deps wired with a freshly created live session,
@@ -79,6 +80,88 @@ func TestEventService_Subscribe_LiveOrderingAndSeq(t *testing.T) {
 		if ev.Index != i+1 {
 			t.Fatalf("got[%d].Index = %d, want %d", i, ev.Index, i+1)
 		}
+	}
+}
+
+// TestEventService_Fanout_EnrichesAgentEventWithActiveTask covers the
+// active-task attribution: when a TaskStarted event opens a task for
+// AgentID X, every AgentEventReceived bearing AgentID X that follows
+// (until TaskCompleted/Approved/NeedsFix) inherits the task id on its
+// embedded AgentEvent. Concurrent agents work because the index is
+// keyed by AgentID. The task id is only inherited when the adapter
+// left it empty; explicit values from upstream are preserved.
+func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
+	t.Parallel()
+	deps, ch := liveDeps(t, "e1234500aaaa")
+	svc := newEventService(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub, err := svc.Subscribe(ctx, "e1234500aaaa", 0)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// Two concurrent agents each working on different tasks.
+	ch <- loop.TaskStarted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
+	ch <- loop.TaskStarted{AgentID: "exec-B", PhaseID: "P2", TaskID: "T2.1"}
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindToolUse,
+		AgentID: "exec-A",
+		Role:    agentcontract.RoleExecutor,
+	}}
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindAssistantText,
+		AgentID: "exec-B",
+		Role:    agentcontract.RoleExecutor,
+	}}
+	// AgentEvent without AgentID stays empty.
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindThinking,
+	}}
+	ch <- loop.TaskCompleted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
+	// After TaskCompleted, exec-A's task is cleared.
+	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind:    agentcontract.KindToolUse,
+		AgentID: "exec-A",
+	}}
+	close(ch)
+
+	var got []SeqEvent
+	for se := range sub {
+		got = append(got, se)
+	}
+	if len(got) != 7 {
+		t.Fatalf("got %d events, want 7", len(got))
+	}
+
+	// got[2]: AgentEventReceived for exec-A with TaskID "T1.1".
+	if are, ok := got[2].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[2] type = %T", got[2].Event)
+	} else if are.Event.TaskID != "T1.1" {
+		t.Fatalf("got[2].TaskID = %q, want %q", are.Event.TaskID, "T1.1")
+	}
+
+	// got[3]: AgentEventReceived for exec-B with TaskID "T2.1".
+	if are, ok := got[3].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[3] type = %T", got[3].Event)
+	} else if are.Event.TaskID != "T2.1" {
+		t.Fatalf("got[3].TaskID = %q, want %q", are.Event.TaskID, "T2.1")
+	}
+
+	// got[4]: AgentEventReceived without AgentID stays unattributed.
+	if are, ok := got[4].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[4] type = %T", got[4].Event)
+	} else if are.Event.TaskID != "" {
+		t.Fatalf("got[4].TaskID = %q, want empty", are.Event.TaskID)
+	}
+
+	// got[6]: AgentEventReceived for exec-A after TaskCompleted; index
+	// was cleared, so no attribution.
+	if are, ok := got[6].Event.(loop.AgentEventReceived); !ok {
+		t.Fatalf("got[6] type = %T", got[6].Event)
+	} else if are.Event.TaskID != "" {
+		t.Fatalf("got[6].TaskID = %q, want empty", are.Event.TaskID)
 	}
 }
 

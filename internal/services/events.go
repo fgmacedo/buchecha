@@ -244,8 +244,47 @@ func (s *EventService) ensureFanout() {
 // appends to the ring, and pushes to each live subscriber's inbox.
 // On LoopFinished (or LoopEvents close) every subscriber inbox is
 // closed and the relay goroutines drain.
+//
+// Before stamping seq the fan-out enriches AgentEventReceived events
+// with the active task id of the agent that produced them. The active
+// task is tracked locally via TaskStarted / TaskCompleted /
+// TaskApproved / TaskNeedsFix events that pass through the same
+// channel, all of which now carry an AgentID. The map lives in the
+// goroutine's stack so no lock is needed.
+//
+// Window-of-race: TaskStarted (handler-side) and the subsequent
+// AgentEventReceived (adapter-side) are produced by different
+// publishers; under unlikely interleavings an event may arrive before
+// its TaskStarted and miss attribution. Best-effort by design; if it
+// becomes a problem we can buffer-and-reorder by timestamp here.
 func (s *EventService) fanout() {
+	activeTaskByAgent := make(map[string]string)
 	for ev := range s.deps.LoopEvents {
+		switch e := ev.(type) {
+		case loop.TaskStarted:
+			if e.AgentID != "" {
+				activeTaskByAgent[e.AgentID] = e.TaskID
+			}
+		case loop.TaskCompleted:
+			if e.AgentID != "" {
+				delete(activeTaskByAgent, e.AgentID)
+			}
+		case loop.TaskApproved:
+			if e.AgentID != "" {
+				delete(activeTaskByAgent, e.AgentID)
+			}
+		case loop.TaskNeedsFix:
+			if e.AgentID != "" {
+				delete(activeTaskByAgent, e.AgentID)
+			}
+		case loop.AgentEventReceived:
+			if id := e.Event.AgentID; id != "" && e.Event.TaskID == "" {
+				if t, ok := activeTaskByAgent[id]; ok {
+					e.Event.TaskID = t
+					ev = e
+				}
+			}
+		}
 		s.mu.Lock()
 		seq := s.nextSeq
 		s.nextSeq++
