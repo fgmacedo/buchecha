@@ -1,5 +1,5 @@
 import '@xyflow/react/dist/style.css'
-import { useCallback, useMemo, useEffect } from 'react'
+import { useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   ReactFlow,
   Background,
@@ -238,6 +238,60 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
   useEffect(() => {
     setNodes(layoutNodes)
   }, [layoutNodes, setNodes])
+
+  // Live status patch: apply task_started / task_completed / task_approved
+  // / task_needs_fix events to the matching task nodes via setNodes(prev =>
+  // prev.map(...)). Returning prev when nothing changed keeps the node
+  // refs stable for unchanged nodes so xyflow's StoreUpdater does not
+  // re-process the whole list. lastAppliedSeqRef tracks the high-water
+  // mark; resets on session switch. The bulk setNodes(layoutNodes) above
+  // runs only on plan/dag refetches, so this effect carries the in-between
+  // status changes during a live run without rebuilding layoutNodes.
+  const lastTaskSeqRef = useRef(0)
+  useEffect(() => {
+    lastTaskSeqRef.current = 0
+  }, [sessionId])
+  useEffect(() => {
+    if (events.length === 0) return
+    const high = lastTaskSeqRef.current
+    const updates = new Map<string, string>()
+    let pending = high
+    for (const ev of events) {
+      if (ev.seq <= high) continue
+      if (ev.seq > pending) pending = ev.seq
+      const t = ev.event.type
+      let nextStatus = ''
+      if (t === 'task_started') nextStatus = 'in_progress'
+      else if (t === 'task_completed' || t === 'task_approved') nextStatus = 'done'
+      else if (t === 'task_needs_fix') nextStatus = 'needs_fix'
+      else continue
+      const phaseId = typeof ev.event.phase_id === 'string' ? ev.event.phase_id : ''
+      const taskId = typeof ev.event.task_id === 'string' ? ev.event.task_id : ''
+      if (!phaseId || !taskId) continue
+      updates.set(`task:${phaseId}:${taskId}`, nextStatus)
+    }
+    lastTaskSeqRef.current = pending
+    if (updates.size === 0) return
+    setNodes((prev) => {
+      let changed = false
+      const next = prev.map((n) => {
+        const status = updates.get(n.id)
+        if (!status) return n
+        const data = n.data as { task?: { status?: string } } | undefined
+        const current = data?.task?.status
+        if (current === status) return n
+        changed = true
+        return {
+          ...n,
+          data: {
+            ...(data ?? {}),
+            task: { ...(data?.task ?? {}), status },
+          },
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [events, setNodes])
 
   // Persist user-dragged positions after a drag completes.
   const handleNodesChange = useCallback(
