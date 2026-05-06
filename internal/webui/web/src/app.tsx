@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Router, Route, useParams } from 'wouter'
 import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
@@ -8,7 +8,7 @@ import { useView } from './hooks/use-view'
 import { SelectionProvider, useSelection } from './hooks/use-selection'
 import { Header } from './components/header'
 import { RightPane } from './components/right-pane'
-import { SessionsSidebar } from './components/sessions-sidebar'
+import { SessionsDrawer, SessionsDrawerTrigger } from './components/sessions-drawer'
 
 // Both views are lazy-loaded so the DAG and Gantt bundles (xyflow, dagre,
 // d3-axis) are code-split from the main chunk to stay within the 600 KB
@@ -65,6 +65,7 @@ export function EscapeHandler() {
 
 function AppShell({ sessionId }: AppShellProps) {
   const [view, setView] = useView()
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   const { snapshot, refetch } = useSnapshot(sessionId)
   const { plan, refetch: refetchPlan } = usePlan(sessionId)
@@ -105,16 +106,24 @@ function AppShell({ sessionId }: AppShellProps) {
           events={events}
           view={view}
           onViewChange={setView}
+          leading={
+            <SessionsDrawerTrigger
+              onClick={() => setDrawerOpen(true)}
+              expanded={drawerOpen}
+            />
+          }
+        />
+        <SessionsDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          activeSessionId={snapshot?.session.id ?? null}
         />
         <div
           className="grid min-h-0"
           style={{
-            gridTemplateColumns: `clamp(14rem, 18vw, 20rem) minmax(0, 1fr) clamp(18rem, 22vw, 28rem)`,
+            gridTemplateColumns: `minmax(0, 1fr) clamp(18rem, 22vw, 28rem)`,
           }}
         >
-          <div className="border-r border-border bg-muted overflow-hidden">
-            <SessionsSidebar activeSessionId={snapshot?.session.id ?? null} />
-          </div>
           <main
             aria-label="Main"
             className="flex min-w-0 flex-col overflow-hidden"

@@ -81,6 +81,9 @@ export interface HeaderProps {
   events: SeqEvent[]
   view: ViewMode
   onViewChange: (v: ViewMode) => void
+  // leading lets AppShell mount a sessions-drawer trigger as the first child
+  // of the header without coupling Header to the drawer implementation.
+  leading?: React.ReactNode
 }
 
 // Header renders the top chrome band at 48px height (h-12).
@@ -88,7 +91,7 @@ export interface HeaderProps {
 // and iter X / Y | view toggle (DAG / Activity) | CostMeter.
 // Below 1024px: spec filename collapses to a tooltip on the session id and
 // CostMeter collapses to its USD pill only.
-export function Header({ snapshot, events, view, onViewChange }: HeaderProps) {
+export function Header({ snapshot, events, view, onViewChange, leading }: HeaderProps) {
   const costAgg = useCostAggregator(events)
   const isCompact = useIsCompact()
 
@@ -101,6 +104,7 @@ export function Header({ snapshot, events, view, onViewChange }: HeaderProps) {
       aria-label="Header"
       className="flex items-center h-12 border-b border-border bg-muted px-4 gap-4"
     >
+      {leading}
       {/* Session identity: id (mono short) + spec filename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {session ? (
