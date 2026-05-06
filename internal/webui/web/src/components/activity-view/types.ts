@@ -5,6 +5,10 @@ export type BarStatus = 'completed' | 'approved' | 'needs_fix' | 'running'
 // the duration between the task_started and its terminal event; in-flight
 // tasks have endMs=null. iterationIndex is the global iteration counter
 // from the iter_started event that was active when this bar opened.
+// agentId, when present, identifies which agent owned the task during
+// this bar; renderers may group or color bars per agent. Optional for
+// backward-compatibility with archived sessions that predate the
+// origin enrichment.
 export interface Bar {
   phaseId: string
   taskId: string
@@ -13,6 +17,7 @@ export interface Bar {
   endMs: number | null
   status: BarStatus
   iterationIndex: number
+  agentId?: string
 }
 
 // IterBoundary marks an iteration start or end on the time axis.

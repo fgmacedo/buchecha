@@ -432,6 +432,9 @@ function TooltipContent({ bar, snapshot, costAgg }: TooltipContentProps) {
       </div>
       <TooltipRow label="Phase" value={bar.phaseId} />
       <TooltipRow label="Attempt" value={String(bar.attempt)} />
+      {bar.agentId && (
+        <TooltipRow label="Agent" value={bar.agentId} />
+      )}
       <TooltipRow label="Model" value={model} />
       <TooltipRow label="Effort" value={effort} />
       <TooltipRow label="Duration" value={duration} />

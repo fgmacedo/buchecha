@@ -31,6 +31,7 @@ interface OpenBar {
   phaseId: string
   taskId: string
   iterationIndex: number
+  agentId?: string
 }
 
 // computeGanttData derives bars, iteration boundaries, and retry markers
@@ -102,7 +103,8 @@ export function computeGanttData(events: SeqEvent[]): GanttData {
           needsFixMs.set(key, [])
         }
 
-        open.set(key, { attempt: count, startMs: at, phaseId, taskId, iterationIndex: currentIterationIndex })
+        const agentId = asString(p['agent_id']) ?? undefined
+        open.set(key, { attempt: count, startMs: at, phaseId, taskId, iterationIndex: currentIterationIndex, agentId })
         break
       }
       case 'task_completed': {

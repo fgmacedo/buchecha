@@ -131,14 +131,18 @@ export function DAGView({ snapshot, sessionId, events }: DAGViewProps) {
         }
       }
 
-      // Collect per-task started/ended timestamps.
+      // Collect per-task started/ended timestamps. agent_id, when
+      // present, identifies which agent owns this task; the post-
+      // origin enrichment fills it on the wire so consumers can
+      // surface it in the UI without grouping by event ordering.
       if (ev.type === 'task_started') {
         const taskId = ev.task_id as string | undefined
         const phaseId = ev.phase_id as string | undefined
         const at = ev.at as string | undefined
+        const agentId = ev.agent_id as string | undefined
         if (taskId && phaseId && at) {
           const key = `${phaseId}:${taskId}`
-          tsMap[key] = { ...(tsMap[key] ?? {}), startedAt: at }
+          tsMap[key] = { ...(tsMap[key] ?? {}), startedAt: at, agentId }
         }
       }
       if (ev.type === 'task_completed') {

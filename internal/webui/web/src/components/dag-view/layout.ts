@@ -68,9 +68,13 @@ function layoutTasksInPhase(phase: DAGPhase): {
 
 // TaskTimestamps holds optional start/end timestamps for a task, keyed by
 // "<phaseId>:<taskId>" in the outer map that callers build from events.
+// agentId, when present, is the agent_id captured from the latest
+// task_started for this task; renderers may color or label the node
+// per agent once concurrent agents become a thing.
 export interface TaskTimestamps {
   startedAt?: string
   endedAt?: string
+  agentId?: string
 }
 
 // buildLayout computes the full xyflow node+edge list from dag data.
