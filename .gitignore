@@ -52,3 +52,5 @@ internal/webui/web/*.tsbuildinfo
 # Runtime / scratch
 /tmp/
 .bcc-cache/
+.claude/scheduled_tasks.lock
+testdata/diag-dag-output/
