@@ -4,6 +4,7 @@ import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, TaskStatus } from './types'
 import { AgentHistoryBadge } from './agent-history-badge'
 import type { AgentCard } from '../../hooks/use-agents'
+import { StatusPill, type LifecycleStatus } from '../status-pill'
 
 // STATUS_COLOR_MAP maps TaskStatus values to CSS variable references.
 const STATUS_COLOR_MAP: Record<TaskStatus, string> = {
@@ -15,10 +16,6 @@ const STATUS_COLOR_MAP: Record<TaskStatus, string> = {
 
 function statusColor(status: string): string {
   return STATUS_COLOR_MAP[status as TaskStatus] ?? 'var(--status-pending)'
-}
-
-function statusLabel(status: string): string {
-  return status.replace(/_/g, ' ')
 }
 
 export interface TaskNodeData {
@@ -168,21 +165,12 @@ export function TaskNodeComponent({ data }: NodeProps) {
           <PriorityBadge priority={task.priority} />
         )}
         {task.retry_budget > 0 && <RetryDots budget={task.retry_budget} />}
-        <span
-          style={{
-            marginLeft: 'auto',
-            fontSize: 8,
-            color,
-            border: `1px solid color-mix(in srgb, ${color} 50%, transparent)`,
-            borderRadius: 2,
-            padding: '0 4px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-            flexShrink: 0,
-            lineHeight: 1.6,
-          }}
-        >
-          {statusLabel(task.status)}
+        <span style={{ marginLeft: 'auto' }}>
+          <StatusPill
+            status={task.status as LifecycleStatus}
+            size="sm"
+            pulseLive
+          />
         </span>
       </div>
 

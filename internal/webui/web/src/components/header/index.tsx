@@ -3,6 +3,7 @@ import type { Snapshot } from '../../hooks/use-snapshot'
 import type { SeqEvent } from '../../hooks/use-events'
 import { useCostAggregator } from '../../hooks/use-cost-aggregator'
 import { CostMeter } from '../cost-meter'
+import { useTheme } from '../../hooks/use-theme'
 
 // STATUS_COLORS maps session status strings to CSS variables defined in tokens.css.
 const STATUS_COLORS: Record<string, string> = {
@@ -46,12 +47,14 @@ export interface HeaderProps {
 }
 
 // Header renders the top chrome band at 48px height (h-12).
-// Left to right: session identity (id mono short + spec filename) | status pill
-// and iter X / Y | CostMeter. The DAG/Activity toggle was removed when agents
-// were promoted to first-class canvas citizens (the Activity Gantt is gone).
+// Left to right: bcc mark + session identity (id mono short + spec filename) |
+// status pill and iter X / Y | CostMeter | theme toggle. The DAG/Activity
+// toggle was removed when agents were promoted to first-class canvas
+// citizens (the Activity Gantt is gone).
 export function Header({ snapshot, events, leading }: HeaderProps) {
   const costAgg = useCostAggregator(events)
   const isCompact = useIsCompact()
+  const { theme, toggle: toggleTheme } = useTheme()
 
   const session = snapshot?.session
   const specName = session?.spec_path.split('/').pop() ?? 'bcc'
@@ -60,9 +63,21 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
   return (
     <header
       aria-label="Header"
-      className="flex items-center h-12 border-b border-border bg-muted px-4 gap-4"
+      className="flex items-center h-12 border-b border-border bg-muted px-4 gap-3"
     >
       {leading}
+      <BccMark />
+      <span
+        className="text-sm font-semibold text-foreground tracking-tight"
+        style={{ letterSpacing: '-0.005em' }}
+      >
+        buchecha
+      </span>
+      <span
+        aria-hidden
+        className="h-3.5 w-px shrink-0"
+        style={{ background: 'var(--border-default)' }}
+      />
       {/* Session identity: id (mono short) + spec filename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {session ? (
@@ -120,6 +135,85 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
       <div className="shrink-0" data-testid="cost-meter">
         <CostMeter agg={costAgg} compact={isCompact} />
       </div>
+
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+        data-testid="theme-toggle"
+        className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+        style={{
+          border: '1px solid var(--border-subtle)',
+          background: 'transparent',
+        }}
+      >
+        {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
+      </button>
     </header>
+  )
+}
+
+// BccMark renders the small serif glyph used as the product mark. Uses the
+// Instrument Serif italic 'b' on a foreground-strong tile for high contrast
+// in both themes.
+function BccMark() {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        background: 'var(--color-foreground-strong, var(--color-foreground))',
+        color: 'var(--surface-canvas)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'var(--font-serif)',
+        fontStyle: 'italic',
+        fontSize: 16,
+        lineHeight: 1,
+        flexShrink: 0,
+      }}
+    >
+      b
+    </div>
+  )
+}
+
+function MoonIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  )
+}
+
+function SunIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5" />
+    </svg>
   )
 }

@@ -1,92 +1,82 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useSelection } from '../../hooks/use-selection'
 import type { AgentCard, AgentRole, ToolChip } from '../../hooks/use-agents'
+import {
+  RoleIcon,
+  ToolIcon,
+  roleColor,
+  roleColorDim,
+  roleLabel,
+} from '../role-icons'
+import { ProviderChip } from '../provider-chip'
 
-export const AGENT_NODE_WIDTH = 260
-export const AGENT_NODE_HEIGHT = 150
-
-const ROLE_COLOR: Record<AgentRole, string> = {
-  planner: 'var(--role-planner)',
-  briefer: 'var(--role-briefer)',
-  executor: 'var(--role-executor)',
-  reviewer: 'var(--role-reviewer)',
-}
-
-const ROLE_GLYPH: Record<AgentRole, string> = {
-  planner: 'P',
-  briefer: 'B',
-  executor: 'E',
-  reviewer: 'R',
-}
-
-const ROLE_LABEL: Record<AgentRole, string> = {
-  planner: 'Planner',
-  briefer: 'Briefer',
-  executor: 'Executor',
-  reviewer: 'Reviewer',
-}
+export const AGENT_NODE_WIDTH = 280
+export const AGENT_NODE_HEIGHT = 168
 
 export interface AgentNodeData {
   agent: AgentCard
   [key: string]: unknown
 }
 
-// AgentNodeComponent renders a floating agent card. It is anchored to
-// its phase or task via a separate edge in the React Flow graph.
+// AgentNodeComponent renders a floating agent card. It is anchored to its
+// phase or task via a separate edge in the React Flow graph.
 //
 // Visual hierarchy:
-//   header  -> role badge + role label + spawn id + model/effort
-//   body    -> latest assistant_text (mono, clamped, monospace)
-//   strip   -> latest thinking (italic, dim, single-line)
+//   stripe  -> 3px role-colored top stripe (full opacity for live, dim otherwise)
+//   header  -> role icon tile + role label + agent id tail + live/done badge
+//   sub     -> provider chip + model · effort
+//   body    -> latest assistant_text (mono, 3-line clamp with fade)
+//   strip   -> animated thinking dots + thinking text (italic, single line)
 //   footer  -> recent tool chips (cap 3); executor in-flight task pills
 //
 // Status:
-//   live    -> 100% opacity, vibrant role border, pulsing header dot
-//   fading  -> 40% opacity, no pulse
+//   live    -> 100% opacity, role border, pulse on header dot
+//   fading  -> 45% opacity, no pulse, "done" badge in place of live dot
 //   archived-> not rendered (handled in the layout layer)
 export function AgentNodeComponent({ data }: NodeProps) {
   const { agent } = data as AgentNodeData
   const { selection, select } = useSelection()
 
-  const selected = selection?.kind === 'agent' && selection.spawnId === agent.agentId
-  const color = ROLE_COLOR[agent.role]
-  const opacity = agent.status === 'fading' ? 0.4 : 1
+  const selected =
+    selection?.kind === 'agent' && selection.spawnId === agent.agentId
+  const role = agent.role
+  const color = roleColor(role)
+  const dim = roleColorDim(role)
   const live = agent.status === 'live'
+  const fading = agent.status === 'fading'
 
-  // The wire-level agent id is "<role>-<8hex>"; trim to the hex tail for the
-  // header chip so it stays compact at typical zoom levels.
   const shortId = (() => {
     const id = agent.agentId
     const dashIdx = id.lastIndexOf('-')
     if (dashIdx >= 0 && dashIdx < id.length - 1) return id.slice(dashIdx + 1)
     return id.length > 8 ? id.slice(-8) : id
   })()
-  const meta = [agent.model, agent.effort].filter(Boolean).join(' / ')
 
   return (
     <div
       onClick={() => select({ kind: 'agent', spawnId: agent.agentId })}
       data-testid={`agent-node-${agent.agentId}`}
-      data-role={agent.role}
+      data-role={role}
       data-status={agent.status}
       style={{
         width: '100%',
         height: '100%',
-        opacity,
-        borderRadius: 6,
+        background: 'var(--surface-card)',
         border: selected
-          ? `2px solid ${color}`
-          : `1px solid color-mix(in srgb, ${color} 65%, transparent)`,
-        backgroundColor: `color-mix(in srgb, ${color} 8%, var(--surface-card))`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-        padding: '8px 10px',
+          ? `1.5px solid ${color}`
+          : live
+            ? `1px solid ${color}`
+            : '1px solid var(--border-default)',
+        borderRadius: 12,
+        boxShadow: 'var(--shadow-card)',
+        opacity: fading ? 0.45 : 1,
         cursor: 'pointer',
         position: 'relative',
         boxSizing: 'border-box',
-        transition: 'opacity 0.3s ease, border-color 0.1s ease',
         overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        transition: 'opacity .25s ease, border-color .15s ease, box-shadow .15s ease',
       }}
     >
       <Handle
@@ -94,7 +84,7 @@ export function AgentNodeComponent({ data }: NodeProps) {
         position={Position.Left}
         style={{
           background: color,
-          borderColor: 'var(--color-background)',
+          borderColor: 'var(--surface-canvas)',
           width: 6,
           height: 6,
         }}
@@ -104,215 +94,281 @@ export function AgentNodeComponent({ data }: NodeProps) {
         position={Position.Right}
         style={{
           background: color,
-          borderColor: 'var(--color-background)',
+          borderColor: 'var(--surface-canvas)',
           width: 6,
           height: 6,
           opacity: 0,
         }}
       />
 
-      {/* Header: role badge + label + spawn id + meta */}
+      {/* Top color stripe */}
       <div
         style={{
+          height: 3,
+          background: color,
+          opacity: live ? 1 : 0.35,
+          flexShrink: 0,
+        }}
+      />
+
+      {/* Header */}
+      <div
+        style={{
+          padding: '10px 12px 6px',
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
-          minWidth: 0,
+          gap: 8,
         }}
       >
-        <RoleBadge role={agent.role} live={live} color={color} />
         <span
           style={{
-            fontFamily: 'var(--font-sans)',
-            fontSize: 11,
-            fontWeight: 600,
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            background: dim,
             color,
-            letterSpacing: '0.02em',
-            textTransform: 'uppercase',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
           }}
+          aria-label={roleLabel(role)}
         >
-          {ROLE_LABEL[agent.role]}
+          <RoleIcon role={role} size={13} />
         </span>
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9,
-            color: 'var(--color-muted-foreground)',
-            opacity: 0.7,
-            marginLeft: 'auto',
-          }}
-          title={agent.agentId}
-        >
-          {shortId}
-        </span>
-      </div>
-
-      {meta && (
-        <div
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 9,
-            color: 'var(--color-muted-foreground)',
-          }}
-        >
-          {meta}
-          {typeof agent.attempt === 'number' && agent.attempt > 1 && (
-            <span style={{ marginLeft: 6, color }}>attempt {agent.attempt}</span>
-          )}
-        </div>
-      )}
-
-      {/* Body: latest assistant_text (truncate to 3 lines) */}
-      <div
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 10,
-          lineHeight: 1.35,
-          color: 'var(--color-foreground)',
-          display: '-webkit-box',
-          WebkitLineClamp: 3,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-          minHeight: 28,
-          wordBreak: 'break-word',
-        }}
-        title={agent.latestAssistantText ?? ''}
-      >
-        {agent.latestAssistantText ?? <Placeholder text="(no output yet)" />}
-      </div>
-
-      {/* Strip: thinking */}
-      {agent.latestThinking && (
-        <div
-          style={{
-            fontFamily: 'var(--font-serif)',
-            fontStyle: 'italic',
-            fontSize: 10,
-            color: 'var(--color-muted-foreground)',
-            opacity: 0.8,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-          title={agent.latestThinking}
-        >
-          {agent.latestThinking}
-        </div>
-      )}
-
-      {/* Footer: recent tool chips and in-flight tasks */}
-      <div
-        style={{
-          marginTop: 'auto',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 4,
-          alignItems: 'center',
-        }}
-      >
-        {agent.recentTools.map((chip) => (
-          <ToolChipPill key={chip.toolUseId} chip={chip} />
-        ))}
-        {agent.role === 'executor' &&
-          agent.inFlightTaskIds.map((tid) => (
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
             <span
-              key={tid}
               style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 8,
-                padding: '0 4px',
-                borderRadius: 3,
-                border: `1px solid color-mix(in srgb, ${color} 50%, transparent)`,
-                color,
-                lineHeight: 1.6,
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--color-foreground)',
+                letterSpacing: '-0.005em',
               }}
-              title={`in flight: ${tid}`}
             >
-              {tid}
+              {roleLabel(role)}
             </span>
-          ))}
+            <span
+              style={{
+                fontSize: 10,
+                color: 'var(--color-faint, var(--color-muted-foreground))',
+                fontFamily: 'var(--font-mono)',
+              }}
+              title={agent.agentId}
+            >
+              {shortId}
+            </span>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              marginTop: 2,
+              minWidth: 0,
+            }}
+          >
+            <ProviderChip provider={agent.provider} />
+            <span
+              style={{
+                fontSize: 10,
+                color: 'var(--color-muted-foreground)',
+                fontFamily: 'var(--font-mono)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {agent.model ?? '—'}
+              {agent.effort ? ` · ${agent.effort}` : ''}
+              {typeof agent.attempt === 'number' && agent.attempt > 1
+                ? ` · attempt ${agent.attempt}`
+                : ''}
+            </span>
+          </div>
+        </div>
+        {live && (
+          <span
+            title="streaming"
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: color,
+              color,
+              boxShadow: `0 0 0 0 ${color}`,
+              animation: 'bcc-role-pulse 1.6s infinite',
+              flexShrink: 0,
+            }}
+          />
+        )}
+        {fading && (
+          <span
+            style={{
+              fontSize: 9,
+              color: 'var(--color-faint, var(--color-muted-foreground))',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              flexShrink: 0,
+            }}
+          >
+            done
+          </span>
+        )}
       </div>
+
+      {/* Body — latest assistant_text */}
+      {agent.latestAssistantText && (
+        <div style={{ padding: '0 12px 8px' }}>
+          <div
+            style={{
+              fontSize: 12,
+              lineHeight: 1.4,
+              color: 'var(--color-foreground)',
+              display: '-webkit-box',
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              maskImage: 'linear-gradient(to bottom, #000 70%, transparent)',
+              WebkitMaskImage:
+                'linear-gradient(to bottom, #000 70%, transparent)',
+              wordBreak: 'break-word',
+            }}
+            title={agent.latestAssistantText}
+          >
+            {agent.latestAssistantText}
+          </div>
+        </div>
+      )}
+
+      {/* Thinking row */}
+      {live && agent.latestThinking && (
+        <div
+          style={{
+            padding: '6px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            background: 'var(--surface-elevated)',
+            borderTop: '1px solid var(--border-faint, var(--border-subtle))',
+            borderBottom: '1px solid var(--border-faint, var(--border-subtle))',
+          }}
+        >
+          <span className="bcc-thinking-dots" style={{ color }}>
+            <span />
+            <span />
+            <span />
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              fontStyle: 'italic',
+              color: 'var(--color-muted-foreground)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1,
+            }}
+            title={agent.latestThinking}
+          >
+            {agent.latestThinking}
+          </span>
+        </div>
+      )}
+
+      {/* Tools row */}
+      {(agent.recentTools.length > 0 ||
+        (role === 'executor' && agent.inFlightTaskIds.length > 0)) && (
+        <div
+          style={{
+            padding: '8px 12px 10px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            marginTop: 'auto',
+          }}
+        >
+          {agent.recentTools.slice(-3).map((chip) => (
+            <ToolChipPill key={chip.toolUseId} chip={chip} role={role} />
+          ))}
+          {role === 'executor' &&
+            agent.inFlightTaskIds.map((tid) => (
+              <span
+                key={tid}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  border: `1px solid color-mix(in srgb, ${color} 50%, transparent)`,
+                  background: dim,
+                  color,
+                  lineHeight: 1.4,
+                }}
+                title={`in flight: ${tid}`}
+              >
+                {tid}
+              </span>
+            ))}
+        </div>
+      )}
     </div>
   )
 }
 
-function RoleBadge({ role, live, color }: { role: AgentRole; live: boolean; color: string }) {
+function ToolChipPill({ chip, role }: { chip: ToolChip; role: AgentRole }) {
+  const errored = chip.result === 'error'
+  const color = roleColor(role)
   return (
     <span
       style={{
-        position: 'relative',
-        width: 16,
-        height: 16,
-        borderRadius: 4,
-        backgroundColor: color,
-        color: 'var(--surface-canvas)',
-        fontSize: 10,
-        fontWeight: 700,
         display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
+        gap: 5,
+        padding: '3px 7px',
+        borderRadius: 5,
+        background: errored
+          ? 'color-mix(in srgb, var(--status-error) 16%, transparent)'
+          : 'var(--surface-elevated)',
+        border: `1px solid ${errored ? 'var(--status-error)' : 'var(--border-default)'}`,
+        fontSize: 10,
+        color: errored ? 'var(--status-error)' : 'var(--color-muted-foreground)',
         fontFamily: 'var(--font-mono)',
-      }}
-      aria-label={ROLE_LABEL[role]}
-    >
-      {ROLE_GLYPH[role]}
-      {live && (
-        <span
-          style={{
-            position: 'absolute',
-            top: -2,
-            right: -2,
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            backgroundColor: color,
-            boxShadow: `0 0 0 1px var(--surface-canvas), 0 0 6px ${color}`,
-            animation: 'bcc-agent-pulse 1.4s ease-in-out infinite',
-          }}
-        />
-      )}
-    </span>
-  )
-}
-
-function ToolChipPill({ chip }: { chip: ToolChip }) {
-  const errored = chip.result === 'error'
-  return (
-    <span
-      title={chip.target ? `${chip.name} ${chip.target}` : chip.name}
-      style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 9,
-        padding: '0 4px',
-        borderRadius: 3,
-        backgroundColor: errored
-          ? 'color-mix(in srgb, var(--status-error) 18%, transparent)'
-          : 'color-mix(in srgb, var(--color-foreground) 8%, transparent)',
-        color: errored ? 'var(--status-error)' : 'var(--color-foreground)',
-        lineHeight: 1.6,
+        lineHeight: 1.3,
+        maxWidth: 180,
         whiteSpace: 'nowrap',
-        maxWidth: 140,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
       }}
+      title={chip.target ? `${chip.name} ${chip.target}` : chip.name}
     >
-      <span style={{ opacity: 0.7 }}>{chip.name}</span>
-      {chip.target && <> {chip.target}</>}
-    </span>
-  )
-}
-
-function Placeholder({ text }: { text: string }) {
-  return (
-    <span
-      style={{
-        fontStyle: 'italic',
-        color: 'var(--color-muted-foreground)',
-        opacity: 0.6,
-      }}
-    >
-      {text}
+      <span
+        style={{
+          color: errored ? 'var(--status-error)' : color,
+          display: 'inline-flex',
+          flexShrink: 0,
+        }}
+      >
+        <ToolIcon name={chip.name} size={10} />
+      </span>
+      <span
+        style={{ color: 'var(--color-foreground)', fontWeight: 500, flexShrink: 0 }}
+      >
+        {chip.name}
+      </span>
+      {chip.target && (
+        <span
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}
+        >
+          {chip.target}
+        </span>
+      )}
     </span>
   )
 }

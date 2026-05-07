@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import type { SeqEvent } from '../../../hooks/use-events'
 import type { Snapshot } from '../../../hooks/use-snapshot'
 import type { Selection } from '../../../hooks/use-selection'
-import { useAgents } from '../../../hooks/use-agents'
+import { useAgents, type AgentCard, type AgentStatus } from '../../../hooks/use-agents'
 import { OverviewTab } from './overview-tab'
 import BriefingTab from './briefing-tab'
 import PromptsTab from './prompts-tab'
@@ -11,6 +11,8 @@ import { AgentOverviewTab } from './agent-overview-tab'
 import { AgentPromptTab } from './agent-prompt-tab'
 import { AgentStreamTab } from './agent-stream-tab'
 import { AgentFilesTab } from './agent-files-tab'
+import { ProviderChip } from '../../provider-chip'
+import { RoleIcon, roleColor, roleColorDim, roleLabel } from '../../role-icons'
 
 export interface InspectorProps {
   selection: Selection
@@ -70,6 +72,9 @@ function selectionLabel(s: Selection): string {
 export function Inspector({ selection, events, snapshot, sessionId, onClose }: InspectorProps) {
   const tabLabels = selection.kind === 'agent' ? AGENT_TAB_LABELS : DEFAULT_TAB_LABELS
   const [activeTab, setActiveTab] = useState<TabIndex>(() => loadTab(selection.kind))
+  const agents = useAgents(events)
+  const agentCard =
+    selection.kind === 'agent' ? (agents.byId[selection.spawnId] ?? null) : null
 
   // When the selection kind changes, restore the saved tab for that kind.
   const [prevKind, setPrevKind] = useState(selection.kind)
@@ -197,25 +202,29 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header row */}
-      <div className="shrink-0 flex items-center gap-2 border-b border-border px-4 py-2">
-        <span
-          className="rounded px-1.5 py-0.5 text-[10px] font-mono text-accent leading-tight"
-          style={{ backgroundColor: 'var(--surface-card)' }}
-        >
-          {selection.kind}
-        </span>
-        <span className="flex-1 min-w-0 text-xs font-mono text-foreground truncate">
-          {selectionLabel(selection)}
-        </span>
-        <button
-          type="button"
-          aria-label="Close inspector"
-          onClick={onClose}
-          className="shrink-0 text-xs font-mono text-muted-foreground hover:text-foreground px-2 py-0.5 rounded border border-border hover:bg-border transition-colors"
-        >
-          ✕
-        </button>
-      </div>
+      {agentCard ? (
+        <AgentInspectorHeader card={agentCard} onClose={onClose} />
+      ) : (
+        <div className="shrink-0 flex items-center gap-2 border-b border-border px-4 py-2">
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-mono text-accent leading-tight"
+            style={{ backgroundColor: 'var(--surface-card)' }}
+          >
+            {selection.kind}
+          </span>
+          <span className="flex-1 min-w-0 text-xs font-mono text-foreground truncate">
+            {selectionLabel(selection)}
+          </span>
+          <button
+            type="button"
+            aria-label="Close inspector"
+            onClick={onClose}
+            className="shrink-0 text-xs font-mono text-muted-foreground hover:text-foreground px-2 py-0.5 rounded border border-border hover:bg-border transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Tab strip */}
       <div
@@ -331,14 +340,180 @@ function DefaultInspectorBodies({ selection, events, snapshot, sessionId, active
   )
 }
 
+// AgentInspectorHeader replaces the generic header for agent selections.
+// Shows a colored role icon tile, the role label as the headline, the agent
+// id, and a state badge — with provider chip + model · effort on the second
+// line so the identity row can stay clean.
+function AgentInspectorHeader({
+  card,
+  onClose,
+}: {
+  card: AgentCard
+  onClose: () => void
+}) {
+  const color = roleColor(card.role)
+  const dim = roleColorDim(card.role)
+  return (
+    <div
+      className="shrink-0"
+      style={{
+        padding: '12px 16px 10px',
+        borderBottom: '1px solid var(--color-border)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <span
+          aria-hidden
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background: dim,
+            color,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <RoleIcon role={card.role} size={18} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <h3
+              style={{
+                margin: 0,
+                fontSize: 14,
+                fontWeight: 600,
+                color: 'var(--color-foreground-strong, var(--color-foreground))',
+                letterSpacing: '-0.005em',
+              }}
+            >
+              {roleLabel(card.role)}
+            </h3>
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--color-faint, var(--color-muted-foreground))',
+                fontFamily: 'var(--font-mono)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+              title={card.agentId}
+            >
+              {card.agentId}
+            </span>
+            <span style={{ flex: 1 }} />
+            <AgentStateBadge state={card.status} color={color} />
+            <button
+              type="button"
+              aria-label="Close inspector"
+              onClick={onClose}
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 6,
+                border: '1px solid var(--border-subtle)',
+                background: 'transparent',
+                color: 'var(--color-muted-foreground)',
+                cursor: 'pointer',
+                fontSize: 16,
+                lineHeight: 1,
+                flexShrink: 0,
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              marginTop: 4,
+              minWidth: 0,
+            }}
+          >
+            <ProviderChip provider={card.provider} />
+            <span
+              style={{
+                fontSize: 11,
+                color: 'var(--color-muted-foreground)',
+                fontFamily: 'var(--font-mono)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {card.model ?? '—'}
+              {card.effort ? ` · ${card.effort}` : ''}
+              {typeof card.attempt === 'number' && card.attempt > 1
+                ? ` · attempt ${card.attempt}`
+                : ''}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AgentStateBadge({
+  state,
+  color,
+}: {
+  state: AgentStatus
+  color: string
+}) {
+  const labelByStatus: Record<AgentStatus, string> = {
+    live: 'live',
+    fading: 'done',
+    archived: 'archived',
+  }
+  const c = state === 'live' ? color : 'var(--color-faint, var(--color-muted-foreground))'
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '2px 7px',
+        borderRadius: 999,
+        border: '1px solid var(--border-default)',
+        color: c,
+        fontSize: 9.5,
+        textTransform: 'uppercase',
+        letterSpacing: '0.07em',
+        fontWeight: 600,
+        flexShrink: 0,
+      }}
+    >
+      <span
+        style={{
+          width: 5,
+          height: 5,
+          borderRadius: '50%',
+          background: c,
+          color: c,
+          animation: state === 'live' ? 'bcc-role-pulse 1.6s infinite' : undefined,
+        }}
+      />
+      {labelByStatus[state]}
+    </span>
+  )
+}
+
 function AgentInspectorBodies({
   selection,
   events,
   sessionId,
   activeTab,
 }: Omit<InspectorBodiesProps, 'snapshot'>) {
-  if (selection.kind !== 'agent') return null
   const agents = useAgents(events)
+  if (selection.kind !== 'agent') return null
   const card = agents.byId[selection.spawnId]
   const spawnId = card?.spawnId
   return (

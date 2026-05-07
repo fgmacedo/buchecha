@@ -4,6 +4,8 @@ import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, DAGPhase, RoleAssignment } from './types'
 import { AgentHistoryBadge } from './agent-history-badge'
 import type { AgentCard } from '../../hooks/use-agents'
+import { ProviderChip } from '../provider-chip'
+import { StatusPill, type LifecycleStatus } from '../status-pill'
 
 // PhaseStatus is the aggregated status derived from all task statuses.
 // Mirrors the task vocabulary so a phase is in_progress whenever it has
@@ -186,21 +188,12 @@ export function PhaseNodeComponent({ data }: NodeProps) {
             <PriorityBadge priority={phase.priority} />
           )}
 
-          <span
-            style={{
-              marginLeft: 'auto',
-              fontSize: 9,
-              color: statusColor,
-              border: `1px solid ${statusColor}`,
-              borderRadius: 3,
-              padding: '1px 6px',
-              textTransform: 'uppercase',
-              letterSpacing: '0.06em',
-              lineHeight: 1.5,
-              userSelect: 'none',
-            }}
-          >
-            {aggStatus.replace(/_/g, ' ')}
+          <span style={{ marginLeft: 'auto' }}>
+            <StatusPill
+              status={aggStatus as LifecycleStatus}
+              size="sm"
+              pulseLive
+            />
           </span>
         </div>
 
@@ -242,32 +235,77 @@ export function PhaseNodeComponent({ data }: NodeProps) {
       {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}
       <div style={{ flex: 1, pointerEvents: 'none' }} />
 
-      {/* Footer: tasks done/total, attempt, USD */}
+      {/* Footer: progress bar + tasks counter + plan provider chip + cost */}
       <div
         style={{
-          padding: '4px 12px 6px',
+          padding: '6px 12px 8px',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
+          gap: 12,
           borderTop: '1px solid var(--color-border)',
           flexShrink: 0,
+          fontSize: 10.5,
+          color: 'var(--color-muted-foreground)',
         }}
       >
-        <span
-          style={{
-            fontSize: 10,
-            color: 'var(--color-muted-foreground)',
-            fontFamily: 'var(--font-mono)',
-          }}
-        >
-          {doneCount}/{tasks.length}
+        <ProgressMini
+          done={doneCount}
+          total={tasks.length}
+          color={statusColor}
+        />
+        <span style={{ fontFamily: 'var(--font-mono)' }}>
+          <span style={{ color: 'var(--color-foreground)' }}>{doneCount}</span>
+          <span
+            style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
+          >
+            /{tasks.length}
+          </span>{' '}
+          tasks
         </span>
-        {execLabel && (
+        {phase.executor_assignment?.provider && (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 9,
+                color: 'var(--color-faint, var(--color-muted-foreground))',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+              }}
+            >
+              plan
+            </span>
+            <ProviderChip provider={phase.executor_assignment.provider} />
+            {execLabel && (
+              <span
+                title={`executor: ${execLabel}`}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--color-muted-foreground)',
+                  fontSize: 10.5,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  minWidth: 0,
+                }}
+              >
+                {[phase.executor_assignment.model, phase.executor_assignment.effort]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            )}
+          </span>
+        )}
+        {!phase.executor_assignment?.provider && execLabel && (
           <span
             title={`executor: ${execLabel}`}
             style={{
-              fontSize: 10,
-              color: 'var(--color-muted-foreground)',
               fontFamily: 'var(--font-mono)',
               opacity: 0.85,
               overflow: 'hidden',
@@ -279,29 +317,25 @@ export function PhaseNodeComponent({ data }: NodeProps) {
             {execLabel}
           </span>
         )}
-        {attempt > 1 && (
-          <span
-            style={{
-              fontSize: 10,
-              color: 'var(--color-muted-foreground)',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
-            attempt {attempt}
-          </span>
-        )}
-        {costUSD > 0 && (
-          <span
-            style={{
-              fontSize: 10,
-              color: 'var(--color-muted-foreground)',
-              fontFamily: 'var(--font-mono)',
-              marginLeft: 'auto',
-            }}
-          >
-            ${costUSD.toFixed(4)}
-          </span>
-        )}
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          {attempt > 1 && (
+            <span style={{ fontFamily: 'var(--font-mono)' }}>
+              attempt {attempt}
+            </span>
+          )}
+          {costUSD > 0 && (
+            <span style={{ fontFamily: 'var(--font-mono)' }}>
+              <span
+                style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
+              >
+                $
+              </span>
+              <span style={{ color: 'var(--color-foreground)' }}>
+                {costUSD.toFixed(4)}
+              </span>
+            </span>
+          )}
+        </span>
       </div>
 
       <Handle
@@ -341,6 +375,42 @@ function PriorityBadge({ priority }: { priority: number }) {
     >
       P{priority}
     </span>
+  )
+}
+
+// ProgressMini renders a slim, role-colored bar showing done / total. Width
+// 80px keeps the footer balanced even on the smallest phase cards.
+function ProgressMini({
+  done,
+  total,
+  color,
+}: {
+  done: number
+  total: number
+  color: string
+}) {
+  const pct = total === 0 ? 0 : (done / total) * 100
+  return (
+    <div
+      title={`${done}/${total}`}
+      style={{
+        width: 80,
+        height: 4,
+        borderRadius: 2,
+        background: 'var(--border-subtle)',
+        overflow: 'hidden',
+        flexShrink: 0,
+      }}
+    >
+      <div
+        style={{
+          width: `${pct}%`,
+          height: '100%',
+          background: color,
+          transition: 'width 0.25s ease',
+        }}
+      />
+    </div>
   )
 }
 

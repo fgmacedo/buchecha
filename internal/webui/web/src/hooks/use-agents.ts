@@ -46,6 +46,7 @@ export interface AgentCard {
   anchor: AgentAnchor
   model?: string
   effort?: string
+  provider?: string
   attempt?: number
   iterationId?: string
   startedAt: string
@@ -92,6 +93,7 @@ interface PendingSpawn {
   attempt?: number
   model?: string
   effort?: string
+  provider?: string
   promptPath?: string
   startedAt: string
 }
@@ -219,6 +221,7 @@ function applySpawnStarted(s: MutableState, event: Record<string, unknown>): voi
       anchor: anchorForRole(role, phaseId, taskId),
       model: asString(event['model']),
       effort: asString(event['effort']),
+      provider: asString(event['provider']),
       attempt: asNumber(event['attempt']),
       iterationId: asString(event['iteration_id']),
       promptPath: asString(event['prompt_path']),
@@ -242,6 +245,7 @@ function applySpawnStarted(s: MutableState, event: Record<string, unknown>): voi
     attempt: asNumber(event['attempt']),
     model: asString(event['model']),
     effort: asString(event['effort']),
+    provider: asString(event['provider']),
     promptPath: asString(event['prompt_path']),
     startedAt: at,
   }
@@ -357,6 +361,7 @@ function applyAgentEvent(s: MutableState, event: Record<string, unknown>): void 
       anchor: anchorForRole(role, phaseId, taskId),
       model: spawn?.model,
       effort: spawn?.effort,
+      provider: spawn?.provider,
       attempt: spawn?.attempt ?? asNumber(event['attempt']),
       iterationId: spawn?.iterationId ?? asString(event['iteration_id']),
       promptPath: spawn?.promptPath,

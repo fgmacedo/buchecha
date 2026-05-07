@@ -73,15 +73,21 @@
   --surface-overlay: #0d0f12cc;
 
   /* Borders */
+  --border-faint: rgba(255, 255, 255, 0.05);
   --border-subtle: #1c1f24;
   --border-default: #262a30;
   --border-strong: #353a42;
 
+  /* Canvas grid dot */
+  --bg-grid-dot: rgba(255, 255, 255, 0.04);
+
   /* Legacy aliases for backward compatibility */
   --color-background: var(--surface-canvas);
   --color-foreground: #e6e8eb;
+  --color-foreground-strong: #ffffff;
   --color-muted: var(--surface-panel);
   --color-muted-foreground: #9ba1a8;
+  --color-faint: #6b7079;
   --color-border: var(--border-default);
 
   /* Accent */
@@ -97,11 +103,22 @@
   --status-error: #ef4444;
 
   /* Role palette for agent cards on the canvas. Distinct enough that
-     role recognition is pre-attentive at typical zoom levels. */
+     role recognition is pre-attentive at typical zoom levels. The
+     `-dim` variants are translucent backgrounds for badges and
+     icon-tile fills behind a same-hue foreground. */
   --role-planner: #c084fc;
-  --role-briefer: #38bdf8;
+  --role-briefer: #fbbf24;
   --role-executor: #34d399;
-  --role-reviewer: #fbbf24;
+  --role-reviewer: #fb7185;
+  --role-planner-dim: color-mix(in srgb, #c084fc 18%, transparent);
+  --role-briefer-dim: color-mix(in srgb, #fbbf24 18%, transparent);
+  --role-executor-dim: color-mix(in srgb, #34d399 18%, transparent);
+  --role-reviewer-dim: color-mix(in srgb, #fb7185 18%, transparent);
+
+  /* Shadows */
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.55);
 
   /* Typography stacks. The named families resolve to the self-hosted
      WOFF2 faces registered above; the system fallbacks below keep the
@@ -122,6 +139,55 @@
     "Liberation Mono", "Courier New", monospace;
 }
 
+/* Light theme override. Activated by [data-theme="light"] on the document
+   root. Surfaces collapse to white on a near-white canvas, borders fall
+   off in alpha, and the role palette darkens enough to keep the same
+   chroma readable on a bright background. */
+[data-theme="light"] {
+  --surface-canvas: #f7f7f5;
+  --surface-panel: #ffffff;
+  --surface-card: #ffffff;
+  --surface-elevated: #f1f1ee;
+  --surface-overlay: rgba(255, 255, 255, 0.85);
+
+  --border-faint: rgba(0, 0, 0, 0.04);
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.10);
+  --border-strong: rgba(0, 0, 0, 0.18);
+
+  --bg-grid-dot: rgba(0, 0, 0, 0.06);
+
+  --color-background: var(--surface-canvas);
+  --color-foreground: #15181d;
+  --color-foreground-strong: #000000;
+  --color-muted: var(--surface-panel);
+  --color-muted-foreground: #5a6069;
+  --color-faint: #8a8f97;
+  --color-border: var(--border-default);
+
+  --color-accent: #2563eb;
+  --color-accent-foreground: #ffffff;
+  --accent-warn: #b45309;
+
+  --status-pending: #8a8f97;
+  --status-running: #2563eb;
+  --status-done: #15803d;
+  --status-needs-fix: #b45309;
+  --status-error: #b91c1c;
+
+  --role-planner: #7c3aed;
+  --role-briefer: #b45309;
+  --role-executor: #15803d;
+  --role-reviewer: #be123c;
+  --role-planner-dim: color-mix(in srgb, #7c3aed 14%, transparent);
+  --role-briefer-dim: color-mix(in srgb, #b45309 14%, transparent);
+  --role-executor-dim: color-mix(in srgb, #15803d 14%, transparent);
+  --role-reviewer-dim: color-mix(in srgb, #be123c 14%, transparent);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+
 /* Make the dark palette the document default so an unstyled root
    still reads as dark, and so html[data-theme="dark"] is forward
    compatible with later theme variants. */
@@ -129,6 +195,14 @@ html,
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
-  color-scheme: dark;
   font-family: var(--font-sans);
+}
+
+html[data-theme="dark"],
+html:not([data-theme]) {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
 }
