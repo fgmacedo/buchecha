@@ -180,8 +180,8 @@ describe('DAG selection round-trip (T8.4)', () => {
       )
     })
 
-    // Initially Timeline is shown; Inspector is not.
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    // Initially the right pane shows the placeholder; Inspector is not active.
+    expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
     expect(screen.queryByLabelText('Close inspector')).toBeNull()
 
     // Click the simulated phase header.
@@ -240,9 +240,9 @@ describe('DAG selection round-trip (T8.4)', () => {
       fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
     })
 
-    // Selection is cleared; Timeline mode returns.
+    // Selection is cleared; placeholder returns.
     expect(screen.queryByLabelText('Close inspector')).toBeNull()
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
   })
 })
 
@@ -266,14 +266,16 @@ describe('App mounts with DAG fixture (T8.4)', () => {
       error = e
     }
     expect(error).toBeNull()
-    // RightPane is present; default mode is Timeline.
+    // RightPane is present; default state shows the placeholder.
     expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
   })
 
-  it('renders in Timeline mode by default', async () => {
+  it('renders the right-pane placeholder by default (no selection)', async () => {
     await act(async () => {
       render(React.createElement(App))
     })
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    const pane = document.querySelector('[data-testid="right-pane"]')
+    expect(pane).toBeTruthy()
+    expect(screen.queryByLabelText('Close inspector')).toBeNull()
   })
 })

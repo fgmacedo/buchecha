@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, TaskStatus } from './types'
+import { AgentHistoryBadge } from './agent-history-badge'
+import type { AgentCard } from '../../hooks/use-agents'
 
 // STATUS_COLOR_MAP maps TaskStatus values to CSS variable references.
 const STATUS_COLOR_MAP: Record<TaskStatus, string> = {
@@ -24,6 +26,7 @@ export interface TaskNodeData {
   phaseId: string
   startedAt?: string
   endedAt?: string
+  archivedAgents?: AgentCard[]
   [key: string]: unknown
 }
 
@@ -36,7 +39,7 @@ export interface TaskNodeData {
 // --status-running.
 export function TaskNodeComponent({ data }: NodeProps) {
   const [hovered, setHovered] = useState(false)
-  const { task, phaseId, startedAt, endedAt } = data as TaskNodeData
+  const { task, phaseId, startedAt, endedAt, archivedAgents = [] } = data as TaskNodeData
   const { selection, select } = useSelection()
 
   const selected =
@@ -190,6 +193,7 @@ export function TaskNodeComponent({ data }: NodeProps) {
           endedAt={endedAt}
         />
       )}
+      <AgentHistoryBadge archivedAgents={archivedAgents} label={`Past agents on ${task.id}`} />
     </div>
   )
 }

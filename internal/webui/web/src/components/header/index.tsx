@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { SeqEvent } from '../../hooks/use-events'
-import type { ViewMode } from '../../hooks/use-view'
 import { useCostAggregator } from '../../hooks/use-cost-aggregator'
 import { CostMeter } from '../cost-meter'
 
@@ -19,7 +18,6 @@ function statusColor(status: string): string {
 }
 
 // useIsCompact returns true when the viewport is narrower than 1024px.
-// Uses window.matchMedia so tests can mock it.
 function useIsCompact(): boolean {
   const [compact, setCompact] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
@@ -39,48 +37,9 @@ function useIsCompact(): boolean {
   return compact
 }
 
-interface ViewToggleProps {
-  view: ViewMode
-  onChange: (v: ViewMode) => void
-}
-
-function ViewToggle({ view, onChange }: ViewToggleProps) {
-  const base =
-    'px-3 py-1 text-xs font-medium rounded transition-colors focus-visible:outline-none'
-  const active = 'bg-accent text-accent-foreground'
-  const inactive = 'text-muted-foreground hover:text-foreground hover:bg-border'
-
-  return (
-    <div
-      role="group"
-      aria-label="View toggle"
-      className="flex items-center gap-1 rounded border border-border p-0.5"
-    >
-      <button
-        type="button"
-        className={`${base} ${view === 'dag' ? active : inactive}`}
-        aria-pressed={view === 'dag'}
-        onClick={() => onChange('dag')}
-      >
-        DAG
-      </button>
-      <button
-        type="button"
-        className={`${base} ${view === 'activity' ? active : inactive}`}
-        aria-pressed={view === 'activity'}
-        onClick={() => onChange('activity')}
-      >
-        Activity
-      </button>
-    </div>
-  )
-}
-
 export interface HeaderProps {
   snapshot: Snapshot | null
   events: SeqEvent[]
-  view: ViewMode
-  onViewChange: (v: ViewMode) => void
   // leading lets AppShell mount a sessions-drawer trigger as the first child
   // of the header without coupling Header to the drawer implementation.
   leading?: React.ReactNode
@@ -88,10 +47,9 @@ export interface HeaderProps {
 
 // Header renders the top chrome band at 48px height (h-12).
 // Left to right: session identity (id mono short + spec filename) | status pill
-// and iter X / Y | view toggle (DAG / Activity) | CostMeter.
-// Below 1024px: spec filename collapses to a tooltip on the session id and
-// CostMeter collapses to its USD pill only.
-export function Header({ snapshot, events, view, onViewChange, leading }: HeaderProps) {
+// and iter X / Y | CostMeter. The DAG/Activity toggle was removed when agents
+// were promoted to first-class canvas citizens (the Activity Gantt is gone).
+export function Header({ snapshot, events, leading }: HeaderProps) {
   const costAgg = useCostAggregator(events)
   const isCompact = useIsCompact()
 
@@ -156,11 +114,6 @@ export function Header({ snapshot, events, view, onViewChange, leading }: Header
             </span>
           </>
         )}
-      </div>
-
-      {/* View toggle */}
-      <div className="shrink-0" data-testid="view-toggle">
-        <ViewToggle view={view} onChange={onViewChange} />
       </div>
 
       {/* CostMeter: compact below 1024px */}

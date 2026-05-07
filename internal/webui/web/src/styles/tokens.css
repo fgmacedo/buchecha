@@ -96,6 +96,13 @@
   --status-needs-fix: #f59e0b;
   --status-error: #ef4444;
 
+  /* Role palette for agent cards on the canvas. Distinct enough that
+     role recognition is pre-attentive at typical zoom levels. */
+  --role-planner: #c084fc;
+  --role-briefer: #38bdf8;
+  --role-executor: #34d399;
+  --role-reviewer: #fbbf24;
+
   /* Typography stacks. The named families resolve to the self-hosted
      WOFF2 faces registered above; the system fallbacks below keep the
      SPA legible if a binary fails to load. */

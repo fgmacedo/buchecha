@@ -55,6 +55,19 @@
   --font-numeric: var(--font-numeric);
 }
 
+/* Agent card pulse used by the live indicator dot in the role badge. */
+@keyframes bcc-agent-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.5;
+  }
+}
+
 @layer utilities {
   .font-display {
     font-family: var(--font-display);

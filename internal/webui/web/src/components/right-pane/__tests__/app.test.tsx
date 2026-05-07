@@ -151,18 +151,31 @@ describe('AppShell (T7.5)', () => {
     expect(rightPane).toBeTruthy()
   })
 
-  it('renders timeline mode by default (no selection)', async () => {
+  it('renders the right-pane placeholder by default (no selection)', async () => {
+    const { SelectionProvider } = await import('../../../hooks/use-selection')
+    const { RightPane } = await import('../index')
+
     await act(async () => {
-      render(React.createElement(App))
+      render(
+        React.createElement(
+          SelectionProvider,
+          { sessionId: 'test-s0' },
+          React.createElement(RightPane, {
+            events: FIXTURE_EVENTS.map((e, i) => ({ seq: i + 1, event: e })),
+            snapshot: null,
+            sessionId: 'test-s0',
+          }),
+        ),
+      )
     })
-    const timeline = document.querySelector('[data-testid="timeline-mode"]')
-    expect(timeline).toBeTruthy()
+
+    const pane = document.querySelector('[data-testid="right-pane"]')
+    expect(pane).toBeTruthy()
+    // Placeholder text directs the user back to the canvas.
+    expect(pane?.textContent ?? '').toMatch(/Click an agent|inspect/i)
   })
 
   it('switches to inspector shell when a selection is dispatched', async () => {
-    // We use SelectionProvider as the test vehicle: render AppShell around a
-    // component that programmatically dispatches a selection, then assert the
-    // inspector shell appears.
     const { SelectionProvider, useSelection } = await import('../../../hooks/use-selection')
 
     let selectFn: ((s: unknown) => void) | null = null
@@ -173,8 +186,6 @@ describe('AppShell (T7.5)', () => {
       return null
     }
 
-    // Render a minimal tree with SelectionProvider + RightPane so we can
-    // drive the selection without mounting the full app.
     const { RightPane } = await import('../index')
 
     await act(async () => {
@@ -186,39 +197,15 @@ describe('AppShell (T7.5)', () => {
       )
     })
 
-    // Initially timeline is shown.
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    // No selection initially: inspector close button is absent.
+    expect(screen.queryByLabelText('Close inspector')).toBeNull()
 
     // Dispatch a selection.
     await act(async () => {
       selectFn?.({ kind: 'phase', phaseId: 'P1' })
     })
 
-    // Inspector shell should now be visible (non-zero opacity).
-    // The inspector renders the "Close inspector" button.
-    const closeBtn = screen.queryByLabelText('Close inspector')
-    expect(closeBtn).toBeTruthy()
-  })
-
-  it('renders grouped timeline events', async () => {
-    const { SelectionProvider } = await import('../../../hooks/use-selection')
-    const { RightPane } = await import('../index')
-
-    const events = FIXTURE_EVENTS.map((e, i) => ({ seq: i + 1, event: e }))
-
-    await act(async () => {
-      render(
-        React.createElement(SelectionProvider, { sessionId: 'test-s2' },
-          React.createElement(RightPane, { events, snapshot: null, sessionId: 'test-s2' }),
-        ),
-      )
-    })
-
-    // Timeline mode should display at least the iteration group header.
-    // The group header renders with a "#0" iteration index.
-    const timelineMode = document.querySelector('[data-testid="timeline-mode"]')
-    expect(timelineMode).toBeTruthy()
-    // The sticky header with iteration index text
-    expect(timelineMode?.textContent).toContain('#0')
+    // Inspector shell now appears with the close button.
+    expect(screen.queryByLabelText('Close inspector')).toBeTruthy()
   })
 })

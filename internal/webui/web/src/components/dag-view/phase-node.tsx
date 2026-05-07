@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, DAGPhase, RoleAssignment } from './types'
+import { AgentHistoryBadge } from './agent-history-badge'
+import type { AgentCard } from '../../hooks/use-agents'
 
 // PhaseStatus is the aggregated status derived from all task statuses.
 // Mirrors the task vocabulary so a phase is in_progress whenever it has
@@ -61,6 +63,7 @@ export interface PhaseNodeData {
   tasks: DAGTask[]
   costUSD: number
   attempt: number
+  archivedAgents?: AgentCard[]
   [key: string]: unknown
 }
 
@@ -72,7 +75,7 @@ export interface PhaseNodeData {
 // attempt, and cost. Click anywhere on the header invokes
 // select({ kind: "phase", phaseId }).
 export function PhaseNodeComponent({ data }: NodeProps) {
-  const { phase, tasks, costUSD, attempt } = data as PhaseNodeData
+  const { phase, tasks, costUSD, attempt, archivedAgents = [] } = data as PhaseNodeData
   const [hovered, setHovered] = useState(false)
   const { selection, select } = useSelection()
 
@@ -311,6 +314,7 @@ export function PhaseNodeComponent({ data }: NodeProps) {
           height: 8,
         }}
       />
+      <AgentHistoryBadge archivedAgents={archivedAgents} label={`Past agents on ${phase.id}`} />
     </div>
   )
 }

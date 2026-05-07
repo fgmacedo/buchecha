@@ -4,21 +4,16 @@ import type { paths } from './lib/api-client'
 import { useSnapshot } from './hooks/use-snapshot'
 import { useEvents } from './hooks/use-events'
 import { usePlan } from './hooks/use-plan'
-import { useView } from './hooks/use-view'
 import { SelectionProvider, useSelection } from './hooks/use-selection'
 import { Header } from './components/header'
 import { RightPane } from './components/right-pane'
 import { SessionsDrawer, SessionsDrawerTrigger } from './components/sessions-drawer'
 
-// Both views are lazy-loaded so the DAG and Gantt bundles (xyflow, dagre,
-// d3-axis) are code-split from the main chunk to stay within the 600 KB
-// gzipped budget. Once each view has loaded the first time, both trees
-// remain mounted and switching is instant via CSS display.
+// DAGView is lazy-loaded so the @xyflow/dagre bundle is code-split from the
+// main chunk to stay within the 600 KB gzipped budget. The Activity Gantt
+// view was removed when agents were promoted to first-class canvas citizens.
 const DAGView = lazy(() =>
   import('./components/dag-view').then((m) => ({ default: m.DAGView })),
-)
-const ActivityView = lazy(() =>
-  import('./components/activity-view').then((m) => ({ default: m.ActivityView })),
 )
 
 // Bind a generated operation type so `tsc -b` fails when the OpenAPI
@@ -64,7 +59,6 @@ export function EscapeHandler() {
 }
 
 function AppShell({ sessionId }: AppShellProps) {
-  const [view, setView] = useView()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const { snapshot, refetch } = useSnapshot(sessionId)
@@ -104,8 +98,6 @@ function AppShell({ sessionId }: AppShellProps) {
         <Header
           snapshot={snapshot}
           events={events}
-          view={view}
-          onViewChange={setView}
           leading={
             <SessionsDrawerTrigger
               onClick={() => setDrawerOpen(true)}
@@ -129,8 +121,6 @@ function AppShell({ sessionId }: AppShellProps) {
             className="flex min-w-0 flex-col overflow-hidden"
             style={{ position: 'relative' }}
           >
-            {/* Both views mount once on first load; display toggles between
-                them so there is no remount penalty on view switch. */}
             <Suspense
               fallback={
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -138,24 +128,12 @@ function AppShell({ sessionId }: AppShellProps) {
                 </div>
               }
             >
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: view === 'dag' ? 'block' : 'none',
-                }}
-              >
-                <DAGView snapshot={snapshot} plan={plan} sessionId={snapshot?.session.id ?? 'live'} events={events} />
-              </div>
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  display: view === 'activity' ? 'block' : 'none',
-                }}
-              >
-                <ActivityView snapshot={snapshot} events={events} />
-              </div>
+              <DAGView
+                snapshot={snapshot}
+                plan={plan}
+                sessionId={snapshot?.session.id ?? 'live'}
+                events={events}
+              />
             </Suspense>
           </main>
           <div className="border-l border-border overflow-hidden" style={{ backgroundColor: 'var(--surface-panel)' }}>

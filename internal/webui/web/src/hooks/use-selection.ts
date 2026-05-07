@@ -16,6 +16,10 @@ export type Selection =
   | { kind: 'task'; phaseId: string; taskId: string }
   | { kind: 'iteration'; iterationId: string }
   | { kind: 'spawn'; spawnId: string; role: string; phaseId?: string }
+  // Agent: a live or recently finished agent on the canvas. The optional
+  // subAgentToolUseId narrows the inspector to a single Task tool call
+  // child of that agent.
+  | { kind: 'agent'; spawnId: string; subAgentToolUseId?: string }
 
 // SelectionContextValue is the shape returned by useSelection.
 export interface SelectionContextValue {

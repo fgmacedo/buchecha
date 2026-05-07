@@ -77,37 +77,30 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const header = document.querySelector('header[aria-label="Header"]')
     expect(header).toBeTruthy()
   })
 
-  it('renders session-id, status-pill, iter-counter, view-toggle, and cost-meter', () => {
+  it('renders session-id, status-pill, iter-counter, and cost-meter', () => {
     render(
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     expect(document.querySelector('[data-testid="session-id"]')).toBeTruthy()
     expect(document.querySelector('[data-testid="status-pill"]')).toBeTruthy()
     expect(document.querySelector('[data-testid="iter-counter"]')).toBeTruthy()
-    expect(document.querySelector('[data-testid="view-toggle"]')).toBeTruthy()
     expect(document.querySelector('[data-testid="cost-meter"]')).toBeTruthy()
   })
 
-  it('renders session-id before status-pill in DOM order', () => {
+  it('renders session-id before status-pill before cost-meter in DOM order', () => {
     render(
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const header = document.querySelector('header[aria-label="Header"]')!
@@ -115,11 +108,9 @@ describe('Header layout order (T10.3)', () => {
     const ids = allElements.map((el) => el.getAttribute('data-testid'))
     const idIdx = ids.indexOf('session-id')
     const pillIdx = ids.indexOf('status-pill')
-    const toggleIdx = ids.indexOf('view-toggle')
     const meterIdx = ids.indexOf('cost-meter')
     expect(idIdx).toBeLessThan(pillIdx)
-    expect(pillIdx).toBeLessThan(toggleIdx)
-    expect(toggleIdx).toBeLessThan(meterIdx)
+    expect(pillIdx).toBeLessThan(meterIdx)
   })
 
   it('renders the short session id (first 8 chars)', () => {
@@ -127,8 +118,6 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const idEl = document.querySelector('[data-testid="session-id"]')
@@ -140,8 +129,6 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const counter = document.querySelector('[data-testid="iter-counter"]')
@@ -154,8 +141,6 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const header = document.querySelector('header[aria-label="Header"]')
@@ -172,8 +157,6 @@ describe('Header spec filename (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
 
@@ -193,8 +176,6 @@ describe('Header spec filename (T10.3)', () => {
         React.createElement(Header, {
           snapshot: SNAPSHOT,
           events: EVENTS,
-          view: 'dag',
-          onViewChange: () => {},
         }),
       )
     })
@@ -218,8 +199,6 @@ describe('Header CostMeter compact mode (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
 
@@ -243,8 +222,6 @@ describe('Header CostMeter compact mode (T10.3)', () => {
         React.createElement(Header, {
           snapshot: SNAPSHOT,
           events: EVENTS,
-          view: 'dag',
-          onViewChange: () => {},
         }),
       )
     })

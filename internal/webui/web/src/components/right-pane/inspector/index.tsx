@@ -2,10 +2,15 @@ import { useState, useEffect, useMemo } from 'react'
 import type { SeqEvent } from '../../../hooks/use-events'
 import type { Snapshot } from '../../../hooks/use-snapshot'
 import type { Selection } from '../../../hooks/use-selection'
+import { useAgents } from '../../../hooks/use-agents'
 import { OverviewTab } from './overview-tab'
 import BriefingTab from './briefing-tab'
 import PromptsTab from './prompts-tab'
 import EventsTab from './events-tab'
+import { AgentOverviewTab } from './agent-overview-tab'
+import { AgentPromptTab } from './agent-prompt-tab'
+import { AgentStreamTab } from './agent-stream-tab'
+import { AgentFilesTab } from './agent-files-tab'
 
 export interface InspectorProps {
   selection: Selection
@@ -15,8 +20,10 @@ export interface InspectorProps {
   onClose: () => void
 }
 
-// Tab indices map to tab labels.
-const TAB_LABELS = ['Overview', 'Briefing', 'Prompts', 'Events'] as const
+// Tab labels vary by selection kind: agent selections inspect the live agent
+// (prompt, stream, files); other kinds fall back to the original four tabs.
+const DEFAULT_TAB_LABELS = ['Overview', 'Briefing', 'Prompts', 'Events'] as const
+const AGENT_TAB_LABELS = ['Overview', 'Prompt', 'Stream', 'Files'] as const
 type TabIndex = 0 | 1 | 2 | 3
 
 const LS_PREFIX = 'bcc.inspector.tab.'
@@ -52,6 +59,8 @@ function selectionLabel(s: Selection): string {
       return s.iterationId
     case 'spawn':
       return s.spawnId
+    case 'agent':
+      return s.spawnId
   }
 }
 
@@ -59,6 +68,7 @@ function selectionLabel(s: Selection): string {
 // strip (Overview / Briefing / Prompts / Events) with keyboard shortcuts,
 // badge counts, and localStorage-persisted active tab per selection kind.
 export function Inspector({ selection, events, snapshot, sessionId, onClose }: InspectorProps) {
+  const tabLabels = selection.kind === 'agent' ? AGENT_TAB_LABELS : DEFAULT_TAB_LABELS
   const [activeTab, setActiveTab] = useState<TabIndex>(() => loadTab(selection.kind))
 
   // When the selection kind changes, restore the saved tab for that kind.
@@ -212,7 +222,7 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
         className="shrink-0 flex items-center gap-0 border-b border-border"
         style={{ backgroundColor: 'var(--surface-panel)' }}
       >
-        {TAB_LABELS.map((label, idx) => {
+        {tabLabels.map((label, idx) => {
           const i = idx as TabIndex
           const isActive = activeTab === i
           const badge = tabBadge(i)
@@ -263,29 +273,92 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
         className="flex-1 min-h-0 overflow-hidden"
         style={{ backgroundColor: 'var(--surface-card)' }}
       >
-        <div style={{ display: activeTab === 0 ? 'block' : 'none', height: '100%' }}>
-          <OverviewTab selection={selection} events={events} snapshot={snapshot} />
-        </div>
-        <div style={{ display: activeTab === 1 ? 'block' : 'none', height: '100%' }}>
-          <BriefingTab
+        {selection.kind === 'agent' ? (
+          <AgentInspectorBodies
+            selection={selection}
+            events={events}
+            sessionId={sessionId}
+            activeTab={activeTab}
+          />
+        ) : (
+          <DefaultInspectorBodies
             selection={selection}
             events={events}
             snapshot={snapshot}
             sessionId={sessionId}
+            activeTab={activeTab}
           />
-        </div>
-        <div style={{ display: activeTab === 2 ? 'block' : 'none', height: '100%' }}>
-          <PromptsTab
-            selection={selection}
-            events={events}
-            snapshot={snapshot}
-            sessionId={sessionId}
-          />
-        </div>
-        <div style={{ display: activeTab === 3 ? 'block' : 'none', height: '100%' }}>
-          <EventsTab selection={selection} events={events} snapshot={snapshot} />
-        </div>
+        )}
       </div>
     </div>
+  )
+}
+
+interface InspectorBodiesProps {
+  selection: Selection
+  events: SeqEvent[]
+  snapshot: Snapshot | null
+  sessionId: string
+  activeTab: TabIndex
+}
+
+function DefaultInspectorBodies({ selection, events, snapshot, sessionId, activeTab }: InspectorBodiesProps) {
+  return (
+    <>
+      <div style={{ display: activeTab === 0 ? 'block' : 'none', height: '100%' }}>
+        <OverviewTab selection={selection} events={events} snapshot={snapshot} />
+      </div>
+      <div style={{ display: activeTab === 1 ? 'block' : 'none', height: '100%' }}>
+        <BriefingTab
+          selection={selection}
+          events={events}
+          snapshot={snapshot}
+          sessionId={sessionId}
+        />
+      </div>
+      <div style={{ display: activeTab === 2 ? 'block' : 'none', height: '100%' }}>
+        <PromptsTab
+          selection={selection}
+          events={events}
+          snapshot={snapshot}
+          sessionId={sessionId}
+        />
+      </div>
+      <div style={{ display: activeTab === 3 ? 'block' : 'none', height: '100%' }}>
+        <EventsTab selection={selection} events={events} snapshot={snapshot} />
+      </div>
+    </>
+  )
+}
+
+function AgentInspectorBodies({
+  selection,
+  events,
+  sessionId,
+  activeTab,
+}: Omit<InspectorBodiesProps, 'snapshot'>) {
+  if (selection.kind !== 'agent') return null
+  const agents = useAgents(events)
+  const card = agents.byId[selection.spawnId]
+  const spawnId = card?.spawnId
+  return (
+    <>
+      <div style={{ display: activeTab === 0 ? 'block' : 'none', height: '100%' }}>
+        <AgentOverviewTab
+          agentId={selection.spawnId}
+          subAgentToolUseId={selection.subAgentToolUseId}
+          events={events}
+        />
+      </div>
+      <div style={{ display: activeTab === 1 ? 'block' : 'none', height: '100%' }}>
+        <AgentPromptTab agentId={selection.spawnId} events={events} sessionId={sessionId} />
+      </div>
+      <div style={{ display: activeTab === 2 ? 'block' : 'none', height: '100%' }}>
+        <AgentStreamTab agentId={selection.spawnId} agentSpawnId={spawnId} events={events} />
+      </div>
+      <div style={{ display: activeTab === 3 ? 'block' : 'none', height: '100%' }}>
+        <AgentFilesTab agentId={selection.spawnId} events={events} />
+      </div>
+    </>
   )
 }
