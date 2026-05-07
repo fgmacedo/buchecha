@@ -1,6 +1,0 @@
-BCC_RUNNING=1
-BCC_ITERATION=1
-BCC_MAX_ITERATIONS=3
-BCC_SPEC_PATH=docs/specs/test-validation/2026-04-29-bcc-cooperative-smoke-v2.md
-BCC_JSONL_PATH=/var/folders/6s/bqzmgmsn5kz7l6ny1r0k17_r0000gp/T/bcc/2026-04-29-bcc-cooperative-smoke-v2-iter1.jsonl
-BCC_BRANCH=feat/phase-1
