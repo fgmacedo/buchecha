@@ -179,7 +179,9 @@ export default function PromptsTab({ selection, events, sessionId }: PromptsTabP
         if (!cancelled) setBodyError(msg)
         return
       }
-      const text = (await res.json()) as string
+      // Endpoint emits raw markdown with Content-Type: text/markdown;
+      // res.text() matches the wire shape (res.json() would throw on `#`).
+      const text = await res.text()
       if (cancelled) return
       setBodyRaw(text)
       try {

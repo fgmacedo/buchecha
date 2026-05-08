@@ -51,7 +51,10 @@ export function AgentPromptTab({ agentId, events, sessionId }: AgentPromptTabPro
           if (!cancelled) setError(msg)
           return
         }
-        const text = (await res.json()) as string
+        // The endpoint emits the raw markdown body with
+        // Content-Type: text/markdown. Reading as text mirrors the wire
+        // shape; parsing as JSON would throw on the leading `#`.
+        const text = await res.text()
         if (cancelled) return
         setBodyRaw(text)
         try {

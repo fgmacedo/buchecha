@@ -83,7 +83,9 @@ export default function BriefingTab({ selection, events, sessionId }: BriefingTa
         if (!cancelled) setErrorMsg(msg)
         return
       }
-      const text = (await res.json()) as string
+      // Endpoint emits raw markdown with Content-Type: text/markdown;
+      // res.text() matches the wire shape (res.json() would throw on `#`).
+      const text = await res.text()
       if (cancelled) return
       try {
         const hl = await getHighlighter()

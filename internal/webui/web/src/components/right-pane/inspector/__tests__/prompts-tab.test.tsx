@@ -73,7 +73,19 @@ const PHASE_EVENTS = makePhaseEvents('P1')
 // fetch mock helpers
 // ---------------------------------------------------------------------------
 
+// The real server emits raw markdown for 2xx prompt responses
+// (Content-Type: text/markdown) and a JSON envelope for errors. The
+// helper mirrors that split so tests exercise the same content-type
+// branches the SPA does.
 function makeFetch(body: unknown, status = 200) {
+  if (status >= 200 && status < 300 && typeof body === 'string') {
+    return vi.fn().mockResolvedValue(
+      new Response(body, {
+        status,
+        headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+      }),
+    )
+  }
   return vi.fn().mockResolvedValue(
     new Response(JSON.stringify(body), {
       status,

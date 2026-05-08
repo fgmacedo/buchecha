@@ -284,10 +284,10 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
     })
   }, [planLayoutNodes, agents])
 
+  // buildAgentLayout runs even with no plan nodes so plan-anchored live
+  // agents (the planner before its first emit) render on a bare canvas
+  // instead of disappearing behind a "waiting for plan" placeholder.
   const { agentNodes, agentEdges } = useMemo(() => {
-    if (planNodesWithHistory.length === 0) {
-      return { agentNodes: [] as Node[], agentEdges: [] }
-    }
     const { nodes, edges } = buildAgentLayout(planNodesWithHistory, agents)
     return { agentNodes: nodes, agentEdges: edges }
   }, [planNodesWithHistory, agents])
@@ -389,7 +389,12 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
     [agents],
   )
 
-  if (!dag?.phases?.length) {
+  // The placeholder fires only when there's nothing on the canvas at all.
+  // A live planner (anchored to plan, no phases yet) must be visible; the
+  // ReactFlow render below already includes its agentNode and would be
+  // suppressed by an early return.
+  const hasPlanLiveAgents = agents.liveByAnchor.plan.length > 0
+  if (!dag?.phases?.length && !hasPlanLiveAgents && planArchivedAgents.length === 0) {
     return (
       <div
         style={{

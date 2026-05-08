@@ -218,6 +218,156 @@ describe('computeCostAgg', () => {
     expect(result.perRole).toEqual({})
   })
 
+  it('aggregates live tokens from assistant_text usage before spawn_finished', () => {
+    const events: SeqEvent[] = [
+      {
+        seq: 1,
+        event: {
+          type: 'agent_event',
+          kind: 'assistant_text',
+          agent_id: 'bcc-planner-abc123',
+          role: 'bcc-planner',
+          iteration_id: 'P0-0-1',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 50,
+          },
+          at: '2026-05-08T12:00:00Z',
+        },
+      },
+      {
+        seq: 2,
+        event: {
+          type: 'agent_event',
+          kind: 'assistant_text',
+          agent_id: 'bcc-planner-abc123',
+          role: 'bcc-planner',
+          iteration_id: 'P0-0-1',
+          usage: {
+            input_tokens: 2,
+            output_tokens: 8,
+            cache_read_input_tokens: 200,
+            cache_creation_input_tokens: 0,
+          },
+          at: '2026-05-08T12:00:01Z',
+        },
+      },
+    ]
+    const result = computeCostAgg(events)
+    expect(result.totalUSD).toBe(0)
+    expect(result.totalTokens).toEqual({
+      input: 12,
+      output: 13,
+      cacheRead: 300,
+      cacheCreate: 50,
+    })
+    expect(result.perRole).toEqual({
+      planner: { usd: 0, tokens: 25 },
+    })
+    expect(result.perIteration).toEqual([
+      { iterationIndex: 0, usd: 0, tokens: 25 },
+    ])
+  })
+
+  it('does not double count when spawn_finished arrives for the same agent_id', () => {
+    const events: SeqEvent[] = [
+      {
+        seq: 1,
+        event: {
+          type: 'agent_event',
+          kind: 'assistant_text',
+          agent_id: 'bcc-planner-abc123',
+          role: 'bcc-planner',
+          iteration_id: 'P0-0-1',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 0,
+          },
+          at: '2026-05-08T12:00:00Z',
+        },
+      },
+      {
+        seq: 2,
+        event: {
+          type: 'spawn_finished',
+          role: 'planner',
+          agent_id: 'bcc-planner-abc123',
+          iteration_id: 'P0-0-1',
+          cost: {
+            input_tokens: 12,
+            output_tokens: 13,
+            cache_read_input_tokens: 300,
+            cache_creation_input_tokens: 50,
+            usd: 0.07,
+          },
+          at: '2026-05-08T12:00:02Z',
+        },
+      },
+    ]
+    const result = computeCostAgg(events)
+    expect(result.totalUSD).toBeCloseTo(0.07, 2)
+    expect(result.totalTokens).toEqual({
+      input: 12,
+      output: 13,
+      cacheRead: 300,
+      cacheCreate: 50,
+    })
+    expect(result.perRole).toEqual({
+      planner: { usd: 0.07, tokens: 25 },
+    })
+  })
+
+  it('blends finalized spawn with another live spawn', () => {
+    const events: SeqEvent[] = [
+      {
+        seq: 1,
+        event: {
+          type: 'spawn_finished',
+          role: 'planner',
+          agent_id: 'bcc-planner-aaa',
+          iteration_id: 'P0-0-1',
+          cost: {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            usd: 0.1,
+          },
+          at: '2026-05-08T12:00:00Z',
+        },
+      },
+      {
+        seq: 2,
+        event: {
+          type: 'agent_event',
+          kind: 'assistant_text',
+          agent_id: 'bcc-briefer-bbb',
+          role: 'bcc-briefer',
+          iteration_id: 'P1-0-1',
+          usage: {
+            input_tokens: 7,
+            output_tokens: 3,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          at: '2026-05-08T12:00:05Z',
+        },
+      },
+    ]
+    const result = computeCostAgg(events)
+    expect(result.totalUSD).toBeCloseTo(0.1, 2)
+    expect(result.totalTokens.input).toBe(107)
+    expect(result.totalTokens.output).toBe(53)
+    expect(result.perRole).toEqual({
+      planner: { usd: 0.1, tokens: 150 },
+      briefer: { usd: 0, tokens: 10 },
+    })
+  })
+
   it('correctly aggregates mixed spawn_finished and other events', () => {
     const events: SeqEvent[] = [
       {
