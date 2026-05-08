@@ -31,8 +31,7 @@ Driving a single agent through a long Markdown spec is unreliable: the agent los
 
 ## Web UI
 
-<img width="1719" height="987" alt="image" src="https://github.com/user-attachments/assets/056ec745-150d-4769-94ac-8d9f129f52ea" />
-
+<img width="1102" height="958" alt="image" src="https://github.com/user-attachments/assets/9d2d2e97-97dd-4a06-9d94-c426995eb0a3" />
 
 ## Quick start
 
