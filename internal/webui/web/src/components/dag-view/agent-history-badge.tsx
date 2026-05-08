@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useSelection } from '../../hooks/use-selection'
 import type { AgentCard } from '../../hooks/use-agents'
 
@@ -16,13 +16,16 @@ export interface AgentHistoryBadgeProps {
   // label is displayed before the count, e.g. "Plan history" on the planner
   // anchor or "Past agents" on phases/tasks. Optional.
   label?: string
+  // inline=true skips the absolute wrapper so the button can sit inside a
+  // flow-laid-out meta strip; the popover still anchors to the button.
+  inline?: boolean
 }
 
 // AgentHistoryBadge renders a small "+N" pill that opens a popover with the
 // list of archived agents on click. Each row is clickable: selecting it
 // switches the inspector to that agent without bringing the card back to
 // the canvas.
-export function AgentHistoryBadge({ archivedAgents, label = 'Past agents' }: AgentHistoryBadgeProps) {
+export function AgentHistoryBadge({ archivedAgents, label = 'Past agents', inline = false }: AgentHistoryBadgeProps) {
   const { select } = useSelection()
   const [open, setOpen] = useState(false)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -41,14 +44,13 @@ export function AgentHistoryBadge({ archivedAgents, label = 'Past agents' }: Age
 
   if (archivedAgents.length === 0) return null
 
+  const wrapperStyle: React.CSSProperties = inline
+    ? { position: 'relative', display: 'inline-flex' }
+    : { position: 'absolute', right: 6, bottom: 6, zIndex: 5 }
+
   return (
     <div
-      style={{
-        position: 'absolute',
-        right: 6,
-        bottom: 6,
-        zIndex: 5,
-      }}
+      style={wrapperStyle}
       onClick={(e) => e.stopPropagation()}
     >
       <button

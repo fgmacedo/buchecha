@@ -13,7 +13,6 @@ import {
 import { PhaseNodeComponent } from './phase-node'
 import { TaskNodeComponent } from './task-node'
 import { AgentNodeComponent } from './agent-node'
-import { SubAgentNodeComponent } from './sub-agent-node'
 import { AgentHistoryBadge } from './agent-history-badge'
 import {
   buildLayout,
@@ -33,7 +32,6 @@ const NODE_TYPES = {
   phaseNode: PhaseNodeComponent,
   taskNode: TaskNodeComponent,
   agentNode: AgentNodeComponent,
-  subAgentNode: SubAgentNodeComponent,
 }
 
 function positionsStorageKey(sessionId: string): string {

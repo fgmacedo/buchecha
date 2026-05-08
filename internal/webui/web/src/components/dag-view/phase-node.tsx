@@ -93,6 +93,8 @@ export function PhaseNodeComponent({ data }: NodeProps) {
     phase.title && phase.title.trim().length > 0 ? phase.title : phase.id
   const intent = phase.intent ?? ''
 
+  const active = aggStatus === 'in_progress'
+
   return (
     <div
       onMouseEnter={() => setHovered(true)}
@@ -100,11 +102,14 @@ export function PhaseNodeComponent({ data }: NodeProps) {
       style={{
         width: '100%',
         height: '100%',
-        borderRadius: 8,
+        borderRadius: 16,
         border: selected
           ? `1.5px solid ${statusColor}`
-          : '1px solid var(--color-border)',
+          : active
+            ? `1px solid ${statusColor}`
+            : '1px solid var(--border-default, var(--color-border))',
         backgroundColor: isHighlighted ? 'var(--surface-elevated)' : 'var(--surface-card)',
+        boxShadow: 'var(--shadow-card)',
         overflow: 'visible',
         position: 'relative',
         display: 'flex',
@@ -112,6 +117,23 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         transition: 'background-color 0.1s ease, border-color 0.1s ease',
       }}
     >
+      {/* Active phase glow: a soft radial gradient at the top of the card,
+          tinted by the status color. Mirrors the design handoff so a running
+          phase reads as "lit from above" instead of just bordered. */}
+      {active && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            inset: -1,
+            borderRadius: 16,
+            background: `radial-gradient(80% 100% at 50% 0%, color-mix(in srgb, ${statusColor} 22%, transparent), transparent 60%)`,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }}
+        />
+      )}
+
       <Handle
         type="target"
         position={Position.Top}
@@ -123,45 +145,45 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         }}
       />
 
-      {/* Header row: id chip (left), title + intent stack, status pill (right). */}
+      {/* Header row: title + intent stack with a tiny "PHASE <id>" eyebrow,
+          status pill (right). The eyebrow replaces the bordered id chip:
+          it's lighter, uppercased, and reads like a kicker over the title. */}
       <div
         data-testid={`phase-header-${phase.id}`}
         onClick={() => select({ kind: 'phase', phaseId: phase.id })}
         style={{
-          padding: '14px 16px 10px',
+          padding: '16px 18px 0',
           display: 'flex',
           alignItems: 'flex-start',
           gap: 12,
-          borderBottom: '1px solid var(--color-border)',
-          borderRadius: '7px 7px 0 0',
+          borderRadius: '15px 15px 0 0',
           cursor: 'pointer',
           flexShrink: 0,
+          position: 'relative',
+          zIndex: 1,
         }}
       >
-        <span
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--color-faint, var(--color-muted-foreground))',
-            letterSpacing: '0.04em',
-            padding: '2px 7px',
-            border: '1px solid var(--border-default)',
-            borderRadius: 6,
-            marginTop: 4,
-            flexShrink: 0,
-          }}
-          title={phase.id}
-        >
-          {phase.id}
-        </span>
-
         <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10.5,
+              color: 'var(--fg-faint, var(--color-muted-foreground))',
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              lineHeight: 1.2,
+              marginBottom: 4,
+            }}
+            title={phase.id}
+          >
+            phase {phase.id}
+          </div>
           <div
             style={{
               fontFamily: 'var(--font-sans)',
               fontSize: 18,
               fontWeight: 600,
-              color: 'var(--color-foreground-strong, var(--color-foreground))',
+              color: 'var(--fg-strong, var(--color-foreground))',
               lineHeight: 1.2,
               letterSpacing: '-0.01em',
               wordBreak: 'break-word',
@@ -175,7 +197,7 @@ export function PhaseNodeComponent({ data }: NodeProps) {
               style={{
                 marginTop: 4,
                 fontSize: 13,
-                color: 'var(--color-muted-foreground)',
+                color: 'var(--fg-muted, var(--color-muted-foreground))',
                 lineHeight: 1.45,
                 display: '-webkit-box',
                 WebkitLineClamp: 2,
@@ -188,37 +210,6 @@ export function PhaseNodeComponent({ data }: NodeProps) {
               {intent}
             </div>
           )}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              flexWrap: 'wrap',
-              marginTop: 6,
-            }}
-          >
-            {(phase.depends_on ?? []).map((dep) => (
-              <span
-                key={dep}
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 9,
-                  color: 'var(--color-muted-foreground)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 3,
-                  padding: '1px 5px',
-                  lineHeight: 1.5,
-                  userSelect: 'none',
-                }}
-              >
-                {dep}
-              </span>
-            ))}
-            {phase.parallelizable && <ParallelChip />}
-            {typeof phase.priority === 'number' && (
-              <PriorityBadge priority={phase.priority} />
-            )}
-          </div>
         </div>
 
         <span style={{ marginTop: 2, flexShrink: 0 }}>
@@ -230,20 +221,20 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         </span>
       </div>
 
-      {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}
-      <div style={{ flex: 1, pointerEvents: 'none' }} />
-
-      {/* Footer: progress bar + tasks counter + plan provider chip + cost */}
+      {/* Meta strip: progress, X/Y, $cost, plan provider chip + model · effort.
+          Sits directly below the intent (per design handoff) so the reader
+          gets all the phase telemetry before scanning the task grid. */}
       <div
         style={{
-          padding: '6px 12px 8px',
+          padding: '12px 18px 14px',
           display: 'flex',
           alignItems: 'center',
-          gap: 12,
-          borderTop: '1px solid var(--color-border)',
+          gap: 18,
           flexShrink: 0,
-          fontSize: 10.5,
-          color: 'var(--color-muted-foreground)',
+          fontSize: 11.5,
+          color: 'var(--fg-muted, var(--color-muted-foreground))',
+          position: 'relative',
+          zIndex: 1,
         }}
       >
         <ProgressMini
@@ -252,14 +243,22 @@ export function PhaseNodeComponent({ data }: NodeProps) {
           color={statusColor}
         />
         <span style={{ fontFamily: 'var(--font-mono)' }}>
-          <span style={{ color: 'var(--color-foreground)' }}>{doneCount}</span>
-          <span
-            style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
-          >
+          <span style={{ color: 'var(--fg, var(--color-foreground))' }}>{doneCount}</span>
+          <span style={{ color: 'var(--fg-faint, var(--color-muted-foreground))' }}>
             /{tasks.length}
           </span>{' '}
           tasks
         </span>
+        {costUSD > 0 && (
+          <span style={{ fontFamily: 'var(--font-mono)' }}>
+            <span style={{ color: 'var(--fg-faint, var(--color-muted-foreground))' }}>
+              $
+            </span>
+            <span style={{ color: 'var(--fg, var(--color-foreground))' }}>
+              {costUSD.toFixed(3)}
+            </span>
+          </span>
+        )}
         {phase.executor_assignment?.provider && (
           <span
             style={{
@@ -271,8 +270,8 @@ export function PhaseNodeComponent({ data }: NodeProps) {
           >
             <span
               style={{
-                fontSize: 9,
-                color: 'var(--color-faint, var(--color-muted-foreground))',
+                fontSize: 9.5,
+                color: 'var(--fg-faint, var(--color-muted-foreground))',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
               }}
@@ -285,8 +284,8 @@ export function PhaseNodeComponent({ data }: NodeProps) {
                 title={`executor: ${execLabel}`}
                 style={{
                   fontFamily: 'var(--font-mono)',
-                  color: 'var(--color-muted-foreground)',
-                  fontSize: 10.5,
+                  color: 'var(--fg-muted, var(--color-muted-foreground))',
+                  fontSize: 11,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -315,26 +314,36 @@ export function PhaseNodeComponent({ data }: NodeProps) {
             {execLabel}
           </span>
         )}
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <span
+          style={{
+            marginLeft: 'auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
           {attempt > 1 && (
-            <span style={{ fontFamily: 'var(--font-mono)' }}>
-              attempt {attempt}
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10.5,
+                color: 'var(--fg-faint, var(--color-muted-foreground))',
+              }}
+              title={`attempt ${attempt}`}
+            >
+              att {attempt}
             </span>
           )}
-          {costUSD > 0 && (
-            <span style={{ fontFamily: 'var(--font-mono)' }}>
-              <span
-                style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
-              >
-                $
-              </span>
-              <span style={{ color: 'var(--color-foreground)' }}>
-                {costUSD.toFixed(4)}
-              </span>
-            </span>
-          )}
+          <AgentHistoryBadge
+            archivedAgents={archivedAgents}
+            label={`Past agents on ${phase.id}`}
+            inline
+          />
         </span>
       </div>
+
+      {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}
+      <div style={{ flex: 1, pointerEvents: 'none', position: 'relative', zIndex: 1 }} />
 
       <Handle
         type="source"
@@ -346,38 +355,12 @@ export function PhaseNodeComponent({ data }: NodeProps) {
           height: 8,
         }}
       />
-      <AgentHistoryBadge archivedAgents={archivedAgents} label={`Past agents on ${phase.id}`} />
     </div>
   )
 }
 
-// PriorityBadge renders the priority as a compact numeric chip, mirroring
-// the task-level badge so users learn one visual pattern.
-function PriorityBadge({ priority }: { priority: number }) {
-  return (
-    <span
-      title={`priority ${priority}`}
-      style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 9,
-        fontWeight: 700,
-        color: 'var(--color-accent)',
-        backgroundColor:
-          'color-mix(in srgb, var(--color-accent) 18%, transparent)',
-        border:
-          '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)',
-        borderRadius: 3,
-        padding: '1px 5px',
-        lineHeight: 1.5,
-      }}
-    >
-      P{priority}
-    </span>
-  )
-}
-
 // ProgressMini renders a slim, role-colored bar showing done / total. Width
-// 80px keeps the footer balanced even on the smallest phase cards.
+// 80px keeps the meta strip balanced even on the smallest phase cards.
 function ProgressMini({
   done,
   total,
@@ -395,7 +378,7 @@ function ProgressMini({
         width: 80,
         height: 4,
         borderRadius: 2,
-        background: 'var(--border-subtle)',
+        background: 'var(--border-subtle, var(--color-border))',
         overflow: 'hidden',
         flexShrink: 0,
       }}
@@ -409,39 +392,5 @@ function ProgressMini({
         }}
       />
     </div>
-  )
-}
-
-// ParallelChip surfaces the parallelizable flag with a compact glyph plus
-// label. The double-vertical-bar character reads as a parallel marker
-// without leaning on emoji.
-function ParallelChip() {
-  return (
-    <span
-      title="parallelizable"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 3,
-        fontFamily: 'var(--font-mono)',
-        fontSize: 9,
-        fontWeight: 600,
-        color: 'var(--status-running)',
-        backgroundColor:
-          'color-mix(in srgb, var(--status-running) 14%, transparent)',
-        border:
-          '1px solid color-mix(in srgb, var(--status-running) 40%, transparent)',
-        borderRadius: 3,
-        padding: '1px 5px',
-        lineHeight: 1.5,
-        letterSpacing: '0.04em',
-        textTransform: 'uppercase',
-      }}
-    >
-      <span aria-hidden="true" style={{ fontWeight: 700 }}>
-        {'∥'}
-      </span>
-      par
-    </span>
   )
 }

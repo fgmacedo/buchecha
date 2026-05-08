@@ -1,9 +1,8 @@
 import dagre from 'dagre'
 import type { Node, Edge } from '@xyflow/react'
 import type { DAGData, DAGPhase } from './types'
-import type { AgentCard, AgentsState, SubAgent } from '../../hooks/use-agents'
-import { AGENT_NODE_HEIGHT, AGENT_NODE_WIDTH } from './agent-node'
-import { SUBAGENT_NODE_HEIGHT, SUBAGENT_NODE_WIDTH } from './sub-agent-node'
+import type { AgentCard, AgentsState } from '../../hooks/use-agents'
+import { AGENT_NODE_WIDTH, agentCardHeight } from './agent-node'
 
 // Task chip dimensions for the compact grid layout inside each phase.
 // Width grew to fit a wrapped title and a 2-line intent clamp; height grew
@@ -17,13 +16,14 @@ const TASK_GAP_Y = 10
 const GRID_COLS = 4
 
 // Phase layout constants.
-const PHASE_PAD_X = 16
-const PHASE_PAD_Y = 12
+const PHASE_PAD_X = 18
+const PHASE_PAD_Y = 14
 // Header stacks the id chip alongside the larger title (18px), the intent
-// (13px, 2 lines), and a meta row for deps/parallelizable/priority. Bumped
-// from 96px so tasks don't crash into the header on the new design.
-const PHASE_HEADER_H = 112
-const PHASE_FOOTER_H = 38
+// (13px, 2 lines), then a meta strip with progress / tasks count / cost /
+// plan provider. The deps/parallelizable/priority chips were dropped to
+// match the design handoff (cleaner card, telemetry up front).
+const PHASE_HEADER_H = 124
+const PHASE_FOOTER_H = 0
 
 // Agent satellite layout. Cards float to the right of their anchor; siblings
 // stack vertically. The plan-level anchor (planner) lives above all phases
@@ -31,9 +31,6 @@ const PHASE_FOOTER_H = 38
 const AGENT_OFFSET_X = 28
 const AGENT_GAP_Y = 16
 const PLAN_AGENT_BASE_Y = -180
-const PLAN_AGENT_GAP_Y = AGENT_NODE_HEIGHT + AGENT_GAP_Y
-const SUBAGENT_OFFSET_X = AGENT_NODE_WIDTH + 24
-const SUBAGENT_GAP_Y = 12
 
 const ROLE_EDGE_COLOR: Record<string, string> = {
   planner: 'var(--role-planner)',
@@ -59,11 +56,6 @@ export function taskNodeId(phaseId: string, taskId: string): string {
 // the agent_id assigned by the AgentRegistry (e.g. "bcc-executor-f975de8b").
 export function agentNodeId(agentId: string): string {
   return `agent:${agentId}`
-}
-
-// subAgentNodeId returns the xyflow node id for a sub-agent card.
-export function subAgentNodeId(toolUseId: string): string {
-  return `subagent:${toolUseId}`
 }
 
 // layoutTasksInPhase positions tasks in a 4-column grid within the phase
@@ -287,55 +279,26 @@ export function buildAgentLayout(
   const out: { nodes: Node[]; edges: Edge[] } = { nodes: [], edges: [] }
   const { phases, tasks, topPhase } = collectAnchorPositions(layoutNodes)
 
-  // Stack siblings on the same anchor by index. AgentsState already orders
-  // ids by startedAt within liveByAnchor, so the index reflects spawn time.
-  function placeAgent(card: AgentCard, anchorX: number, anchorY: number, indexInAnchor: number): void {
+  // runningAnchorY tracks the cursor inside an anchor as siblings stack
+  // vertically. Each agent reserves its own computed height plus AGENT_GAP_Y
+  // before the next one slots in.
+  const anchorCursors = new Map<string, number>()
+
+  function placeAgent(card: AgentCard, anchorX: number, anchorY: number, anchorKey: string): void {
     const x = anchorX + AGENT_OFFSET_X
-    const y = anchorY + indexInAnchor * (AGENT_NODE_HEIGHT + AGENT_GAP_Y)
+    const offset = anchorCursors.get(anchorKey) ?? 0
+    const y = anchorY + offset
+    const h = agentCardHeight(card)
     out.nodes.push({
       id: agentNodeId(card.agentId),
       type: 'agentNode',
       position: { x, y },
-      style: { width: AGENT_NODE_WIDTH, height: AGENT_NODE_HEIGHT },
+      style: { width: AGENT_NODE_WIDTH, height: h },
       data: { agent: card },
       draggable: false,
       selectable: true,
     })
-    placeSubAgents(card, x, y)
-  }
-
-  // placeSubAgents emits sub-agent cards (Task tool children) for every live
-  // sub-agent of the parent. They stack vertically to the right of the parent
-  // and connect via a dashed edge.
-  function placeSubAgents(parent: AgentCard, parentX: number, parentY: number): void {
-    const subs: SubAgent[] = Object.values(parent.subAgents).filter((s) => s.status === 'live')
-    for (let i = 0; i < subs.length; i++) {
-      const sub = subs[i]
-      out.nodes.push({
-        id: subAgentNodeId(sub.toolUseId),
-        type: 'subAgentNode',
-        position: {
-          x: parentX + SUBAGENT_OFFSET_X,
-          y: parentY + i * (SUBAGENT_NODE_HEIGHT + SUBAGENT_GAP_Y),
-        },
-        style: { width: SUBAGENT_NODE_WIDTH, height: SUBAGENT_NODE_HEIGHT },
-        data: { subAgent: sub },
-        draggable: false,
-        selectable: true,
-      })
-      out.edges.push({
-        id: `edge:subagent:${sub.toolUseId}`,
-        source: agentNodeId(parent.agentId),
-        target: subAgentNodeId(sub.toolUseId),
-        type: 'straight',
-        style: {
-          stroke: 'var(--color-accent)',
-          strokeOpacity: 0.5,
-          strokeWidth: 1,
-          strokeDasharray: '4 4',
-        },
-      })
-    }
+    anchorCursors.set(anchorKey, offset + h + AGENT_GAP_Y)
   }
 
   function emitEdge(card: AgentCard, sourceId: string): void {
@@ -384,24 +347,27 @@ export function buildAgentLayout(
     }
   }
 
-  // Plan-anchored agents (planner): float above the topmost phase.
+  // Plan-anchored agents (planner): float above the topmost phase. Older
+  // entries sit higher up so the most recent planner sits closest to the
+  // canvas; we walk in reverse and reserve each card's measured height.
   const baseX = topPhase ? topPhase.x : 0
-  for (let i = 0; i < agents.liveByAnchor.plan.length; i++) {
+  let planY = PLAN_AGENT_BASE_Y
+  for (let i = agents.liveByAnchor.plan.length - 1; i >= 0; i--) {
     const id = agents.liveByAnchor.plan[i]
     const card = agents.byId[id]
     if (!card) continue
-    const x = baseX
-    const y = PLAN_AGENT_BASE_Y - i * PLAN_AGENT_GAP_Y
+    const h = agentCardHeight(card)
+    planY -= h
     out.nodes.push({
       id: agentNodeId(card.agentId),
       type: 'agentNode',
-      position: { x, y },
-      style: { width: AGENT_NODE_WIDTH, height: AGENT_NODE_HEIGHT },
+      position: { x: baseX, y: planY },
+      style: { width: AGENT_NODE_WIDTH, height: h },
       data: { agent: card },
       draggable: false,
       selectable: true,
     })
-    placeSubAgents(card, x, y)
+    planY -= AGENT_GAP_Y
   }
 
   // Phase-anchored agents (briefer or executor without task_id).
@@ -411,10 +377,11 @@ export function buildAgentLayout(
     if (!anchor) continue
     const baseAnchorX = anchor.x + anchor.width
     const baseAnchorY = anchor.y
-    for (let i = 0; i < ids.length; i++) {
-      const card = agents.byId[ids[i]]
+    const anchorKey = `phase:${phaseId}`
+    for (const id of ids) {
+      const card = agents.byId[id]
       if (!card) continue
-      placeAgent(card, baseAnchorX, baseAnchorY, i)
+      placeAgent(card, baseAnchorX, baseAnchorY, anchorKey)
       emitEdge(card, phaseNodeId(phaseId))
     }
   }
@@ -430,10 +397,11 @@ export function buildAgentLayout(
     if (!anchor) continue
     const baseAnchorX = anchor.x + anchor.width
     const baseAnchorY = anchor.y
-    for (let i = 0; i < ids.length; i++) {
-      const card = agents.byId[ids[i]]
+    const anchorKey = `task:${tkey}`
+    for (const id of ids) {
+      const card = agents.byId[id]
       if (!card) continue
-      placeAgent(card, baseAnchorX, baseAnchorY, i)
+      placeAgent(card, baseAnchorX, baseAnchorY, anchorKey)
       emitEdge(card, taskNodeId(phaseId, taskId))
     }
   }
