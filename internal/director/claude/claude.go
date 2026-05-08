@@ -234,6 +234,7 @@ type planView struct {
 	AgentID  string
 	SpecPath string
 	Registry director.CapabilityRegistry
+	Prompt   string
 }
 
 type briefView struct {
@@ -267,6 +268,7 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 		AgentID:  in.AgentID,
 		SpecPath: in.SpecPath,
 		Registry: in.Registry,
+		Prompt:   in.Prompt,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("director/claude: compose plan prompt: %w", err)

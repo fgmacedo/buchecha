@@ -819,3 +819,122 @@ func TestBrief_NoSpawnStartedWhenNoSessionStore(t *testing.T) {
 		}
 	}
 }
+
+// TestComposePrompt_PlanUserDirective pins the plan.md conditional rendering
+// for spec/prompt combinations: spec-only omits the User directive section,
+// prompt-only shows it as source-of-truth, and both shows it as a lens.
+func TestComposePrompt_PlanUserDirective(t *testing.T) {
+	cases := []struct {
+		name    string
+		view    planView
+		wantStr []string
+		notStr  []string
+	}{
+		{
+			name: "spec only",
+			view: planView{
+				Role:     "planner",
+				AgentID:  "a",
+				SpecPath: "/tmp/s.md",
+				Prompt:   "",
+			},
+			wantStr: []string{"You read the spec at `/tmp/s.md`"},
+			notStr:  []string{"## User directive"},
+		},
+		{
+			name: "prompt only",
+			view: planView{
+				Role:     "planner",
+				AgentID:  "a",
+				SpecPath: "",
+				Prompt:   "do X",
+			},
+			wantStr: []string{"This run has no spec file", "## User directive", "They are the source of truth", "```\ndo X\n```"},
+			notStr:  []string{"You read the spec at"},
+		},
+		{
+			name: "both",
+			view: planView{
+				Role:     "planner",
+				AgentID:  "a",
+				SpecPath: "/tmp/s.md",
+				Prompt:   "do X",
+			},
+			wantStr: []string{"You read the spec at `/tmp/s.md`", "## User directive", "Treat them as a lens over the spec", "```\ndo X\n```"},
+			notStr:  []string{"This run has no spec file", "They are the source of truth"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := composePrompt(director.PlanPromptTemplate(), tc.view)
+			if err != nil {
+				t.Fatalf("compose: %v", err)
+			}
+			for _, want := range tc.wantStr {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q in:\n%s", want, out)
+				}
+			}
+			for _, notWant := range tc.notStr {
+				if strings.Contains(out, notWant) {
+					t.Errorf("unexpected %q in:\n%s", notWant, out)
+				}
+			}
+		})
+	}
+}
+
+// TestComposePrompt_BriefSpecGuard pins the brief.md conditional rendering
+// for SpecPath: when SpecPath is set, the spec-read sentence is present;
+// when empty (prompt-only), it is omitted.
+func TestComposePrompt_BriefSpecGuard(t *testing.T) {
+	cases := []struct {
+		name    string
+		view    briefView
+		wantStr []string
+		notStr  []string
+	}{
+		{
+			name: "with spec",
+			view: briefView{
+				Role:        "briefer",
+				AgentID:     "a",
+				SpecPath:    "/tmp/s.md",
+				IterationID: "p1-1",
+				PhaseID:     "p1",
+			},
+			wantStr: []string{"Read the spec at `/tmp/s.md`"},
+			notStr:  []string{},
+		},
+		{
+			name: "prompt only",
+			view: briefView{
+				Role:        "briefer",
+				AgentID:     "a",
+				SpecPath:    "",
+				IterationID: "p1-1",
+				PhaseID:     "p1",
+			},
+			wantStr: []string{},
+			notStr:  []string{"Read the spec at"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := composePrompt(director.BriefPromptTemplate(), tc.view)
+			if err != nil {
+				t.Fatalf("compose: %v", err)
+			}
+			for _, want := range tc.wantStr {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q in:\n%s", want, out)
+				}
+			}
+			for _, notWant := range tc.notStr {
+				if strings.Contains(out, notWant) {
+					t.Errorf("unexpected %q in:\n%s", notWant, out)
+				}
+			}
+		})
+	}
+}
