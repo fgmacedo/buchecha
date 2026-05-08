@@ -1257,6 +1257,21 @@ func (h *Handler) LastReviewReasoning(iterationID string) string {
 	return bs.reviewReason
 }
 
+// ResetReviewOutcome clears the sticky review verdict on the
+// briefingState for iterationID, so the next Reviewer attempt
+// starts from an empty outcome. No-op when no briefing state is
+// registered for that id.
+func (h *Handler) ResetReviewOutcome(iterationID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil {
+		return
+	}
+	bs.reviewOutcome = ""
+	bs.reviewReason = ""
+}
+
 // assertExecutorScope rejects task ids outside the Executor's
 // registered SubDAG. PhaseID must agree.
 func (h *Handler) assertExecutorScope(entry AgentEntry, taskID string) error {

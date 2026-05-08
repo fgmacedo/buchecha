@@ -82,7 +82,7 @@ type DirectorDeciderInput struct {
 //	Outcome=revise, attempt < 1+budget          → Retry
 //	Outcome=revise, attempt == 1+budget         → Escalate
 //	Outcome=escalate                            → Escalate
-//	Outcome empty / unknown                     → Abort, ExitInvalid
+//	Outcome empty / unknown                     → Escalate
 //
 // An iteration with no commits (HEAD unchanged) is no longer aborted
 // here; the Reviewer audits an empty diff and decides whether the
@@ -104,6 +104,6 @@ func DirectorDecide(in DirectorDeciderInput) DirectorDecision {
 	case ReviewEscalate:
 		return DirectorDecision{Action: DirectorEscalate}
 	default:
-		return DirectorDecision{Action: DirectorAbort, ExitCode: ExitInvalid}
+		return DirectorDecision{Action: DirectorEscalate}
 	}
 }

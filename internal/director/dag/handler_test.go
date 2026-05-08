@@ -1032,6 +1032,118 @@ func TestHandler_AttachObserver(t *testing.T) {
 	}
 }
 
+func TestHandler_ResetReviewOutcome(t *testing.T) {
+	t.Run("resets review outcome and reason", func(t *testing.T) {
+		h := NewHandler(nil, NewAgentRegistry(nil))
+		emitSamplePlan(t, h)
+		registry := h.Registry()
+
+		// Emit a briefing
+		bid, _ := registry.Register(RoleBriefer, RegisterArgs{})
+		if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodBriefingEmit, map[string]any{
+			"agent_id": string(bid),
+			"briefing": map[string]any{
+				"iteration_id":     "P1-1",
+				"phase_id":         "P1",
+				"sub_dag_task_ids": []any{"t1"},
+				"instructions":     "x",
+				"spec_path":        "/tmp/spec.md",
+			},
+		}); err != nil {
+			t.Fatalf("briefing emit: %v", err)
+		}
+		registry.Deregister(bid)
+
+		// Register a Reviewer and drive reviewOutcome to revise
+		rev, _ := registry.Register(RoleReviewer, RegisterArgs{
+			BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
+		})
+		if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskNeedsFix, map[string]any{
+			"agent_id": string(rev),
+			"id":       "t1",
+			"feedback": "fix this",
+		}); err != nil {
+			t.Fatalf("task needs fix: %v", err)
+		}
+		if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodReviewFinished, map[string]any{
+			"agent_id":  string(rev),
+			"outcome":   "revise",
+			"reasoning": "test reason",
+		}); err != nil {
+			t.Fatalf("review finished: %v", err)
+		}
+
+		// Verify reviewOutcome is set to revise
+		if got := h.LastReviewOutcome("P1-1"); got != "revise" {
+			t.Errorf("before reset: LastReviewOutcome = %q, want revise", got)
+		}
+		if got := h.LastReviewReasoning("P1-1"); got != "test reason" {
+			t.Errorf("before reset: LastReviewReasoning = %q, want 'test reason'", got)
+		}
+
+		// Call ResetReviewOutcome
+		h.ResetReviewOutcome("P1-1")
+
+		// Verify both are now empty
+		if got := h.LastReviewOutcome("P1-1"); got != "" {
+			t.Errorf("after reset: LastReviewOutcome = %q, want empty", got)
+		}
+		if got := h.LastReviewReasoning("P1-1"); got != "" {
+			t.Errorf("after reset: LastReviewReasoning = %q, want empty", got)
+		}
+	})
+
+	t.Run("noop on unknown iteration", func(t *testing.T) {
+		h := NewHandler(nil, NewAgentRegistry(nil))
+		emitSamplePlan(t, h)
+		registry := h.Registry()
+
+		// Create a known iteration
+		bid, _ := registry.Register(RoleBriefer, RegisterArgs{})
+		if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodBriefingEmit, map[string]any{
+			"agent_id": string(bid),
+			"briefing": map[string]any{
+				"iteration_id":     "P1-1",
+				"phase_id":         "P1",
+				"sub_dag_task_ids": []any{"t1"},
+				"instructions":     "x",
+				"spec_path":        "/tmp/spec.md",
+			},
+		}); err != nil {
+			t.Fatalf("briefing emit: %v", err)
+		}
+		registry.Deregister(bid)
+
+		// Call ResetReviewOutcome on unknown iteration
+		// This should not panic or insert into the map
+		h.ResetReviewOutcome("unknown-iter")
+
+		// Verify the known iteration is untouched
+		rev, _ := registry.Register(RoleReviewer, RegisterArgs{
+			BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
+		})
+		if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskNeedsFix, map[string]any{
+			"agent_id": string(rev),
+			"id":       "t1",
+			"feedback": "fix",
+		}); err != nil {
+			t.Fatalf("task needs fix: %v", err)
+		}
+		if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodReviewFinished, map[string]any{
+			"agent_id":  string(rev),
+			"outcome":   "revise",
+			"reasoning": "test",
+		}); err != nil {
+			t.Fatalf("review finished: %v", err)
+		}
+
+		// The known iteration should still have revise
+		if got := h.LastReviewOutcome("P1-1"); got != "revise" {
+			t.Errorf("known iteration: LastReviewOutcome = %q, want revise", got)
+		}
+	})
+}
+
 // readFile is a small helper that returns the file contents as a string,
 // failing the test on I/O error.
 func readFile(t *testing.T, path string) (string, error) {

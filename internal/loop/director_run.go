@@ -316,6 +316,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 						fmt.Errorf("director: record synthetic approval phase %s attempt %d: %w", phaseID, attempt, err)
 				}
 			} else {
+				d.Handler.ResetReviewOutcome(briefing.IterationID)
 				reviewerID, err := registry.Register(dag.RoleReviewer, dag.RegisterArgs{
 					BriefingID: briefing.IterationID,
 					PhaseID:    phaseID,

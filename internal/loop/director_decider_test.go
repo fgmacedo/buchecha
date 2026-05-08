@@ -39,14 +39,14 @@ func TestDirectorDecide(t *testing.T) {
 			want: DirectorDecision{Action: DirectorEscalate},
 		},
 		{
-			name: "empty outcome aborts",
+			name: "empty outcome escalates",
 			in:   DirectorDeciderInput{Outcome: "", Attempt: 1, RetryBudget: 2},
-			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitInvalid},
+			want: DirectorDecision{Action: DirectorEscalate},
 		},
 		{
-			name: "unknown outcome aborts",
+			name: "unknown outcome escalates",
 			in:   DirectorDeciderInput{Outcome: ReviewOutcome("nonsense"), Attempt: 1, RetryBudget: 2},
-			want: DirectorDecision{Action: DirectorAbort, ExitCode: ExitInvalid},
+			want: DirectorDecision{Action: DirectorEscalate},
 		},
 	}
 	for _, c := range cases {
