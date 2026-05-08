@@ -218,3 +218,48 @@ func TestPromptService_GetSpawn_UnknownSession(t *testing.T) {
 		t.Fatalf("err = %v, want ErrSessionNotFound", err)
 	}
 }
+
+// TestPromptService_LiveAlias guards the SPA path: with the live
+// SessionStore bound, the reserved id "live" must resolve to the live
+// session for both Get and GetSpawn instead of triggering a
+// directory-not-found 500.
+func TestPromptService_LiveAlias(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	baseDir := filepath.Join(tmp, ".bcc")
+	now := time.Now().UTC().Truncate(time.Second)
+	sess := director.Session{
+		ID:        "abcdef222222",
+		SpecPath:  "/spec/live.md",
+		SpecHash:  "h",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Status:    director.SessionRunning,
+	}
+	writeManifest(t, baseDir, sess)
+	store, err := director.OpenSession(baseDir, sess.ID)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	seedPrompt(t, store.SessionDir(), "planner", "# planner live\n")
+	spawnID := "abcdef0123456789"
+	seedSpawnPrompt(t, store.SessionDir(), spawnID, "# spawn live\n")
+
+	svc := newPromptService(Deps{SessionStore: store, SessionsBaseDir: baseDir})
+
+	got, err := svc.Get(context.Background(), LiveSessionAlias, "planner")
+	if err != nil {
+		t.Fatalf("Get(live): %v", err)
+	}
+	if got.Markdown != "# planner live\n" {
+		t.Fatalf("Markdown = %q", got.Markdown)
+	}
+
+	gotSpawn, err := svc.GetSpawn(context.Background(), LiveSessionAlias, spawnID)
+	if err != nil {
+		t.Fatalf("GetSpawn(live): %v", err)
+	}
+	if gotSpawn.Markdown != "# spawn live\n" {
+		t.Fatalf("spawn Markdown = %q", gotSpawn.Markdown)
+	}
+}

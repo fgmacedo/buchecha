@@ -133,12 +133,17 @@ func (s *PromptService) GetSpawn(ctx context.Context, sessionID, spawnID string)
 }
 
 // sessionDir matches BriefingService.sessionDir: prefer the live
-// SessionStore when ids match, fall back to OpenSession otherwise.
+// SessionStore when ids match (or when sessionID is LiveSessionAlias),
+// fall back to OpenSession otherwise.
 func (s *PromptService) sessionDir(sessionID string) (string, error) {
 	if s.deps.SessionStore != nil {
-		if live := s.deps.SessionStore.Session(); live != nil && live.ID == sessionID {
+		if live := s.deps.SessionStore.Session(); live != nil &&
+			(sessionID == LiveSessionAlias || live.ID == sessionID) {
 			return s.deps.SessionStore.SessionDir(), nil
 		}
+	}
+	if sessionID == LiveSessionAlias && s.deps.LiveAliasArchivedID != "" {
+		sessionID = s.deps.LiveAliasArchivedID
 	}
 	if s.deps.SessionsBaseDir == "" {
 		return "", ErrSessionNotFound.WithDetails(map[string]any{"id": sessionID})

@@ -185,4 +185,13 @@ func TestBriefingService_Get_LiveStorePreferred(t *testing.T) {
 	if got.Markdown != "live\n" {
 		t.Fatalf("Markdown = %q", got.Markdown)
 	}
+
+	// LiveSessionAlias must resolve to the bound live session.
+	gotLive, err := svc.Get(context.Background(), LiveSessionAlias, "P1", 1)
+	if err != nil {
+		t.Fatalf("Get(live): %v", err)
+	}
+	if gotLive.Markdown != "live\n" {
+		t.Fatalf("live Markdown = %q", gotLive.Markdown)
+	}
 }
