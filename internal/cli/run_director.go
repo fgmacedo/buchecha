@@ -95,6 +95,9 @@ type directorDeps struct {
 	// openBrowser is the platform-aware launcher the TUI's [w]
 	// keybinding calls. Nil disables the binding; tests leave nil.
 	openBrowser func(url string) error
+	// prompt is the free-form user directive supplied via `bcc run --prompt`.
+	// Threaded into PlannerInput.Prompt and persisted on Session.Prompt.
+	prompt string
 }
 
 // directorIO captures the I/O surface so tests can drive escalation
@@ -112,7 +115,7 @@ type directorIO struct {
 // from runSpec when [director].enabled is on. P4 wires planning,
 // persistence, and user confirmation; the brief/execute/review pipeline
 // lands in P5-P7.
-func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string, cfg *config.Config) error {
+func runDirector(ctx context.Context, cancel context.CancelFunc, specPath, prompt string, cfg *config.Config) error {
 	dio := directorIO{
 		stdin:   os.Stdin,
 		stderr:  os.Stderr,
@@ -125,7 +128,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 	// consumes has a SessionStore and DAGHandler from t=0. Without this
 	// the read-only API endpoints would respond "services not configured"
 	// for the entire run.
-	store, err := resolveDirectorSessionEarly(specPath, dio)
+	store, err := resolveDirectorSessionEarly(specPath, prompt, dio)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
 		return err
@@ -188,21 +191,26 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath string
 	deps.svc = svc
 	deps.webuiURL = dashboardURL(listener.addr, listener.sessionToken)
 	deps.openBrowser = openBrowser
+	deps.prompt = prompt
 	return runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
 }
 
-// resolveDirectorSessionEarly hashes the spec and resolves the session
-// store before the run-wide HTTP listener binds. Pre-resolving the
-// session means the services aggregator passed to api.New has a live
-// SessionStore from t=0, which is what powers GET /api/v1/sessions and
-// the snapshot/dag/briefings/prompts read-only paths.
-func resolveDirectorSessionEarly(specPath string, dio directorIO) (*director.Store, error) {
-	content, err := os.ReadFile(specPath)
-	if err != nil {
-		return nil, fmt.Errorf("director: read spec %s: %w", specPath, err)
+// resolveDirectorSessionEarly hashes the spec (when specPath is set) and
+// resolves the session store before the run-wide HTTP listener binds.
+// Pre-resolving the session means the services aggregator passed to api.New
+// has a live SessionStore from t=0. When specPath is empty (prompt-only run),
+// os.ReadFile is skipped and the hash is derived from the prompt alone.
+func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*director.Store, error) {
+	var content []byte
+	if specPath != "" {
+		var err error
+		content, err = os.ReadFile(specPath)
+		if err != nil {
+			return nil, fmt.Errorf("director: read spec %s: %w", specPath, err)
+		}
 	}
-	hash := director.SpecHash(content)
-	deps := directorDeps{baseDir: ".bcc", now: time.Now}
+	hash := director.ComputeSessionHash(content, prompt)
+	deps := directorDeps{baseDir: ".bcc", now: time.Now, prompt: prompt}
 	store, err := resolveDirectorSession(deps, dio, specPath, hash)
 	if err != nil {
 		return nil, err
@@ -564,12 +572,16 @@ func runDirectorWith(
 	deps directorDeps,
 	dio directorIO,
 ) error {
-	content, err := os.ReadFile(specPath)
-	if err != nil {
-		ExitCode = loop.ExitInvalid
-		return fmt.Errorf("director: read spec %s: %w", specPath, err)
+	var content []byte
+	if specPath != "" {
+		var err error
+		content, err = os.ReadFile(specPath)
+		if err != nil {
+			ExitCode = loop.ExitInvalid
+			return fmt.Errorf("director: read spec %s: %w", specPath, err)
+		}
 	}
-	hash := director.SpecHash(content)
+	hash := director.ComputeSessionHash(content, deps.prompt)
 
 	if deps.store == nil {
 		store, sessErr := resolveDirectorSession(deps, dio, specPath, hash)
@@ -665,6 +677,29 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 	if now == nil {
 		now = time.Now
 	}
+	// sessionSpecPath returns the effective spec path for session
+	// persistence. When the user supplied no spec (prompt-only run), a
+	// sentinel value disambiguates the session kind without conflating it
+	// with a real file path.
+	sessionSpecPath := specPath
+	if sessionSpecPath == "" {
+		sessionSpecPath = "--prompt"
+	}
+
+	// persistPrompt stamps the prompt onto a freshly created session
+	// manifest so bcc sessions show reflects the user's directive.
+	persistPrompt := func(store *director.Store) *director.Store {
+		if deps.prompt == "" || store == nil {
+			return store
+		}
+		store.Session().Prompt = deps.prompt
+		if now == nil {
+			now = time.Now
+		}
+		_ = store.Touch(director.SessionRunning, now())
+		return store
+	}
+
 	switch {
 	case dio.session != "":
 		sess, err := director.ResolveSession(deps.baseDir, dio.session, specPath)
@@ -677,18 +712,18 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 		}
 		return store, nil
 	case dio.resume:
-		matches, err := director.FindSessionsForSpec(deps.baseDir, specPath)
+		matches, err := director.FindSessionsForSpec(deps.baseDir, sessionSpecPath)
 		if err != nil {
 			return nil, fmt.Errorf("director: list sessions: %w", err)
 		}
 		switch len(matches) {
 		case 0:
 			fmt.Fprintln(dio.stderr, "bcc: --resume requested but no session for this spec; creating a fresh one")
-			store, _, cerr := director.CreateSession(deps.baseDir, specPath, hash, now())
+			store, _, cerr := director.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
 			if cerr != nil {
 				return nil, fmt.Errorf("director: create session: %w", cerr)
 			}
-			return store, nil
+			return persistPrompt(store), nil
 		case 1:
 			store, err := director.OpenSession(deps.baseDir, matches[0].ID)
 			if err != nil {
@@ -704,11 +739,11 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 				director.ErrSessionAmbiguous, strings.Join(ids, ", "))
 		}
 	default:
-		store, _, err := director.CreateSession(deps.baseDir, specPath, hash, now())
+		store, _, err := director.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
 		if err != nil {
 			return nil, fmt.Errorf("director: create session: %w", err)
 		}
-		return store, nil
+		return persistPrompt(store), nil
 	}
 }
 
@@ -1235,6 +1270,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		SpecPath: specPath,
 		SpecHash: hash,
 		Registry: plannerRegistry,
+		Prompt:   deps.prompt,
 	}, agentEvents)
 	if agentEvents != nil {
 		close(agentEvents)

@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -32,17 +34,22 @@ var (
 	runWebUI           bool
 	runWebUIOpen       bool
 	runWebUIDev        bool
+	runPrompt          string
 )
 
 var runCmd = &cobra.Command{
-	Use:   "run <spec>",
+	Use:   "run [<spec>]",
 	Short: "Run the loop on a spec",
 	Long:  "Read a Markdown spec and drive the Director plan/brief/execute/review pipeline against it.",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
-		return runSpec(ctx, cancel, cmd, args[0])
+		specPath := ""
+		if len(args) == 1 {
+			specPath = args[0]
+		}
+		return runSpec(ctx, cancel, cmd, specPath, runPrompt)
 	},
 }
 
@@ -63,6 +70,7 @@ func init() {
 	runCmd.Flags().BoolVarP(&runWebUI, "webui", "w", false, "serve the embedded web dashboard at the listener root and advertise it on stderr; takes precedence over --api when both are set")
 	runCmd.Flags().BoolVarP(&runWebUIOpen, "webui-open", "W", false, "after the listener is up, launch the default browser at the dashboard URL (implies --webui)")
 	runCmd.Flags().BoolVar(&runWebUIDev, "webui-dev", false, "reverse-proxy the SPA from the local Vite dev server (contributor mode)")
+	runCmd.Flags().StringVarP(&runPrompt, "prompt", "p", "", "free-form user directive (the spec argument becomes optional; both compose when present)")
 	if err := runCmd.Flags().MarkHidden("webui-dev"); err != nil {
 		// Hidden marking only fails when the flag is missing. We just
 		// registered it above, so a non-nil err here is a programmer
@@ -72,7 +80,22 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 }
 
-func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command, specPath string) error {
+// validateRunInputs returns an error when neither specPath nor prompt
+// carries content. Both empty is always invalid; the user must provide
+// at least one source of work.
+func validateRunInputs(specPath, prompt string) error {
+	if specPath == "" && strings.TrimSpace(prompt) == "" {
+		return errors.New("provide a spec path, --prompt, or both")
+	}
+	return nil
+}
+
+func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command, specPath, prompt string) error {
+	if err := validateRunInputs(specPath, prompt); err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
+	}
+
 	verbosity, err := loop.ParseLevel(runVerbosity)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
@@ -92,9 +115,11 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 		})))
 	}
 
-	if _, err := os.Stat(specPath); err != nil {
-		ExitCode = loop.ExitInvalid
-		return fmt.Errorf("spec %s: %w", specPath, err)
+	if specPath != "" {
+		if _, err := os.Stat(specPath); err != nil {
+			ExitCode = loop.ExitInvalid
+			return fmt.Errorf("spec %s: %w", specPath, err)
+		}
 	}
 
 	cfg, foundCfg, err := loadConfigForRun()
@@ -144,13 +169,21 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 		return fmt.Errorf("apply env: %w", err)
 	}
 
-	if foundCfg != "" {
-		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=%s\n", specPath, foundCfg)
+	if specPath != "" {
+		if foundCfg != "" {
+			fmt.Fprintf(os.Stderr, "bcc: spec=%s config=%s\n", specPath, foundCfg)
+		} else {
+			fmt.Fprintf(os.Stderr, "bcc: spec=%s config=<defaults; no .bcc.toml found>\n", specPath)
+		}
 	} else {
-		fmt.Fprintf(os.Stderr, "bcc: spec=%s config=<defaults; no .bcc.toml found>\n", specPath)
+		if foundCfg != "" {
+			fmt.Fprintf(os.Stderr, "bcc: prompt-only run config=%s\n", foundCfg)
+		} else {
+			fmt.Fprintf(os.Stderr, "bcc: prompt-only run config=<defaults; no .bcc.toml found>\n")
+		}
 	}
 
-	return runDirector(ctx, cancel, specPath, cfg)
+	return runDirector(ctx, cancel, specPath, prompt, cfg)
 }
 
 func boolPtr(b bool) *bool { return &b }

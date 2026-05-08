@@ -1240,6 +1240,56 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 	}
 }
 
+// TestFreshPlan_ThreadsPromptToPlannerInput asserts that the prompt
+// field on directorDeps reaches PlannerInput.Prompt when freshPlan
+// invokes the planner. This locks the threading contract: a user who
+// supplies --prompt="foo" must see the value arrive at the Planner.
+func TestFreshPlan_ThreadsPromptToPlannerInput(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+	specContent, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	hash := director.ComputeSessionHash(specContent, "foo")
+
+	var receivedPrompt string
+	planner := &fake.Planner{
+		PlanFn: func(_ context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+			receivedPrompt = in.Prompt
+			return scriptedPlan(), &director.DirectorCallStats{}, nil
+		},
+	}
+
+	h := newTestHandler()
+	store := mkSessionStore(t, tmp, specPath)
+	deps := directorDeps{
+		handler:  h,
+		planner:  planner,
+		briefer:  scriptedBriefer(h),
+		reviewer: approvingReviewer(h),
+		store:    store,
+		git:      newAdvancingGit(),
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+			return &recordingExecutor{}
+		},
+		now:    time.Now,
+		prompt: "foo",
+	}
+
+	ctx := context.Background()
+	plan, err := freshPlan(ctx, specPath, hash, deps, nil)
+	if err != nil {
+		t.Fatalf("freshPlan: %v", err)
+	}
+	if plan == nil {
+		t.Fatal("freshPlan returned nil plan")
+	}
+	if receivedPrompt != "foo" {
+		t.Errorf("PlannerInput.Prompt = %q, want %q", receivedPrompt, "foo")
+	}
+}
+
 // TestServiceEventsSameOrderForTUIAndAPI asserts that the TUI host and
 // the API server observe the same SeqEvent ordering when subscribing to
 // the same *services.Services instance. Both subscribers are simulated
