@@ -16,6 +16,7 @@ func TestSession_RoundTrip(t *testing.T) {
 		CreatedAt: time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
 		UpdatedAt: time.Date(2026, 5, 2, 12, 30, 0, 0, time.UTC),
 		Status:    SessionRunning,
+		Prompt:    "hi",
 	}
 	data, err := json.Marshal(in)
 	if err != nil {
@@ -27,6 +28,25 @@ func TestSession_RoundTrip(t *testing.T) {
 	}
 	if got != in {
 		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, in)
+	}
+}
+
+func TestSession_RoundTrip_OmitsEmptyPrompt(t *testing.T) {
+	in := Session{
+		ID:        "abcdef012345",
+		SpecPath:  "/tmp/spec.md",
+		SpecHash:  "deadbeef",
+		CreatedAt: time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, 5, 2, 12, 30, 0, 0, time.UTC),
+		Status:    SessionRunning,
+		Prompt:    "",
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), "\"prompt\"") {
+		t.Fatalf("omitempty failed: JSON contains 'prompt' key for empty Prompt field: %s", data)
 	}
 }
 

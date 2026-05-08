@@ -64,3 +64,139 @@ func TestPhaseID_NoNullByteCollision(t *testing.T) {
 		t.Fatalf("null-byte separator missing: %s == %s", a, b)
 	}
 }
+
+func TestComputeSessionHash_AllCasesYield64HexChars(t *testing.T) {
+	cases := []struct {
+		name    string
+		spec    []byte
+		prompt  string
+		wantEq  string
+		wantDif []string
+	}{
+		{
+			name:   "spec only",
+			spec:   []byte("abc"),
+			prompt: "",
+			wantEq: "spec-hash",
+		},
+		{
+			name:   "prompt only",
+			spec:   nil,
+			prompt: "hi",
+			wantDif: []string{
+				"spec-hash-of-prompt",
+				"prompt-only-different-string",
+			},
+		},
+		{
+			name:   "both differ",
+			spec:   []byte("abc"),
+			prompt: "hi",
+			wantDif: []string{
+				"spec-only",
+				"prompt-only",
+			},
+		},
+		{
+			name:   "prompt change",
+			spec:   []byte("abc"),
+			prompt: "hi",
+			wantDif: []string{
+				"same-spec-different-prompt",
+			},
+		},
+		{
+			name:   "deterministic",
+			spec:   []byte("abc"),
+			prompt: "hi",
+		},
+		{
+			name:   "both empty",
+			spec:   nil,
+			prompt: "",
+			wantEq: "spec-hash",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ComputeSessionHash(tc.spec, tc.prompt)
+
+			// Must always be 64 lowercase hex characters
+			if len(got) != 64 {
+				t.Fatalf("length = %d, want 64", len(got))
+			}
+			for _, ch := range got {
+				if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+					t.Fatalf("non-hex character %q in %q", ch, got)
+				}
+			}
+
+			// Check if it should equal a specific hash type
+			if tc.wantEq == "spec-hash" {
+				if want := SpecHash(tc.spec); got != want {
+					t.Fatalf("does not equal SpecHash: got %s, want %s", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestComputeSessionHash_SpecOnly(t *testing.T) {
+	spec := []byte("abc")
+	got := ComputeSessionHash(spec, "")
+	want := SpecHash(spec)
+	if got != want {
+		t.Fatalf("spec-only: ComputeSessionHash(spec, \"\") != SpecHash(spec)")
+	}
+}
+
+func TestComputeSessionHash_PromptOnly(t *testing.T) {
+	prompt := "hi"
+	hash1 := ComputeSessionHash(nil, prompt)
+	hash2 := ComputeSessionHash(nil, prompt)
+
+	// Must be deterministic
+	if hash1 != hash2 {
+		t.Fatalf("prompt-only not deterministic: %s != %s", hash1, hash2)
+	}
+
+	// Must differ from SpecHash of the prompt bytes
+	specHashOfPrompt := SpecHash([]byte(prompt))
+	if hash1 == specHashOfPrompt {
+		t.Fatalf("prompt-only should differ from SpecHash([]byte(prompt))")
+	}
+}
+
+func TestComputeSessionHash_BothDiffer(t *testing.T) {
+	specOnly := ComputeSessionHash([]byte("abc"), "")
+	promptOnly := ComputeSessionHash(nil, "hi")
+	both := ComputeSessionHash([]byte("abc"), "hi")
+
+	if specOnly == promptOnly {
+		t.Fatalf("spec-only equals prompt-only")
+	}
+	if specOnly == both {
+		t.Fatalf("spec-only equals both")
+	}
+	if promptOnly == both {
+		t.Fatalf("prompt-only equals both")
+	}
+}
+
+func TestComputeSessionHash_PromptChangeTriggersDiff(t *testing.T) {
+	spec := []byte("abc")
+	hash1 := ComputeSessionHash(spec, "hi")
+	hash2 := ComputeSessionHash(spec, "bye")
+	if hash1 == hash2 {
+		t.Fatalf("different prompts produced same hash")
+	}
+}
+
+func TestComputeSessionHash_BothEmptyEqualsSpecHash(t *testing.T) {
+	got := ComputeSessionHash(nil, "")
+	want := SpecHash(nil)
+	if got != want {
+		t.Fatalf("both empty: ComputeSessionHash(nil, \"\") != SpecHash(nil)")
+	}
+}

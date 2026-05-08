@@ -25,6 +25,7 @@ type Session struct {
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
 	Status    SessionStatus `json:"status"`
+	Prompt    string        `json:"prompt,omitempty"`
 }
 
 // SessionStatus tracks the lifecycle of a Session. The closed set is

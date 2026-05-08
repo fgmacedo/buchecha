@@ -58,6 +58,11 @@ type PlannerInput struct {
 	SpecPath string
 	SpecHash string
 	Registry CapabilityRegistry
+	// Prompt is the free-form user directive supplied via `bcc run --prompt`.
+	// When both Prompt and the spec are set, the Planner treats Prompt as a
+	// lens over the spec; when only Prompt is set, it is the source of
+	// truth for what to plan. Empty when the user supplied no --prompt.
+	Prompt string
 }
 
 // BrieferInput is the request payload for Briefer.Brief. IterationID

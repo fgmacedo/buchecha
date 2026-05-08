@@ -15,6 +15,23 @@ func SpecHash(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ComputeSessionHash returns the canonical session hash for a run
+// identified by either a spec body, a free-form prompt, or both.
+// Empty prompt reduces to SpecHash(specBody) so existing manifests
+// keep their hash; empty specBody hashes the prompt with a marker so
+// it differs from direct hashing; both present hash specBody||0x00||prompt
+// so prompt edits trigger replan.
+func ComputeSessionHash(specBody []byte, prompt string) string {
+	if prompt == "" {
+		return SpecHash(specBody)
+	}
+	h := sha256.New()
+	h.Write(specBody)
+	h.Write([]byte{0})
+	h.Write([]byte(prompt))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // PhaseID derives a stable identifier for a phase from the spec hash
 // and the phase's intent. The same (specHash, intent) pair always
 // produces the same ID; differing inputs almost certainly produce
