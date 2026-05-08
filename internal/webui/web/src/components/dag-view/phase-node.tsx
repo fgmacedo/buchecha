@@ -187,6 +187,10 @@ export function PhaseNodeComponent({ data }: NodeProps) {
               lineHeight: 1.2,
               letterSpacing: '-0.01em',
               wordBreak: 'break-word',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
             }}
             title={title}
           >
