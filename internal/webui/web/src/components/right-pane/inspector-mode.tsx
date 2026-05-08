@@ -15,6 +15,8 @@ function selectionLabel(s: Selection): string {
       return s.iterationId
     case 'spawn':
       return s.spawnId
+    case 'agent':
+      return s.spawnId
   }
 }
 

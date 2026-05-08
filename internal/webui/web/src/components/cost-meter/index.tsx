@@ -147,21 +147,54 @@ export function CostMeter({ agg, compact = false }: CostMeterProps) {
       isOpen={isOpen}
       onClose={() => setIsOpen(false)}
       anchor={
-        <button
-          onClick={handleToggle}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border-default hover:border-border-strong bg-surface-card hover:bg-surface-elevated transition-colors text-xs text-foreground"
-          title="Cost breakdown"
-        >
-          <span className="font-display italic text-sm">${agg.totalUSD.toFixed(2)}</span>
-          {!compact && (
+        compact ? (
+          <button
+            onClick={handleToggle}
+            className="flex flex-col items-end leading-tight shrink-0 cursor-pointer"
+            style={{ minWidth: 48, background: 'transparent', border: 0, padding: 0 }}
+            title="Cost breakdown"
+          >
+            <span
+              style={{
+                fontSize: 9.5,
+                color: 'var(--color-faint, var(--color-muted-foreground))',
+                textTransform: 'uppercase',
+                letterSpacing: '.08em',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              cost
+            </span>
+            <span
+              style={{
+                fontSize: 13,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--color-foreground)',
+                marginTop: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span
+                style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
+              >
+                $
+              </span>
+              {agg.totalUSD.toFixed(2)}
+            </span>
+          </button>
+        ) : (
+          <button
+            onClick={handleToggle}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border-default hover:border-border-strong bg-surface-card hover:bg-surface-elevated transition-colors text-xs text-foreground"
+            title="Cost breakdown"
+          >
+            <span className="font-display italic text-sm">${agg.totalUSD.toFixed(2)}</span>
             <span className="font-numeric text-xs text-muted-foreground">{totalTokens}</span>
-          )}
-          {!compact && (
             <div className="text-muted-foreground">
               <SparklineChart perIteration={agg.perIteration} />
             </div>
-          )}
-        </button>
+          </button>
+        )
       }
     >
       <div className="space-y-3">

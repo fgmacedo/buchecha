@@ -28,9 +28,6 @@ export default defineConfig({
           if (/[\\/]src[\\/]components[\\/]dag-view[\\/]/.test(id)) {
             return 'dag-view'
           }
-          if (/[\\/]src[\\/]components[\\/]activity-view[\\/]/.test(id)) {
-            return 'activity-view'
-          }
           if (!id.includes('node_modules')) return
           if (id.includes('@xyflow') || id.includes('classcat')) {
             return 'vendor-xyflow'

@@ -55,6 +55,78 @@
   --font-numeric: var(--font-numeric);
 }
 
+/* Agent card pulse used by the live indicator dot in the role badge. */
+@keyframes bcc-agent-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.5;
+  }
+}
+
+/* Soft halo pulse for "live" elements (status pills, mini dots on tasks).
+   Drives box-shadow off currentColor so any colored element reuses it. */
+@keyframes bcc-role-pulse {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* Three-dot ellipsis used while an agent is in `thinking` state. */
+@keyframes bcc-thinking-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.bcc-thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.bcc-thinking-dots span {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: bcc-thinking-dot 1.2s infinite;
+}
+.bcc-thinking-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.bcc-thinking-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* Slim scrollbar used by floating popovers and inspector tab bodies. */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 @layer utilities {
   .font-display {
     font-family: var(--font-display);
@@ -70,5 +142,15 @@
       url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><filter id="n"><feTurbulence baseFrequency="0.9" numOctaves="1" type="fractalNoise"/></filter><rect width="128" height="128" fill="%23000" filter="url(%23n)" opacity="0.05"/></svg>');
     background-size: cover, 128px 128px;
     background-attachment: fixed;
+  }
+
+  /* Subtle dot grid for the canvas background. */
+  .canvas-grid {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      var(--bg-grid-dot) 1px,
+      transparent 0
+    );
+    background-size: 22px 22px;
   }
 }

@@ -77,49 +77,43 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const header = document.querySelector('header[aria-label="Header"]')
     expect(header).toBeTruthy()
   })
 
-  it('renders session-id, status-pill, iter-counter, view-toggle, and cost-meter', () => {
+  it('renders session-id, iter-counter, and cost-meter (status pill removed in redesign)', () => {
     render(
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     expect(document.querySelector('[data-testid="session-id"]')).toBeTruthy()
-    expect(document.querySelector('[data-testid="status-pill"]')).toBeTruthy()
     expect(document.querySelector('[data-testid="iter-counter"]')).toBeTruthy()
-    expect(document.querySelector('[data-testid="view-toggle"]')).toBeTruthy()
     expect(document.querySelector('[data-testid="cost-meter"]')).toBeTruthy()
+    // The redesign drops the standalone status pill; status now lives on
+    // the canvas nodes themselves, freeing header space for the metrics
+    // cluster.
+    expect(document.querySelector('[data-testid="status-pill"]')).toBeNull()
   })
 
-  it('renders session-id before status-pill in DOM order', () => {
+  it('renders session-id before iter-counter before cost-meter in DOM order', () => {
     render(
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const header = document.querySelector('header[aria-label="Header"]')!
     const allElements = Array.from(header.querySelectorAll('[data-testid]'))
     const ids = allElements.map((el) => el.getAttribute('data-testid'))
     const idIdx = ids.indexOf('session-id')
-    const pillIdx = ids.indexOf('status-pill')
-    const toggleIdx = ids.indexOf('view-toggle')
+    const iterIdx = ids.indexOf('iter-counter')
     const meterIdx = ids.indexOf('cost-meter')
-    expect(idIdx).toBeLessThan(pillIdx)
-    expect(pillIdx).toBeLessThan(toggleIdx)
-    expect(toggleIdx).toBeLessThan(meterIdx)
+    expect(idIdx).toBeLessThan(iterIdx)
+    expect(iterIdx).toBeLessThan(meterIdx)
   })
 
   it('renders the short session id (first 8 chars)', () => {
@@ -127,8 +121,6 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const idEl = document.querySelector('[data-testid="session-id"]')
@@ -140,8 +132,6 @@ describe('Header layout order (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
     const counter = document.querySelector('[data-testid="iter-counter"]')
@@ -149,17 +139,18 @@ describe('Header layout order (T10.3)', () => {
     expect(counter?.textContent).toContain('5')
   })
 
-  it('applies h-12 class for 48px height', () => {
+  it('renders the header at 56px height (redesign)', () => {
     render(
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
-    const header = document.querySelector('header[aria-label="Header"]')
-    expect(header?.classList.contains('h-12')).toBe(true)
+    const header = document.querySelector(
+      'header[aria-label="Header"]',
+    ) as HTMLElement | null
+    expect(header).toBeTruthy()
+    expect(header?.style.height).toBe('56px')
   })
 })
 
@@ -172,8 +163,6 @@ describe('Header spec filename (T10.3)', () => {
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
 
@@ -193,8 +182,6 @@ describe('Header spec filename (T10.3)', () => {
         React.createElement(Header, {
           snapshot: SNAPSHOT,
           events: EVENTS,
-          view: 'dag',
-          onViewChange: () => {},
         }),
       )
     })
@@ -210,53 +197,38 @@ describe('Header spec filename (T10.3)', () => {
   })
 })
 
-describe('Header CostMeter compact mode (T10.3)', () => {
-  it('passes compact=false to CostMeter when viewport >= 1024px', () => {
+describe('Header CostMeter integration (T10.3)', () => {
+  it('always renders the cost button as a metric tile with $ amount', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => makeMQ(true)))
-
     render(
       React.createElement(Header, {
         snapshot: SNAPSHOT,
         events: EVENTS,
-        view: 'dag',
-        onViewChange: () => {},
       }),
     )
-
-    // In non-compact mode, the token count is visible in the button.
-    // The CostMeter button shows $X.XX + token count + sparkline.
-    const costBtn = document.querySelector('[title="Cost breakdown"]')
+    // The redesigned header renders the cost as one of the metric tiles
+    // (label "cost", mono dollar value) regardless of viewport. Click on
+    // it still opens the breakdown popover.
+    const costBtn = document.querySelector(
+      '[title="Cost breakdown"]',
+    ) as HTMLElement | null
     expect(costBtn).toBeTruthy()
-    // Token count span should be present (totalTokens = 0 for empty events).
-    const spans = Array.from(costBtn?.querySelectorAll('span') ?? [])
-    // At least: USD span + token count span.
-    expect(spans.length).toBeGreaterThanOrEqual(2)
-
+    expect(costBtn?.textContent ?? '').toContain('$')
+    expect(costBtn?.textContent ?? '').toMatch(/cost/i)
     vi.unstubAllGlobals()
   })
 
-  it('passes compact=true to CostMeter when viewport < 1024px (only USD pill)', async () => {
-    vi.stubGlobal('matchMedia', vi.fn(() => makeMQ(false)))
-
-    await act(async () => {
-      render(
-        React.createElement(Header, {
-          snapshot: SNAPSHOT,
-          events: EVENTS,
-          view: 'dag',
-          onViewChange: () => {},
-        }),
-      )
-    })
-
-    // In compact mode, only the USD span is visible; token count hidden.
-    const costBtn = document.querySelector('[title="Cost breakdown"]')
-    expect(costBtn).toBeTruthy()
-    // Only the USD span: one child span.
-    const spans = Array.from(costBtn?.querySelectorAll('span') ?? [])
-    expect(spans.length).toBe(1)
-    expect(spans[0].textContent).toContain('$')
-
+  it('exposes the elapsed, eta, and tokens metrics alongside cost', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => makeMQ(true)))
+    render(
+      React.createElement(Header, {
+        snapshot: SNAPSHOT,
+        events: EVENTS,
+      }),
+    )
+    expect(document.querySelector('[data-testid="elapsed-metric"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="eta-metric"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="tokens-metric"]')).toBeTruthy()
     vi.unstubAllGlobals()
   })
 })

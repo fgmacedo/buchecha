@@ -1,25 +1,20 @@
 import { useState, useEffect } from 'react'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { SeqEvent } from '../../hooks/use-events'
-import type { ViewMode } from '../../hooks/use-view'
 import { useCostAggregator } from '../../hooks/use-cost-aggregator'
 import { CostMeter } from '../cost-meter'
-
-// STATUS_COLORS maps session status strings to CSS variables defined in tokens.css.
-const STATUS_COLORS: Record<string, string> = {
-  running: 'var(--status-running)',
-  done: 'var(--status-done)',
-  error: 'var(--status-error)',
-  pending: 'var(--status-pending)',
-  needs_fix: 'var(--status-needs-fix)',
-}
-
-function statusColor(status: string): string {
-  return STATUS_COLORS[status] ?? 'var(--status-pending)'
-}
+import { useTheme } from '../../hooks/use-theme'
+import {
+  Metric,
+  ProgressRing,
+  computeEta,
+  formatElapsed,
+  formatEta,
+  formatTokens,
+  useElapsed,
+} from './top-stats'
 
 // useIsCompact returns true when the viewport is narrower than 1024px.
-// Uses window.matchMedia so tests can mock it.
 function useIsCompact(): boolean {
   const [compact, setCompact] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
@@ -39,72 +34,61 @@ function useIsCompact(): boolean {
   return compact
 }
 
-interface ViewToggleProps {
-  view: ViewMode
-  onChange: (v: ViewMode) => void
-}
-
-function ViewToggle({ view, onChange }: ViewToggleProps) {
-  const base =
-    'px-3 py-1 text-xs font-medium rounded transition-colors focus-visible:outline-none'
-  const active = 'bg-accent text-accent-foreground'
-  const inactive = 'text-muted-foreground hover:text-foreground hover:bg-border'
-
-  return (
-    <div
-      role="group"
-      aria-label="View toggle"
-      className="flex items-center gap-1 rounded border border-border p-0.5"
-    >
-      <button
-        type="button"
-        className={`${base} ${view === 'dag' ? active : inactive}`}
-        aria-pressed={view === 'dag'}
-        onClick={() => onChange('dag')}
-      >
-        DAG
-      </button>
-      <button
-        type="button"
-        className={`${base} ${view === 'activity' ? active : inactive}`}
-        aria-pressed={view === 'activity'}
-        onClick={() => onChange('activity')}
-      >
-        Activity
-      </button>
-    </div>
-  )
-}
-
 export interface HeaderProps {
   snapshot: Snapshot | null
   events: SeqEvent[]
-  view: ViewMode
-  onViewChange: (v: ViewMode) => void
   // leading lets AppShell mount a sessions-drawer trigger as the first child
   // of the header without coupling Header to the drawer implementation.
   leading?: React.ReactNode
 }
 
-// Header renders the top chrome band at 48px height (h-12).
-// Left to right: session identity (id mono short + spec filename) | status pill
-// and iter X / Y | view toggle (DAG / Activity) | CostMeter.
-// Below 1024px: spec filename collapses to a tooltip on the session id and
-// CostMeter collapses to its USD pill only.
-export function Header({ snapshot, events, view, onViewChange, leading }: HeaderProps) {
+// Header renders the top chrome band at 56px height. Left to right:
+// drawer trigger + bcc mark + session identity (mono short id + spec
+// filename) | metrics cluster (ITER, ELAPSED, ETA, TOKENS, COST) | progress
+// ring (iteration completion) | theme toggle. The CostMeter popover stays
+// reachable behind the COST metric so the breakdown remains one click away.
+export function Header({ snapshot, events, leading }: HeaderProps) {
   const costAgg = useCostAggregator(events)
   const isCompact = useIsCompact()
+  const { theme, toggle: toggleTheme } = useTheme()
 
   const session = snapshot?.session
   const specName = session?.spec_path.split('/').pop() ?? 'bcc'
   const shortId = session?.id.slice(0, 8) ?? ''
 
+  const elapsedMs = useElapsed(session?.started_at, session?.finished_at)
+  const eta = session
+    ? computeEta(elapsedMs, session.iteration_index, session.max_iter)
+    : null
+  const totalTokens =
+    costAgg.totalTokens.input + costAgg.totalTokens.output
+  const progressPct =
+    session && session.max_iter > 0
+      ? Math.min(100, (session.iteration_index / session.max_iter) * 100)
+      : 0
+
   return (
     <header
       aria-label="Header"
-      className="flex items-center h-12 border-b border-border bg-muted px-4 gap-4"
+      className="flex items-center border-b border-border px-4 gap-3"
+      style={{
+        height: 56,
+        backgroundColor: 'var(--surface-panel)',
+      }}
     >
       {leading}
+      <BccMark />
+      <span
+        className="text-sm font-semibold text-foreground tracking-tight"
+        style={{ letterSpacing: '-0.005em' }}
+      >
+        buchecha
+      </span>
+      <span
+        aria-hidden
+        className="h-3.5 w-px shrink-0"
+        style={{ background: 'var(--border-default)' }}
+      />
       {/* Session identity: id (mono short) + spec filename */}
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {session ? (
@@ -118,7 +102,7 @@ export function Header({ snapshot, events, view, onViewChange, leading }: Header
             </span>
             {!isCompact && (
               <span
-                className="text-sm font-medium text-foreground truncate max-w-[16rem]"
+                className="text-sm font-medium text-foreground truncate max-w-[20rem]"
                 title={specName}
                 data-testid="spec-filename"
               >
@@ -131,42 +115,131 @@ export function Header({ snapshot, events, view, onViewChange, leading }: Header
         )}
       </div>
 
-      {/* Status pill + iter X / Y */}
-      <div className="flex items-center gap-2 shrink-0">
-        {session && (
-          <>
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium"
-              style={{
-                borderColor: statusColor(session.status),
-                color: statusColor(session.status),
-              }}
-              data-testid="status-pill"
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: statusColor(session.status) }}
-              />
-              {session.status}
-            </span>
-            <span className="text-xs text-muted-foreground" data-testid="iter-counter">
-              <span className="font-mono text-foreground">{session.iteration_index}</span>
-              {' / '}
-              <span className="font-mono text-foreground">{session.max_iter}</span>
-            </span>
-          </>
-        )}
-      </div>
+      {/* Metrics cluster */}
+      {session && (
+        <div className="flex items-center gap-4 shrink-0" data-testid="header-stats">
+          <Metric
+            label="iter"
+            testId="iter-counter"
+            value={
+              <>
+                <span style={{ color: 'var(--color-foreground)' }}>
+                  {session.iteration_index}
+                </span>
+                <span
+                  style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
+                >
+                  /{session.max_iter}
+                </span>
+              </>
+            }
+          />
+          {!isCompact && (
+            <Metric
+              label="elapsed"
+              testId="elapsed-metric"
+              value={formatElapsed(elapsedMs)}
+            />
+          )}
+          {!isCompact && (
+            <Metric label="eta" testId="eta-metric" value={formatEta(eta)} />
+          )}
+          {!isCompact && (
+            <Metric
+              label="tokens"
+              testId="tokens-metric"
+              value={formatTokens(totalTokens)}
+            />
+          )}
+          {/* COST: clicking opens the existing breakdown popover. */}
+          <div data-testid="cost-meter">
+            <CostMeter agg={costAgg} compact />
+          </div>
+        </div>
+      )}
 
-      {/* View toggle */}
-      <div className="shrink-0" data-testid="view-toggle">
-        <ViewToggle view={view} onChange={onViewChange} />
-      </div>
+      {session && (
+        <ProgressRing pct={progressPct} />
+      )}
 
-      {/* CostMeter: compact below 1024px */}
-      <div className="shrink-0" data-testid="cost-meter">
-        <CostMeter agg={costAgg} compact={isCompact} />
-      </div>
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+        data-testid="theme-toggle"
+        className="shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+        style={{
+          border: '1px solid var(--border-subtle)',
+          background: 'transparent',
+        }}
+      >
+        {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
+      </button>
     </header>
+  )
+}
+
+// BccMark renders the small serif glyph used as the product mark. Uses the
+// Instrument Serif italic 'b' on a foreground-strong tile for high contrast
+// in both themes.
+function BccMark() {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 6,
+        background: 'var(--color-foreground-strong, var(--color-foreground))',
+        color: 'var(--surface-canvas)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'var(--font-serif)',
+        fontStyle: 'italic',
+        fontSize: 16,
+        lineHeight: 1,
+        flexShrink: 0,
+      }}
+    >
+      b
+    </div>
+  )
+}
+
+function MoonIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  )
+}
+
+function SunIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5" />
+    </svg>
   )
 }

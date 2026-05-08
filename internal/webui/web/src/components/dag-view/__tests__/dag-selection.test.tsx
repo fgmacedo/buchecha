@@ -180,8 +180,8 @@ describe('DAG selection round-trip (T8.4)', () => {
       )
     })
 
-    // Initially Timeline is shown; Inspector is not.
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    // Initially the right pane shows the placeholder; Inspector is not active.
+    expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
     expect(screen.queryByLabelText('Close inspector')).toBeNull()
 
     // Click the simulated phase header.
@@ -240,9 +240,9 @@ describe('DAG selection round-trip (T8.4)', () => {
       fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
     })
 
-    // Selection is cleared; Timeline mode returns.
+    // Selection is cleared; placeholder returns.
     expect(screen.queryByLabelText('Close inspector')).toBeNull()
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
   })
 })
 
@@ -266,14 +266,20 @@ describe('App mounts with DAG fixture (T8.4)', () => {
       error = e
     }
     expect(error).toBeNull()
-    // RightPane is present; default mode is Timeline.
-    expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
+    // The redesigned shell exposes the floating inspector stack instead of
+    // a permanent right pane. With no selection it does not render at all.
+    expect(
+      document.querySelector('[data-testid="floating-inspector-stack"]'),
+    ).toBeNull()
   })
 
-  it('renders in Timeline mode by default', async () => {
+  it('does not render the floating inspector stack by default (no selection)', async () => {
     await act(async () => {
       render(React.createElement(App))
     })
-    expect(document.querySelector('[data-testid="timeline-mode"]')).toBeTruthy()
+    expect(
+      document.querySelector('[data-testid="floating-inspector-stack"]'),
+    ).toBeNull()
+    expect(screen.queryByLabelText('Close inspector')).toBeNull()
   })
 })

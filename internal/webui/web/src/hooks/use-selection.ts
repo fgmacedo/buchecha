@@ -16,34 +16,86 @@ export type Selection =
   | { kind: 'task'; phaseId: string; taskId: string }
   | { kind: 'iteration'; iterationId: string }
   | { kind: 'spawn'; spawnId: string; role: string; phaseId?: string }
+  // Agent: a live or recently finished agent on the canvas. The optional
+  // subAgentToolUseId narrows the inspector to a single Task tool call
+  // child of that agent.
+  | { kind: 'agent'; spawnId: string; subAgentToolUseId?: string }
 
 // SelectionContextValue is the shape returned by useSelection.
+//
+// `selection` is the head of the floating-inspector stack: the most recently
+// opened card, used by canvas nodes to render their selected outline.
+// `cards` is the full stack, surfaced so the AppShell can render one
+// floating Inspector per entry. `closeCard(index)` removes a single card
+// without disturbing the others. `select(null)` clears the entire stack
+// (Escape key behavior).
 export interface SelectionContextValue {
   selection: Selection | null
+  cards: Selection[]
   select: (s: Selection | null) => void
+  closeCard: (index: number) => void
 }
 
 const SelectionContext = createContext<SelectionContextValue | null>(null)
 
-// State held in the reducer: the current selection plus the session id so
-// we can reset when the session changes.
+// State held in the reducer: the floating-card stack plus the session id so
+// we can reset when the session changes. `cards` is the canonical store;
+// derived `selection` is its top element.
 interface State {
-  selection: Selection | null
+  cards: Selection[]
   sessionId: string
 }
 
 type Action =
   | { type: 'select'; payload: Selection | null }
+  | { type: 'close'; index: number }
   | { type: 'session_changed'; sessionId: string }
+
+// sameSelection compares two selections structurally so opening an
+// already-open card focuses it (moves to top) instead of duplicating.
+function sameSelection(a: Selection, b: Selection): boolean {
+  if (a.kind !== b.kind) return false
+  switch (a.kind) {
+    case 'phase':
+      return b.kind === 'phase' && a.phaseId === b.phaseId
+    case 'task':
+      return b.kind === 'task' && a.phaseId === b.phaseId && a.taskId === b.taskId
+    case 'iteration':
+      return b.kind === 'iteration' && a.iterationId === b.iterationId
+    case 'spawn':
+      return b.kind === 'spawn' && a.spawnId === b.spawnId
+    case 'agent':
+      return (
+        b.kind === 'agent' &&
+        a.spawnId === b.spawnId &&
+        a.subAgentToolUseId === b.subAgentToolUseId
+      )
+  }
+}
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case 'select':
-      return { ...state, selection: action.payload }
+    case 'select': {
+      if (action.payload === null) return { ...state, cards: [] }
+      const idx = state.cards.findIndex((c) => sameSelection(c, action.payload!))
+      if (idx >= 0) {
+        // Card already open: move to top so it becomes the head selection.
+        const next = state.cards.slice()
+        const [picked] = next.splice(idx, 1)
+        next.push(picked)
+        return { ...state, cards: next }
+      }
+      return { ...state, cards: [...state.cards, action.payload] }
+    }
+    case 'close': {
+      if (action.index < 0 || action.index >= state.cards.length) return state
+      const next = state.cards.slice()
+      next.splice(action.index, 1)
+      return { ...state, cards: next }
+    }
     case 'session_changed':
-      // No-op when the session id has not actually changed.
       if (state.sessionId === action.sessionId) return state
-      return { selection: null, sessionId: action.sessionId }
+      return { cards: [], sessionId: action.sessionId }
     default:
       return state
   }
@@ -61,7 +113,7 @@ export interface SelectionProviderProps {
 // once in AppShell around the entire layout so all consumers share the same
 // selection.
 export function SelectionProvider({ sessionId, children }: SelectionProviderProps): ReactElement {
-  const [state, dispatch] = useReducer(reducer, { selection: null, sessionId })
+  const [state, dispatch] = useReducer(reducer, { cards: [], sessionId })
 
   // Reset selection whenever the session id changes.
   useEffect(() => {
@@ -72,9 +124,15 @@ export function SelectionProvider({ sessionId, children }: SelectionProviderProp
     dispatch({ type: 'select', payload: s })
   }
 
+  function closeCard(index: number): void {
+    dispatch({ type: 'close', index })
+  }
+
+  const selection = state.cards.length > 0 ? state.cards[state.cards.length - 1] : null
+
   return createElement(
     SelectionContext.Provider,
-    { value: { selection: state.selection, select } },
+    { value: { selection, cards: state.cards, select, closeCard } },
     children,
   )
 }

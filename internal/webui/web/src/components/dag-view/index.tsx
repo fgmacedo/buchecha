@@ -1,5 +1,5 @@
 import '@xyflow/react/dist/style.css'
-import { useCallback, useMemo, useEffect, useRef } from 'react'
+import { useCallback, useMemo, useEffect } from 'react'
 import {
   ReactFlow,
   Background,
@@ -12,17 +12,26 @@ import {
 } from '@xyflow/react'
 import { PhaseNodeComponent } from './phase-node'
 import { TaskNodeComponent } from './task-node'
-import { buildLayout, type SavedPositions, type TaskTimestamps } from './layout'
+import { AgentNodeComponent } from './agent-node'
+import { AgentHistoryBadge } from './agent-history-badge'
+import {
+  buildLayout,
+  buildAgentLayout,
+  type SavedPositions,
+  type TaskTimestamps,
+} from './layout'
 import type { DAGData, DAGPhase, DAGTask } from './types'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { Plan } from '../../hooks/use-plan'
 import type { SeqEvent } from '../../hooks/use-events'
+import { useAgents } from '../../hooks/use-agents'
 
 // NODE_TYPES maps type strings to component implementations. Defined
 // outside the component to prevent ReactFlow from resetting on re-render.
 const NODE_TYPES = {
   phaseNode: PhaseNodeComponent,
   taskNode: TaskNodeComponent,
+  agentNode: AgentNodeComponent,
 }
 
 function positionsStorageKey(sessionId: string): string {
@@ -224,7 +233,7 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
     }
   }, [events.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { nodes: layoutNodes, edges: layoutEdges } = useMemo(() => {
+  const { nodes: planLayoutNodes, edges: planLayoutEdges } = useMemo(() => {
     if (!dag?.phases?.length) {
       return { nodes: [], edges: [] }
     }
@@ -232,8 +241,70 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
     return buildLayout(dag, saved, perPhaseCostUSD, perPhaseAttempt, perTaskTimestamps)
   }, [dag, sessionId, perPhaseCostUSD, perPhaseAttempt, perTaskTimestamps])
 
+  // Derive the agent state from the events stream and turn it into floating
+  // canvas nodes anchored to their phase or task. The agents hook ticks on
+  // its own to transition fading agents to archived; the canvas re-renders
+  // when state changes.
+  const agents = useAgents(events)
+
+  // Inject archivedAgents and liveAgents into phase/task data so each node
+  // renders the history badge plus mini live role chips. Untouched plan
+  // nodes are returned by reference to keep ReactFlow's diff cheap.
+  const planNodesWithHistory = useMemo(() => {
+    const archByPhase = agents.archivedByAnchor.byPhase
+    const archByTask = agents.archivedByAnchor.byTask
+    const liveByPhase = agents.liveByAnchor.byPhase
+    const liveByTask = agents.liveByAnchor.byTask
+    const hasAny =
+      Object.keys(archByPhase).length > 0 ||
+      Object.keys(archByTask).length > 0 ||
+      Object.keys(liveByPhase).length > 0 ||
+      Object.keys(liveByTask).length > 0
+    if (!hasAny) return planLayoutNodes
+    return planLayoutNodes.map((n) => {
+      if (n.type === 'phaseNode') {
+        const phaseId = n.id.startsWith('phase:') ? n.id.slice('phase:'.length) : n.id
+        const archIds = archByPhase[phaseId] ?? []
+        const liveIds = liveByPhase[phaseId] ?? []
+        if (archIds.length === 0 && liveIds.length === 0) return n
+        const archivedAgents = archIds.map((id) => agents.byId[id]).filter(Boolean)
+        const liveAgents = liveIds.map((id) => agents.byId[id]).filter(Boolean)
+        return { ...n, data: { ...(n.data ?? {}), archivedAgents, liveAgents } }
+      }
+      if (n.type === 'taskNode') {
+        const id = n.id.startsWith('task:') ? n.id.slice('task:'.length) : n.id
+        const archIds = archByTask[id] ?? []
+        const liveIds = liveByTask[id] ?? []
+        if (archIds.length === 0 && liveIds.length === 0) return n
+        const archivedAgents = archIds.map((aid) => agents.byId[aid]).filter(Boolean)
+        const liveAgents = liveIds.map((aid) => agents.byId[aid]).filter(Boolean)
+        return { ...n, data: { ...(n.data ?? {}), archivedAgents, liveAgents } }
+      }
+      return n
+    })
+  }, [planLayoutNodes, agents])
+
+  const { agentNodes, agentEdges } = useMemo(() => {
+    if (planNodesWithHistory.length === 0) {
+      return { agentNodes: [] as Node[], agentEdges: [] }
+    }
+    const { nodes, edges } = buildAgentLayout(planNodesWithHistory, agents)
+    return { agentNodes: nodes, agentEdges: edges }
+  }, [planNodesWithHistory, agents])
+
+  // Merge plan and agent layers. Agent nodes are appended so they paint on
+  // top of phase containers; agent edges follow the same order.
+  const layoutNodes = useMemo(
+    () => [...planNodesWithHistory, ...agentNodes],
+    [planNodesWithHistory, agentNodes],
+  )
+  const layoutEdges = useMemo(
+    () => [...planLayoutEdges, ...agentEdges],
+    [planLayoutEdges, agentEdges],
+  )
+
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes)
-  const [edges, , onEdgesChange] = useEdgesState(layoutEdges)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(layoutEdges)
 
   // Synchronise node list when the snapshot updates (status changes, new
   // phases) without discarding user-dragged positions already in local state.
@@ -241,26 +312,21 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
     setNodes(layoutNodes)
   }, [layoutNodes, setNodes])
 
-  // Live status patch: apply task_started / task_completed / task_approved
-  // / task_needs_fix events to the matching task nodes via setNodes(prev =>
-  // prev.map(...)). Returning prev when nothing changed keeps the node
-  // refs stable for unchanged nodes so xyflow's StoreUpdater does not
-  // re-process the whole list. lastAppliedSeqRef tracks the high-water
-  // mark; resets on session switch. The bulk setNodes(layoutNodes) above
-  // runs only on plan/dag refetches, so this effect carries the in-between
-  // status changes during a live run without rebuilding layoutNodes.
-  const lastTaskSeqRef = useRef(0)
+  // Edges (plan dependency edges + agent satellite edges) follow the layout.
   useEffect(() => {
-    lastTaskSeqRef.current = 0
-  }, [sessionId])
+    setEdges(layoutEdges)
+  }, [layoutEdges, setEdges])
+
+  // Live status patch: apply task_started / task_completed / task_approved
+  // / task_needs_fix events to the matching task nodes. The effect
+  // re-applies from scratch on every events or layoutNodes change so that
+  // wholesale layout replacements (caused by agents ticking, plan rebuilds,
+  // etc.) do not lose the in-progress status that the snapshot poller has
+  // not yet observed.
   useEffect(() => {
     if (events.length === 0) return
-    const high = lastTaskSeqRef.current
     const updates = new Map<string, string>()
-    let pending = high
     for (const ev of events) {
-      if (ev.seq <= high) continue
-      if (ev.seq > pending) pending = ev.seq
       const t = ev.event.type
       let nextStatus = ''
       if (t === 'task_started') nextStatus = 'in_progress'
@@ -272,7 +338,6 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
       if (!phaseId || !taskId) continue
       updates.set(`task:${phaseId}:${taskId}`, nextStatus)
     }
-    lastTaskSeqRef.current = pending
     if (updates.size === 0) return
     setNodes((prev) => {
       let changed = false
@@ -293,7 +358,7 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
       })
       return changed ? next : prev
     })
-  }, [events, setNodes])
+  }, [events, layoutNodes, setNodes])
 
   // Persist user-dragged positions after a drag completes.
   const handleNodesChange = useCallback(
@@ -312,6 +377,16 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
       persistPositions(sessionId, saved)
     },
     [onNodesChange, sessionId],
+  )
+
+  // Computed before the early return so the hook order stays stable across
+  // the "waiting for plan" placeholder and the populated canvas.
+  const planArchivedAgents = useMemo(
+    () =>
+      agents.archivedByAnchor.plan
+        .map((id) => agents.byId[id])
+        .filter((c): c is NonNullable<typeof c> => Boolean(c)),
+    [agents],
   )
 
   if (!dag?.phases?.length) {
@@ -333,7 +408,30 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
   }
 
   return (
-    <div className="bg-canvas-textured" style={{ width: '100%', height: '100%' }}>
+    <div className="bg-canvas-textured" style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {planArchivedAgents.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            zIndex: 5,
+            padding: '4px 8px',
+            backgroundColor: 'var(--surface-overlay)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 10,
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--color-muted-foreground)',
+          }}
+        >
+          <span>Plan</span>
+          <AgentHistoryBadge archivedAgents={planArchivedAgents} label="Plan history" />
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
