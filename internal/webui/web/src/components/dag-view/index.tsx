@@ -249,32 +249,38 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
   // when state changes.
   const agents = useAgents(events)
 
-  // Inject archivedAgents into phase/task data so each node renders the
-  // history badge. Untouched plan nodes are returned by reference to keep
-  // ReactFlow's diff cheap.
+  // Inject archivedAgents and liveAgents into phase/task data so each node
+  // renders the history badge plus mini live role chips. Untouched plan
+  // nodes are returned by reference to keep ReactFlow's diff cheap.
   const planNodesWithHistory = useMemo(() => {
     const archByPhase = agents.archivedByAnchor.byPhase
     const archByTask = agents.archivedByAnchor.byTask
-    if (
-      Object.keys(archByPhase).length === 0 &&
-      Object.keys(archByTask).length === 0
-    ) {
-      return planLayoutNodes
-    }
+    const liveByPhase = agents.liveByAnchor.byPhase
+    const liveByTask = agents.liveByAnchor.byTask
+    const hasAny =
+      Object.keys(archByPhase).length > 0 ||
+      Object.keys(archByTask).length > 0 ||
+      Object.keys(liveByPhase).length > 0 ||
+      Object.keys(liveByTask).length > 0
+    if (!hasAny) return planLayoutNodes
     return planLayoutNodes.map((n) => {
       if (n.type === 'phaseNode') {
         const phaseId = n.id.startsWith('phase:') ? n.id.slice('phase:'.length) : n.id
-        const ids = archByPhase[phaseId] ?? []
-        if (ids.length === 0) return n
-        const archivedAgents = ids.map((id) => agents.byId[id]).filter(Boolean)
-        return { ...n, data: { ...(n.data ?? {}), archivedAgents } }
+        const archIds = archByPhase[phaseId] ?? []
+        const liveIds = liveByPhase[phaseId] ?? []
+        if (archIds.length === 0 && liveIds.length === 0) return n
+        const archivedAgents = archIds.map((id) => agents.byId[id]).filter(Boolean)
+        const liveAgents = liveIds.map((id) => agents.byId[id]).filter(Boolean)
+        return { ...n, data: { ...(n.data ?? {}), archivedAgents, liveAgents } }
       }
       if (n.type === 'taskNode') {
         const id = n.id.startsWith('task:') ? n.id.slice('task:'.length) : n.id
-        const ids = archByTask[id] ?? []
-        if (ids.length === 0) return n
-        const archivedAgents = ids.map((aid) => agents.byId[aid]).filter(Boolean)
-        return { ...n, data: { ...(n.data ?? {}), archivedAgents } }
+        const archIds = archByTask[id] ?? []
+        const liveIds = liveByTask[id] ?? []
+        if (archIds.length === 0 && liveIds.length === 0) return n
+        const archivedAgents = archIds.map((aid) => agents.byId[aid]).filter(Boolean)
+        const liveAgents = liveIds.map((aid) => agents.byId[aid]).filter(Boolean)
+        return { ...n, data: { ...(n.data ?? {}), archivedAgents, liveAgents } }
       }
       return n
     })
@@ -375,6 +381,16 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
     [onNodesChange, sessionId],
   )
 
+  // Computed before the early return so the hook order stays stable across
+  // the "waiting for plan" placeholder and the populated canvas.
+  const planArchivedAgents = useMemo(
+    () =>
+      agents.archivedByAnchor.plan
+        .map((id) => agents.byId[id])
+        .filter((c): c is NonNullable<typeof c> => Boolean(c)),
+    [agents],
+  )
+
   if (!dag?.phases?.length) {
     return (
       <div
@@ -392,14 +408,6 @@ export function DAGView({ snapshot, plan, sessionId, events }: DAGViewProps) {
       </div>
     )
   }
-
-  const planArchivedAgents = useMemo(
-    () =>
-      agents.archivedByAnchor.plan
-        .map((id) => agents.byId[id])
-        .filter((c): c is NonNullable<typeof c> => Boolean(c)),
-    [agents],
-  )
 
   return (
     <div className="bg-canvas-textured" style={{ width: '100%', height: '100%', position: 'relative' }}>

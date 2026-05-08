@@ -143,12 +143,14 @@ describe('AppShell (T7.5)', () => {
     expect(drawer).toBeNull()
   })
 
-  it('renders the right pane', async () => {
+  it('does not render the dedicated right pane (replaced by floating stack)', async () => {
     await act(async () => {
       render(React.createElement(App))
     })
-    const rightPane = document.querySelector('[data-testid="right-pane"]')
-    expect(rightPane).toBeTruthy()
+    // The redesigned shell drops the permanent right pane in favor of a
+    // floating inspector stack that only shows when there is a selection.
+    expect(document.querySelector('[data-testid="right-pane"]')).toBeNull()
+    expect(document.querySelector('[data-testid="floating-inspector-stack"]')).toBeNull()
   })
 
   it('renders the right-pane placeholder by default (no selection)', async () => {

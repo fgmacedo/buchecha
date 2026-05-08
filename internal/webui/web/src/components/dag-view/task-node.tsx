@@ -4,7 +4,8 @@ import { useSelection } from '../../hooks/use-selection'
 import type { DAGTask, TaskStatus } from './types'
 import { AgentHistoryBadge } from './agent-history-badge'
 import type { AgentCard } from '../../hooks/use-agents'
-import { StatusPill, type LifecycleStatus } from '../status-pill'
+import { RoleIcon, roleColor, roleColorDim, roleLabel } from '../role-icons'
+import { useNodeStyle } from '../tweaks-widget'
 
 // STATUS_COLOR_MAP maps TaskStatus values to CSS variable references.
 const STATUS_COLOR_MAP: Record<TaskStatus, string> = {
@@ -18,12 +19,26 @@ function statusColor(status: string): string {
   return STATUS_COLOR_MAP[status as TaskStatus] ?? 'var(--status-pending)'
 }
 
+const STATUS_LABEL: Record<TaskStatus, string> = {
+  pending: 'pending',
+  in_progress: 'running',
+  done: 'done',
+  needs_fix: 'needs fix',
+}
+
+function statusLabel(status: string): string {
+  return STATUS_LABEL[status as TaskStatus] ?? status
+}
+
 export interface TaskNodeData {
   task: DAGTask
   phaseId: string
   startedAt?: string
   endedAt?: string
   archivedAgents?: AgentCard[]
+  // liveAgents lists agents currently anchored to this task. The layout
+  // attaches them so the task card can render mini role chips inline.
+  liveAgents?: AgentCard[]
   [key: string]: unknown
 }
 
@@ -36,8 +51,16 @@ export interface TaskNodeData {
 // --status-running.
 export function TaskNodeComponent({ data }: NodeProps) {
   const [hovered, setHovered] = useState(false)
-  const { task, phaseId, startedAt, endedAt, archivedAgents = [] } = data as TaskNodeData
+  const {
+    task,
+    phaseId,
+    startedAt,
+    endedAt,
+    archivedAgents = [],
+    liveAgents = [],
+  } = data as TaskNodeData
   const { selection, select } = useSelection()
+  const nodeStyle = useNodeStyle()
 
   const selected =
     selection?.kind === 'task' &&
@@ -45,13 +68,60 @@ export function TaskNodeComponent({ data }: NodeProps) {
     selection.taskId === task.id
 
   const color = statusColor(task.status)
-
-  // Selected outline follows status: warn for needs_fix, running otherwise.
-  const outlineColor =
-    task.status === 'needs_fix' ? 'var(--accent-warn)' : 'var(--status-running)'
+  const live = task.status === 'in_progress'
 
   const title = task.title && task.title.trim().length > 0 ? task.title : task.id
   const intent = task.intent ?? ''
+
+  if (nodeStyle === 'minimal') {
+    return (
+      <button
+        onClick={() => select({ kind: 'task', phaseId, taskId: task.id })}
+        type="button"
+        style={{
+          textAlign: 'left',
+          width: '100%',
+          height: '100%',
+          padding: '10px 12px',
+          background: 'transparent',
+          border: 0,
+          borderLeft: `2px solid ${color}`,
+          color: 'var(--color-foreground)',
+          cursor: 'pointer',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+          opacity: task.status === 'pending' ? 0.55 : 1,
+          boxSizing: 'border-box',
+          position: 'relative',
+        }}
+      >
+        <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+        <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 500,
+            color: 'var(--color-foreground)',
+            lineHeight: 1.25,
+          }}
+          title={title}
+        >
+          {title}
+        </span>
+        <span
+          style={{
+            fontSize: 10,
+            color: 'var(--color-faint, var(--color-muted-foreground))',
+            fontFamily: 'var(--font-mono)',
+          }}
+        >
+          {task.id} · {statusLabel(task.status)}
+        </span>
+        <AgentHistoryBadge archivedAgents={archivedAgents} label={`Past agents on ${task.id}`} />
+      </button>
+    )
+  }
 
   return (
     <div
@@ -61,20 +131,26 @@ export function TaskNodeComponent({ data }: NodeProps) {
       style={{
         width: '100%',
         height: '100%',
-        borderRadius: 6,
+        borderRadius: 10,
         border: selected
-          ? `2px solid ${outlineColor}`
-          : `1px solid color-mix(in srgb, ${color} 60%, transparent)`,
-        backgroundColor: `color-mix(in srgb, ${color} 12%, var(--surface-card))`,
+          ? `1.5px solid ${color}`
+          : live
+            ? `1px solid ${color}`
+            : '1px solid var(--border-default)',
+        background: live
+          ? `color-mix(in srgb, ${color} 8%, var(--surface-card))`
+          : 'var(--surface-elevated)',
+        boxShadow: selected ? `0 0 0 1px ${color}` : 'none',
         display: 'flex',
         flexDirection: 'column',
-        gap: 4,
-        padding: '8px 10px',
+        gap: 6,
+        padding: '10px 12px',
         cursor: 'pointer',
         position: 'relative',
         boxSizing: 'border-box',
-        transition: 'border-color 0.1s ease',
+        transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
         overflow: 'hidden',
+        opacity: task.status === 'pending' ? 0.65 : 1,
       }}
     >
       <Handle
@@ -98,64 +174,27 @@ export function TaskNodeComponent({ data }: NodeProps) {
         }}
       />
 
-      {/* Headline: task title is the primary label. */}
-      <div
-        style={{
-          fontFamily: 'var(--font-sans)',
-          fontSize: 12,
-          fontWeight: 600,
-          color: 'var(--color-foreground)',
-          lineHeight: 1.25,
-          display: '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-          wordBreak: 'break-word',
-        }}
-        title={title}
-      >
-        {title}
-      </div>
-
-      {/* Intent: 2-line clamp with native title tooltip as a fallback. */}
-      {intent && (
-        <div
-          style={{
-            fontSize: 10,
-            color: 'var(--color-muted-foreground)',
-            lineHeight: 1.35,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            wordBreak: 'break-word',
-          }}
-          title={intent}
-        >
-          {intent}
-        </div>
-      )}
-
-      {/* Meta footer: id (small, muted), status pill, priority, retry dots. */}
-      <div
-        style={{
-          marginTop: 'auto',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          minWidth: 0,
-        }}
-      >
+      {/* Header row: status dot + id (mono) + status label (right). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span
           style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: color,
+            animation: live ? 'bcc-role-pulse 1.6s infinite' : 'none',
+            flexShrink: 0,
+          }}
+        />
+        <span
+          style={{
+            fontSize: 9.5,
+            color: 'var(--color-faint, var(--color-muted-foreground))',
             fontFamily: 'var(--font-mono)',
-            fontSize: 9,
-            color: 'var(--color-muted-foreground)',
-            letterSpacing: '0.03em',
+            letterSpacing: '.03em',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            opacity: 0.8,
           }}
           title={task.id}
         >
@@ -165,21 +204,92 @@ export function TaskNodeComponent({ data }: NodeProps) {
           <PriorityBadge priority={task.priority} />
         )}
         {task.retry_budget > 0 && <RetryDots budget={task.retry_budget} />}
-        <span style={{ marginLeft: 'auto' }}>
-          <StatusPill
-            status={task.status as LifecycleStatus}
-            size="sm"
-            pulseLive
-          />
+        <span
+          style={{
+            marginLeft: 'auto',
+            fontSize: 9,
+            textTransform: 'uppercase',
+            letterSpacing: '.06em',
+            color,
+            fontWeight: 600,
+          }}
+        >
+          {statusLabel(task.status)}
         </span>
       </div>
 
+      {/* Title: primary label, sans, weight 500. */}
+      <div
+        style={{
+          fontFamily: 'var(--font-sans)',
+          fontSize: 12.5,
+          fontWeight: 500,
+          color: 'var(--color-foreground)',
+          lineHeight: 1.3,
+          wordBreak: 'break-word',
+        }}
+        title={title}
+      >
+        {title}
+      </div>
+
+      {/* Intent: 2-line clamp with native title tooltip. */}
+      {intent && (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--color-muted-foreground)',
+            lineHeight: 1.4,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            wordBreak: 'break-word',
+            marginTop: -2,
+          }}
+          title={intent}
+        >
+          {intent}
+        </div>
+      )}
+
+      {/* Mini agent role chips: who's working on (or has worked on) this task. */}
+      {(liveAgents.length > 0 || archivedAgents.length > 0) && (
+        <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
+          {[...liveAgents, ...archivedAgents].slice(0, 5).map((a) => {
+            const isLive = a.status === 'live'
+            return (
+              <span
+                key={a.agentId}
+                title={`${roleLabel(a.role)} · ${a.model ?? '—'} · ${a.status}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  select({ kind: 'agent', spawnId: a.agentId })
+                }}
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: 5,
+                  background: roleColorDim(a.role),
+                  color: roleColor(a.role),
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: `1px solid ${roleColor(a.role)}`,
+                  opacity: isLive ? 1 : 0.45,
+                  cursor: 'pointer',
+                  transition: 'opacity 0.12s, transform 0.12s',
+                }}
+              >
+                <RoleIcon role={a.role} size={9} />
+              </span>
+            )
+          })}
+        </div>
+      )}
+
       {hovered && (
-        <TaskTooltip
-          task={task}
-          startedAt={startedAt}
-          endedAt={endedAt}
-        />
+        <TaskTooltip task={task} startedAt={startedAt} endedAt={endedAt} />
       )}
       <AgentHistoryBadge archivedAgents={archivedAgents} label={`Past agents on ${task.id}`} />
     </div>

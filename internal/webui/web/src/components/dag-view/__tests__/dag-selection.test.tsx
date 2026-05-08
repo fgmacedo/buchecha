@@ -266,16 +266,20 @@ describe('App mounts with DAG fixture (T8.4)', () => {
       error = e
     }
     expect(error).toBeNull()
-    // RightPane is present; default state shows the placeholder.
-    expect(document.querySelector('[data-testid="right-pane"]')).toBeTruthy()
+    // The redesigned shell exposes the floating inspector stack instead of
+    // a permanent right pane. With no selection it does not render at all.
+    expect(
+      document.querySelector('[data-testid="floating-inspector-stack"]'),
+    ).toBeNull()
   })
 
-  it('renders the right-pane placeholder by default (no selection)', async () => {
+  it('does not render the floating inspector stack by default (no selection)', async () => {
     await act(async () => {
       render(React.createElement(App))
     })
-    const pane = document.querySelector('[data-testid="right-pane"]')
-    expect(pane).toBeTruthy()
+    expect(
+      document.querySelector('[data-testid="floating-inspector-stack"]'),
+    ).toBeNull()
     expect(screen.queryByLabelText('Close inspector')).toBeNull()
   })
 })

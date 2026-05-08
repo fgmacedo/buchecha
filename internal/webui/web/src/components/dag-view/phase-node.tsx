@@ -123,113 +123,111 @@ export function PhaseNodeComponent({ data }: NodeProps) {
         }}
       />
 
-      {/* Header: title is the headline; id, deps, priority, parallelizable,
-          and the aggregated status sit around it as small meta. The intent
-          reads as a clamped subtitle below. */}
+      {/* Header row: id chip (left), title + intent stack, status pill (right). */}
       <div
         data-testid={`phase-header-${phase.id}`}
         onClick={() => select({ kind: 'phase', phaseId: phase.id })}
         style={{
-          padding: '8px 12px',
+          padding: '14px 16px 10px',
           display: 'flex',
-          flexDirection: 'column',
-          gap: 4,
+          alignItems: 'flex-start',
+          gap: 12,
           borderBottom: '1px solid var(--color-border)',
           borderRadius: '7px 7px 0 0',
           cursor: 'pointer',
           flexShrink: 0,
         }}
       >
-        {/* Meta row: id chip, deps, parallelizable, priority, status. */}
-        <div
+        <span
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            flexWrap: 'wrap',
-            minHeight: 16,
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            color: 'var(--color-faint, var(--color-muted-foreground))',
+            letterSpacing: '0.04em',
+            padding: '2px 7px',
+            border: '1px solid var(--border-default)',
+            borderRadius: 6,
+            marginTop: 4,
+            flexShrink: 0,
           }}
+          title={phase.id}
         >
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 9,
-              color: 'var(--color-muted-foreground)',
-              letterSpacing: '0.04em',
-              userSelect: 'none',
-              opacity: 0.85,
-            }}
-            title={phase.id}
-          >
-            {phase.id}
-          </span>
+          {phase.id}
+        </span>
 
-          {(phase.depends_on ?? []).map((dep) => (
-            <span
-              key={dep}
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: 9,
-                color: 'var(--color-muted-foreground)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 3,
-                padding: '1px 5px',
-                lineHeight: 1.5,
-                userSelect: 'none',
-              }}
-            >
-              {dep}
-            </span>
-          ))}
-
-          {phase.parallelizable && <ParallelChip />}
-
-          {typeof phase.priority === 'number' && (
-            <PriorityBadge priority={phase.priority} />
-          )}
-
-          <span style={{ marginLeft: 'auto' }}>
-            <StatusPill
-              status={aggStatus as LifecycleStatus}
-              size="sm"
-              pulseLive
-            />
-          </span>
-        </div>
-
-        {/* Headline: phase title is the primary label. */}
-        <div
-          style={{
-            fontFamily: 'var(--font-sans)',
-            fontSize: 15,
-            fontWeight: 600,
-            color: 'var(--color-foreground)',
-            lineHeight: 1.25,
-            wordBreak: 'break-word',
-          }}
-          title={title}
-        >
-          {title}
-        </div>
-
-        {/* Intent: clamped to two lines; native tooltip shows full text. */}
-        {intent && (
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
-              fontSize: 11,
-              color: 'var(--color-muted-foreground)',
-              lineHeight: 1.35,
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
+              fontFamily: 'var(--font-sans)',
+              fontSize: 18,
+              fontWeight: 600,
+              color: 'var(--color-foreground-strong, var(--color-foreground))',
+              lineHeight: 1.2,
+              letterSpacing: '-0.01em',
               wordBreak: 'break-word',
             }}
-            title={intent}
+            title={title}
           >
-            {intent}
+            {title}
           </div>
-        )}
+          {intent && (
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 13,
+                color: 'var(--color-muted-foreground)',
+                lineHeight: 1.45,
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                wordBreak: 'break-word',
+              }}
+              title={intent}
+            >
+              {intent}
+            </div>
+          )}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              flexWrap: 'wrap',
+              marginTop: 6,
+            }}
+          >
+            {(phase.depends_on ?? []).map((dep) => (
+              <span
+                key={dep}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 9,
+                  color: 'var(--color-muted-foreground)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 3,
+                  padding: '1px 5px',
+                  lineHeight: 1.5,
+                  userSelect: 'none',
+                }}
+              >
+                {dep}
+              </span>
+            ))}
+            {phase.parallelizable && <ParallelChip />}
+            {typeof phase.priority === 'number' && (
+              <PriorityBadge priority={phase.priority} />
+            )}
+          </div>
+        </div>
+
+        <span style={{ marginTop: 2, flexShrink: 0 }}>
+          <StatusPill
+            status={aggStatus as LifecycleStatus}
+            size="sm"
+            pulseLive
+          />
+        </span>
       </div>
 
       {/* Body: empty spacer; xyflow renders child TaskNode elements here. */}

@@ -9,7 +9,7 @@ import { SUBAGENT_NODE_HEIGHT, SUBAGENT_NODE_WIDTH } from './sub-agent-node'
 // Width grew to fit a wrapped title and a 2-line intent clamp; height grew
 // to accommodate the headline plus intent block plus the meta footer row.
 const TASK_W = 200
-const TASK_H = 104
+const TASK_H = 116
 const TASK_GAP_X = 10
 const TASK_GAP_Y = 10
 
@@ -18,10 +18,12 @@ const GRID_COLS = 4
 
 // Phase layout constants.
 const PHASE_PAD_X = 16
-const PHASE_PAD_Y = 10
-// Header now stacks: id+badges row, title row, intent clamp.
-const PHASE_HEADER_H = 96
-const PHASE_FOOTER_H = 36
+const PHASE_PAD_Y = 12
+// Header stacks the id chip alongside the larger title (18px), the intent
+// (13px, 2 lines), and a meta row for deps/parallelizable/priority. Bumped
+// from 96px so tasks don't crash into the header on the new design.
+const PHASE_HEADER_H = 112
+const PHASE_FOOTER_H = 38
 
 // Agent satellite layout. Cards float to the right of their anchor; siblings
 // stack vertically. The plan-level anchor (planner) lives above all phases

@@ -4,19 +4,15 @@ import type { SeqEvent } from '../../hooks/use-events'
 import { useCostAggregator } from '../../hooks/use-cost-aggregator'
 import { CostMeter } from '../cost-meter'
 import { useTheme } from '../../hooks/use-theme'
-
-// STATUS_COLORS maps session status strings to CSS variables defined in tokens.css.
-const STATUS_COLORS: Record<string, string> = {
-  running: 'var(--status-running)',
-  done: 'var(--status-done)',
-  error: 'var(--status-error)',
-  pending: 'var(--status-pending)',
-  needs_fix: 'var(--status-needs-fix)',
-}
-
-function statusColor(status: string): string {
-  return STATUS_COLORS[status] ?? 'var(--status-pending)'
-}
+import {
+  Metric,
+  ProgressRing,
+  computeEta,
+  formatElapsed,
+  formatEta,
+  formatTokens,
+  useElapsed,
+} from './top-stats'
 
 // useIsCompact returns true when the viewport is narrower than 1024px.
 function useIsCompact(): boolean {
@@ -46,11 +42,11 @@ export interface HeaderProps {
   leading?: React.ReactNode
 }
 
-// Header renders the top chrome band at 48px height (h-12).
-// Left to right: bcc mark + session identity (id mono short + spec filename) |
-// status pill and iter X / Y | CostMeter | theme toggle. The DAG/Activity
-// toggle was removed when agents were promoted to first-class canvas
-// citizens (the Activity Gantt is gone).
+// Header renders the top chrome band at 56px height. Left to right:
+// drawer trigger + bcc mark + session identity (mono short id + spec
+// filename) | metrics cluster (ITER, ELAPSED, ETA, TOKENS, COST) | progress
+// ring (iteration completion) | theme toggle. The CostMeter popover stays
+// reachable behind the COST metric so the breakdown remains one click away.
 export function Header({ snapshot, events, leading }: HeaderProps) {
   const costAgg = useCostAggregator(events)
   const isCompact = useIsCompact()
@@ -60,10 +56,25 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
   const specName = session?.spec_path.split('/').pop() ?? 'bcc'
   const shortId = session?.id.slice(0, 8) ?? ''
 
+  const elapsedMs = useElapsed(session?.started_at, session?.finished_at)
+  const eta = session
+    ? computeEta(elapsedMs, session.iteration_index, session.max_iter)
+    : null
+  const totalTokens =
+    costAgg.totalTokens.input + costAgg.totalTokens.output
+  const progressPct =
+    session && session.max_iter > 0
+      ? Math.min(100, (session.iteration_index / session.max_iter) * 100)
+      : 0
+
   return (
     <header
       aria-label="Header"
-      className="flex items-center h-12 border-b border-border bg-muted px-4 gap-3"
+      className="flex items-center border-b border-border px-4 gap-3"
+      style={{
+        height: 56,
+        backgroundColor: 'var(--surface-panel)',
+      }}
     >
       {leading}
       <BccMark />
@@ -91,7 +102,7 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
             </span>
             {!isCompact && (
               <span
-                className="text-sm font-medium text-foreground truncate max-w-[16rem]"
+                className="text-sm font-medium text-foreground truncate max-w-[20rem]"
                 title={specName}
                 data-testid="spec-filename"
               >
@@ -104,37 +115,52 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
         )}
       </div>
 
-      {/* Status pill + iter X / Y */}
-      <div className="flex items-center gap-2 shrink-0">
-        {session && (
-          <>
-            <span
-              className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium"
-              style={{
-                borderColor: statusColor(session.status),
-                color: statusColor(session.status),
-              }}
-              data-testid="status-pill"
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: statusColor(session.status) }}
-              />
-              {session.status}
-            </span>
-            <span className="text-xs text-muted-foreground" data-testid="iter-counter">
-              <span className="font-mono text-foreground">{session.iteration_index}</span>
-              {' / '}
-              <span className="font-mono text-foreground">{session.max_iter}</span>
-            </span>
-          </>
-        )}
-      </div>
+      {/* Metrics cluster */}
+      {session && (
+        <div className="flex items-center gap-4 shrink-0" data-testid="header-stats">
+          <Metric
+            label="iter"
+            testId="iter-counter"
+            value={
+              <>
+                <span style={{ color: 'var(--color-foreground)' }}>
+                  {session.iteration_index}
+                </span>
+                <span
+                  style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
+                >
+                  /{session.max_iter}
+                </span>
+              </>
+            }
+          />
+          {!isCompact && (
+            <Metric
+              label="elapsed"
+              testId="elapsed-metric"
+              value={formatElapsed(elapsedMs)}
+            />
+          )}
+          {!isCompact && (
+            <Metric label="eta" testId="eta-metric" value={formatEta(eta)} />
+          )}
+          {!isCompact && (
+            <Metric
+              label="tokens"
+              testId="tokens-metric"
+              value={formatTokens(totalTokens)}
+            />
+          )}
+          {/* COST: clicking opens the existing breakdown popover. */}
+          <div data-testid="cost-meter">
+            <CostMeter agg={costAgg} compact />
+          </div>
+        </div>
+      )}
 
-      {/* CostMeter: compact below 1024px */}
-      <div className="shrink-0" data-testid="cost-meter">
-        <CostMeter agg={costAgg} compact={isCompact} />
-      </div>
+      {session && (
+        <ProgressRing pct={progressPct} />
+      )}
 
       <button
         type="button"
