@@ -14,6 +14,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/menu"
 )
 
 // runDirector drives the DAG-driven Director state machine:
@@ -41,7 +42,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 	if err := supervision.ValidatePlan(d.Plan); err != nil {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan: %w", err)
 	}
-	if err := supervision.ValidatePlanAgainstMenus(d.Plan, d.Handler.RoleMenus()); err != nil {
+	if err := menu.ValidatePlanAgainstMenus(d.Plan, d.Handler.RoleMenus()); err != nil {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan routing: %w", err)
 	}
 	state := d.Handler.State()

@@ -1,4 +1,4 @@
-package supervision
+package menu
 
 import "testing"
 

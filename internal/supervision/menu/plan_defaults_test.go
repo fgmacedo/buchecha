@@ -1,6 +1,10 @@
-package supervision
+package menu
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/fgmacedo/buchecha/internal/supervision"
+)
 
 func TestFillPlanFromMenus_NilPlanIsNoop(t *testing.T) {
 	menus := RoleMenus{Executor: RoleMenu{Options: []MenuOption{
@@ -10,8 +14,8 @@ func TestFillPlanFromMenus_NilPlanIsNoop(t *testing.T) {
 }
 
 func TestFillPlanFromMenus_EmptyMenusLeaveAssignmentsNil(t *testing.T) {
-	plan := &Plan{Phases: []Phase{
-		{ID: "p1", Tasks: []Task{{ID: "t1"}}},
+	plan := &supervision.Plan{Phases: []supervision.Phase{
+		{ID: "p1", Tasks: []supervision.Task{{ID: "t1"}}},
 	}}
 	FillPlanFromMenus(plan, RoleMenus{})
 	ph := plan.Phases[0]
@@ -21,9 +25,9 @@ func TestFillPlanFromMenus_EmptyMenusLeaveAssignmentsNil(t *testing.T) {
 }
 
 func TestFillPlanFromMenus_FillsMissingAssignmentsAcrossRoles(t *testing.T) {
-	plan := &Plan{Phases: []Phase{
-		{ID: "p1", Tasks: []Task{{ID: "t1"}}},
-		{ID: "p2", Tasks: []Task{{ID: "t2"}}},
+	plan := &supervision.Plan{Phases: []supervision.Phase{
+		{ID: "p1", Tasks: []supervision.Task{{ID: "t1"}}},
+		{ID: "p2", Tasks: []supervision.Task{{ID: "t2"}}},
 	}}
 	menus := RoleMenus{
 		Briefer:  RoleMenu{Options: []MenuOption{{Provider: "claude", Model: "default-mid", Efforts: []string{"medium"}}}},
@@ -45,10 +49,10 @@ func TestFillPlanFromMenus_FillsMissingAssignmentsAcrossRoles(t *testing.T) {
 }
 
 func TestFillPlanFromMenus_PreservesPlannerAssignments(t *testing.T) {
-	planner := &RoleAssignment{Provider: "claude", Model: "frontier-explicit", Effort: "high"}
-	plan := &Plan{Phases: []Phase{
+	planner := &supervision.RoleAssignment{Provider: "claude", Model: "frontier-explicit", Effort: "high"}
+	plan := &supervision.Plan{Phases: []supervision.Phase{
 		{
-			ID: "p1", Tasks: []Task{{ID: "t1"}},
+			ID: "p1", Tasks: []supervision.Task{{ID: "t1"}},
 			ExecutorAssignment: planner,
 		},
 	}}
@@ -66,25 +70,25 @@ func TestFillPlanFromMenus_PreservesPlannerAssignments(t *testing.T) {
 }
 
 func TestFillPlanFromMenus_DefaultsEmptyTaskStatusToPending(t *testing.T) {
-	plan := &Plan{Phases: []Phase{
+	plan := &supervision.Plan{Phases: []supervision.Phase{
 		{
 			ID: "p1",
-			Tasks: []Task{
+			Tasks: []supervision.Task{
 				{ID: "t1"},
-				{ID: "t2", Status: TaskDone},
+				{ID: "t2", Status: supervision.TaskDone},
 				{ID: "t3"},
 			},
 		},
 	}}
 	FillPlanFromMenus(plan, RoleMenus{})
 	tasks := plan.Phases[0].Tasks
-	if tasks[0].Status != TaskPending {
+	if tasks[0].Status != supervision.TaskPending {
 		t.Errorf("t1 status = %q, want pending", tasks[0].Status)
 	}
-	if tasks[1].Status != TaskDone {
+	if tasks[1].Status != supervision.TaskDone {
 		t.Errorf("t2 status = %q, want preserved done", tasks[1].Status)
 	}
-	if tasks[2].Status != TaskPending {
+	if tasks[2].Status != supervision.TaskPending {
 		t.Errorf("t3 status = %q, want pending", tasks[2].Status)
 	}
 }
@@ -95,10 +99,10 @@ func TestValidatePlanAgainstMenus_AcceptsMatchingTriple(t *testing.T) {
 			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium", "high"}},
 		}},
 	}
-	plan := &Plan{Phases: []Phase{
+	plan := &supervision.Plan{Phases: []supervision.Phase{
 		{
-			ID: "p1", Tasks: []Task{{ID: "t1"}},
-			ExecutorAssignment: &RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "high"},
+			ID: "p1", Tasks: []supervision.Task{{ID: "t1"}},
+			ExecutorAssignment: &supervision.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "high"},
 		},
 	}}
 	if err := ValidatePlanAgainstMenus(plan, menus); err != nil {
@@ -112,10 +116,10 @@ func TestValidatePlanAgainstMenus_RejectsModelOutsideMenu(t *testing.T) {
 			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
 		}},
 	}
-	plan := &Plan{Phases: []Phase{
+	plan := &supervision.Plan{Phases: []supervision.Phase{
 		{
-			ID: "p1", Tasks: []Task{{ID: "t1"}},
-			ExecutorAssignment: &RoleAssignment{Provider: "claude", Model: "claude-opus-4-7", Effort: "high"},
+			ID: "p1", Tasks: []supervision.Task{{ID: "t1"}},
+			ExecutorAssignment: &supervision.RoleAssignment{Provider: "claude", Model: "claude-opus-4-7", Effort: "high"},
 		},
 	}}
 	if err := ValidatePlanAgainstMenus(plan, menus); err == nil {
@@ -129,10 +133,10 @@ func TestValidatePlanAgainstMenus_RejectsEffortNotAllowed(t *testing.T) {
 			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
 		}},
 	}
-	plan := &Plan{Phases: []Phase{
+	plan := &supervision.Plan{Phases: []supervision.Phase{
 		{
-			ID: "p1", Tasks: []Task{{ID: "t1"}},
-			ExecutorAssignment: &RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "high"},
+			ID: "p1", Tasks: []supervision.Task{{ID: "t1"}},
+			ExecutorAssignment: &supervision.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "high"},
 		},
 	}}
 	if err := ValidatePlanAgainstMenus(plan, menus); err == nil {

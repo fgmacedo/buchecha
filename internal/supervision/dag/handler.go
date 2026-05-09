@@ -12,6 +12,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/menu"
 )
 
 // MCP method names. Each one has a JSON Schema embedded under
@@ -580,8 +581,8 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	if err := supervision.ValidatePlan(&plan); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
-	supervision.FillPlanFromMenus(&plan, h.roleMenus)
-	if err := supervision.ValidatePlanAgainstMenus(&plan, h.roleMenus); err != nil {
+	menu.FillPlanFromMenus(&plan, h.roleMenus)
+	if err := menu.ValidatePlanAgainstMenus(&plan, h.roleMenus); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
 	newState := NewStateFromPlan(&plan)

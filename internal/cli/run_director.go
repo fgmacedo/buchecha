@@ -28,6 +28,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	directorclaude "github.com/fgmacedo/buchecha/internal/supervision/claude"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/menu"
 	"github.com/fgmacedo/buchecha/internal/tui"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
@@ -343,13 +344,13 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 // handler for tier and summary lookups when validating bcc_plan_emit
 // payloads and for renders that want a flat catalog (auditing, future
 // API endpoints).
-func buildCapabilityRegistry() supervision.CapabilityRegistry {
+func buildCapabilityRegistry() menu.CapabilityRegistry {
 	known := config.KnownProviderList()
-	lists := make([][]supervision.Capability, 0, len(known))
+	lists := make([][]menu.Capability, 0, len(known))
 	for _, kp := range known {
-		caps := make([]supervision.Capability, 0, len(kp.Models))
+		caps := make([]menu.Capability, 0, len(kp.Models))
 		for _, m := range kp.Models {
-			caps = append(caps, supervision.Capability{
+			caps = append(caps, menu.Capability{
 				Provider: m.Provider,
 				Model:    m.Model,
 				Tier:     m.Tier,
@@ -359,7 +360,7 @@ func buildCapabilityRegistry() supervision.CapabilityRegistry {
 		}
 		lists = append(lists, caps)
 	}
-	return supervision.MergeCapabilityRegistries(lists...)
+	return menu.MergeCapabilityRegistries(lists...)
 }
 
 // buildRoleMenus converts the user-facing config menus into the
@@ -367,14 +368,14 @@ func buildCapabilityRegistry() supervision.CapabilityRegistry {
 // summary metadata when bcc has them in its built-in registry. Options
 // with no curated entry render in the Planner prompt without tier or
 // summary, but with the user's free-form note when present.
-func buildRoleMenus(cfg *config.Config) supervision.RoleMenus {
+func buildRoleMenus(cfg *config.Config) menu.RoleMenus {
 	if cfg == nil {
-		return supervision.RoleMenus{}
+		return menu.RoleMenus{}
 	}
-	convert := func(policy config.RolePolicy) supervision.RoleMenu {
-		out := make([]supervision.MenuOption, 0, len(policy.Options))
+	convert := func(policy config.RolePolicy) menu.RoleMenu {
+		out := make([]menu.MenuOption, 0, len(policy.Options))
 		for _, opt := range policy.Options {
-			mo := supervision.MenuOption{
+			mo := menu.MenuOption{
 				Provider: opt.Provider,
 				Model:    opt.Model,
 				Efforts:  append([]string(nil), opt.Efforts...),
@@ -386,9 +387,9 @@ func buildRoleMenus(cfg *config.Config) supervision.RoleMenus {
 			}
 			out = append(out, mo)
 		}
-		return supervision.RoleMenu{Options: out}
+		return menu.RoleMenu{Options: out}
 	}
-	return supervision.RoleMenus{
+	return menu.RoleMenus{
 		Planner:  convert(cfg.Roles.Planner),
 		Briefer:  convert(cfg.Roles.Briefer),
 		Executor: convert(cfg.Roles.Executor),
@@ -1331,8 +1332,8 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	}
 
 	var (
-		plannerRegistry supervision.CapabilityRegistry
-		plannerMenus    supervision.RoleMenus
+		plannerRegistry menu.CapabilityRegistry
+		plannerMenus    menu.RoleMenus
 	)
 	if h := directorEffectiveHandler(deps); h != nil {
 		if reg := h.CapabilityRegistry(); reg != nil {

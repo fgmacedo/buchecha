@@ -1,41 +1,17 @@
-package supervision
+package menu
 
-import "fmt"
+import (
+	"fmt"
 
-// RoleMenu is the per-role list of (provider, model, efforts) triples
-// the Planner is allowed to attribute on a phase. It mirrors
-// config.RolePolicy at the wire layer; the loop converts the config
-// shape into this one before binding it to the run-wide handler so the
-// director package stays independent of the config package.
-type RoleMenu struct {
-	Options []MenuOption
-}
+	"github.com/fgmacedo/buchecha/internal/supervision"
+)
 
-// MenuOption is one entry in a role's menu.
-//
-// Tier and Summary are non-authoritative metadata pulled from the
-// curated registry (config.KnownModelByName) at wiring time so the
-// Planner prompt can render hints alongside the user's options. They
-// are empty when the user declared a model bcc has no curated metadata
-// for; the prompt rendering omits the corresponding line.
-type MenuOption struct {
-	Provider string
-	Model    string
-	Efforts  []string
-	Note     string
-	Tier     string
-	Summary  string
-}
-
-// RoleMenus carries a menu per role. Empty menus on a role mean "no
-// allowed options"; in practice the loop fills defaults before binding
-// so this is non-empty for every role at runtime.
-type RoleMenus struct {
-	Planner  RoleMenu
-	Briefer  RoleMenu
-	Executor RoleMenu
-	Reviewer RoleMenu
-}
+// Type aliases re-export the supervision types under the menu namespace.
+type (
+	RoleMenu   = supervision.RoleMenu
+	MenuOption = supervision.MenuOption
+	RoleMenus  = supervision.RoleMenus
+)
 
 // FillPlanFromMenus stamps default RoleAssignments onto every Phase
 // where the Planner left one nil, drawing the values from the
@@ -54,7 +30,7 @@ type RoleMenus struct {
 // plan with empty statuses would fail.
 //
 // Mutates plan in place. Safe to call with a nil plan (no-op).
-func FillPlanFromMenus(plan *Plan, menus RoleMenus) {
+func FillPlanFromMenus(plan *supervision.Plan, menus RoleMenus) {
 	if plan == nil {
 		return
 	}
@@ -78,18 +54,18 @@ func FillPlanFromMenus(plan *Plan, menus RoleMenus) {
 		for k := range ph.Tasks {
 			t := &ph.Tasks[k]
 			if t.Status == "" {
-				t.Status = TaskPending
+				t.Status = supervision.TaskPending
 			}
 		}
 	}
 }
 
-func defaultAssignment(menu RoleMenu) (RoleAssignment, bool) {
+func defaultAssignment(menu RoleMenu) (supervision.RoleAssignment, bool) {
 	if len(menu.Options) == 0 {
-		return RoleAssignment{}, false
+		return supervision.RoleAssignment{}, false
 	}
 	opt := menu.Options[0]
-	a := RoleAssignment{Provider: opt.Provider, Model: opt.Model}
+	a := supervision.RoleAssignment{Provider: opt.Provider, Model: opt.Model}
 	if len(opt.Efforts) > 0 {
 		a.Effort = opt.Efforts[0]
 	}
@@ -105,7 +81,7 @@ func defaultAssignment(menu RoleMenu) (RoleAssignment, bool) {
 // menus on a role with no assignments are accepted (no work to
 // validate); a non-nil assignment whose role has an empty menu is
 // rejected.
-func ValidatePlanAgainstMenus(plan *Plan, menus RoleMenus) error {
+func ValidatePlanAgainstMenus(plan *supervision.Plan, menus RoleMenus) error {
 	if plan == nil {
 		return nil
 	}
@@ -123,7 +99,7 @@ func ValidatePlanAgainstMenus(plan *Plan, menus RoleMenus) error {
 	return nil
 }
 
-func checkAssignmentAgainstMenu(role, phaseID string, a *RoleAssignment, menu RoleMenu) error {
+func checkAssignmentAgainstMenu(role, phaseID string, a *supervision.RoleAssignment, menu RoleMenu) error {
 	if a == nil {
 		return nil
 	}
