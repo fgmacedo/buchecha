@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // seedBriefing mirrors internal/services.seedBriefing: writes the
@@ -41,18 +41,18 @@ func seedBriefing(t *testing.T, sessionDir, iterationID, phaseID, markdown strin
 	}
 }
 
-func briefingsServer(t *testing.T) (*httptest.Server, director.Session) {
+func briefingsServer(t *testing.T) (*httptest.Server, supervision.Session) {
 	t.Helper()
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := director.Session{
+	sess := supervision.Session{
 		ID:        "abcdef011111",
 		SpecPath:  "/spec/p.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    director.SessionRunning,
+		Status:    supervision.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
 	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)

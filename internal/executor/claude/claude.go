@@ -29,10 +29,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/executor/claude/streamjson"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // stderrCaptureBytes caps how much of claude's stderr the adapter
@@ -159,7 +159,7 @@ type Config struct {
 	// SessionStore, when non-nil, is used to derive the spawns directory
 	// for per-spawn prompt persistence. When nil, prompt persistence and
 	// SpawnStarted emission are skipped.
-	SessionStore *director.Store
+	SessionStore *supervision.Store
 
 	// Events, when non-nil, receives loop-level events emitted by the
 	// adapter (SpawnStarted). The adapter never closes this channel; the
@@ -213,7 +213,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	// MCP wiring: when the run boot supplied an MCP URL, write a
 	// per-spawn mcp-config pointing the agent at it with the role's
 	// connection name carried via the X-BCC-Role header. The handler
-	// (internal/director/dag) is the protocol of record; the
+	// (internal/supervision/dag) is the protocol of record; the
 	// stream-json tool_use parser below stays in place for the TUI.
 	if e.cfg.MCPURL != "" {
 		path, cleanup, err := writeMCPConfig(e.cfg.MCPURL, e.cfg.MCPToken, e.cfg.MCPConnectionName)
@@ -279,7 +279,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	// starts so observers know exactly what each executor spawn received.
 	var spawnID string
 	if e.cfg.SessionStore != nil {
-		spawnID = director.NewSpawnID()
+		spawnID = supervision.NewSpawnID()
 		promptPath := filepath.Join(e.cfg.SessionStore.SpawnsDir(), spawnID+".md")
 		if mkdirErr := os.MkdirAll(filepath.Dir(promptPath), 0o755); mkdirErr != nil {
 			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("executor/claude: mkdir spawns: %w", mkdirErr)

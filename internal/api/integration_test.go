@@ -35,10 +35,10 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // integrationFixture aggregates the moving parts a full V1 sweep
@@ -50,8 +50,8 @@ import (
 // case starts from a clean temp dir.
 type integrationFixture struct {
 	srv      *httptest.Server
-	live     director.Session
-	archived director.Session
+	live     supervision.Session
+	archived supervision.Session
 	events   chan loop.Event
 	svc      *services.Services
 	schemas  map[string]*jsonschema.Schema
@@ -71,21 +71,21 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
 
-	archived := director.Session{
+	archived := supervision.Session{
 		ID:        "abcdef0010ab",
 		SpecPath:  "/spec/archived.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-2 * time.Hour),
 		UpdatedAt: now.Add(-1 * time.Hour),
-		Status:    director.SessionDone,
+		Status:    supervision.SessionDone,
 	}
-	live := director.Session{
+	live := supervision.Session{
 		ID:        "abcdef0011ab",
 		SpecPath:  "/spec/live.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-30 * time.Minute),
 		UpdatedAt: now.Add(-20 * time.Minute),
-		Status:    director.SessionRunning,
+		Status:    supervision.SessionRunning,
 	}
 	writeManifest(t, baseDir, archived)
 	writeManifest(t, baseDir, live)
@@ -95,7 +95,7 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	// dag.schema.json (which forbids a top-level null when phases
 	// is required by the embedded snapshot schema's archived row).
 	archState := dag.NewStateFromPlan(integrationPlan())
-	if err := archState.SetTaskStatus("P1", "T1", director.TaskDone); err != nil {
+	if err := archState.SetTaskStatus("P1", "T1", supervision.TaskDone); err != nil {
 		t.Fatalf("SetTaskStatus: %v", err)
 	}
 	archDAGPath := filepath.Join(baseDir, "sessions", archived.ID, "dag.json")
@@ -105,7 +105,7 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 
 	// Seed briefings and prompts under the archived session so the
 	// briefings/prompts read-only paths have a fixture to land on
-	// without depending on a live director.Store.
+	// without depending on a live supervision.Store.
 	archSessionDir := filepath.Join(baseDir, "sessions", archived.ID)
 	seedBriefingFile(t, archSessionDir, "P1-001", "P1", "# briefing for P1 attempt 1\n", -2*time.Second)
 	seedPromptFile(t, archSessionDir, "planner", "# planner prompt\n")
@@ -113,9 +113,9 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	seedPromptFile(t, archSessionDir, "executor", "# executor prompt\n")
 	seedPromptFile(t, archSessionDir, "reviewer", "# reviewer prompt\n")
 
-	// Live session: open a real director.Store and bind a Handler so
+	// Live session: open a real supervision.Store and bind a Handler so
 	// the live snapshot path returns a populated DAG.
-	store, err := director.OpenSession(baseDir, live.ID)
+	store, err := supervision.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}
@@ -150,20 +150,20 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 // integrationPlan returns the smallest valid plan the dag layer
 // accepts: one phase, one task, one acceptance row. Tests do not
 // inspect the plan's fields; they only need a populated DAG.
-func integrationPlan() *director.Plan {
-	return &director.Plan{
+func integrationPlan() *supervision.Plan {
+	return &supervision.Plan{
 		Goal:     "integration",
 		SpecHash: "deadbeef",
-		Phases: []director.Phase{{
+		Phases: []supervision.Phase{{
 			ID:     "P1",
 			Title:  "phase",
 			Intent: "intent",
-			Tasks: []director.Task{{
+			Tasks: []supervision.Task{{
 				ID:         "T1",
 				Title:      "task",
 				Intent:     "intent",
-				Acceptance: []director.AcceptanceItem{{ID: "A1", Description: "d", Evidence: "diff"}},
-				Status:     director.TaskPending,
+				Acceptance: []supervision.AcceptanceItem{{ID: "A1", Description: "d", Evidence: "diff"}},
+				Status:     supervision.TaskPending,
 			}},
 		}},
 	}
@@ -236,7 +236,7 @@ func validateBytes(t *testing.T, fixt *integrationFixture, name string, body []b
 // writeManifest mirrors the helper in internal/api/handlers/sessions_test.go.
 // Copied verbatim so the integration suite stays inside its own
 // package without depending on test code in another module.
-func writeManifest(t *testing.T, baseDir string, sess director.Session) {
+func writeManifest(t *testing.T, baseDir string, sess supervision.Session) {
 	t.Helper()
 	dir := filepath.Join(baseDir, "sessions", sess.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

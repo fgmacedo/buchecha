@@ -11,8 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
 
@@ -79,7 +79,7 @@ func runDev(ctx context.Context, sessionID string) error {
 		}
 	}
 	baseDir := ".bcc"
-	store, err := director.OpenSession(baseDir, sessionID)
+	store, err := supervision.OpenSession(baseDir, sessionID)
 	if err != nil {
 		ExitCode = 1
 		return fmt.Errorf("dev: open session %q: %w", sessionID, err)

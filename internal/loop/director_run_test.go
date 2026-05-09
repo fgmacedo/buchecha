@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 func TestFormatExecutorCrash(t *testing.T) {
@@ -79,25 +79,25 @@ func TestFormatExecutorCrash(t *testing.T) {
 }
 
 func TestTaskEventBridge_TranslatesTaskMethods(t *testing.T) {
-	plan := &director.Plan{
+	plan := &supervision.Plan{
 		Goal: "bridge test",
-		Phases: []director.Phase{{
+		Phases: []supervision.Phase{{
 			ID: "P1", Title: "p1", Intent: "p1",
-			Tasks: []director.Task{
+			Tasks: []supervision.Task{
 				{
 					ID: "t1", Title: "task one", Intent: "intent",
-					Acceptance: []director.AcceptanceItem{
-						{ID: "a1", Description: "d", Evidence: director.EvidenceTest},
+					Acceptance: []supervision.AcceptanceItem{
+						{ID: "a1", Description: "d", Evidence: supervision.EvidenceTest},
 					},
-					Status:      director.TaskPending,
+					Status:      supervision.TaskPending,
 					RetryBudget: 1,
 				},
 				{
 					ID: "t2", Title: "task two", Intent: "intent",
-					Acceptance: []director.AcceptanceItem{
-						{ID: "a1", Description: "d", Evidence: director.EvidenceTest},
+					Acceptance: []supervision.AcceptanceItem{
+						{ID: "a1", Description: "d", Evidence: supervision.EvidenceTest},
 					},
-					Status:      director.TaskPending,
+					Status:      supervision.TaskPending,
 					RetryBudget: 1,
 				},
 			},
@@ -176,9 +176,9 @@ func TestTaskEventBridge_TranslatesTaskMethods(t *testing.T) {
 // rule: the iteration-level budget is the highest retry_budget across
 // the sub-DAG. Returns 0 when no task in subDAG has a budget.
 func TestMaxRetryBudget_TakesPerTaskMaximum(t *testing.T) {
-	phase := &director.Phase{
+	phase := &supervision.Phase{
 		ID: "P1",
-		Tasks: []director.Task{
+		Tasks: []supervision.Task{
 			{ID: "t1", RetryBudget: 1},
 			{ID: "t2", RetryBudget: 3},
 			{ID: "t3", RetryBudget: 0},
@@ -209,9 +209,9 @@ func TestMaxRetryBudget_TakesPerTaskMaximum(t *testing.T) {
 // shrink Config.Director.RetryBudget. Per-task values higher than the
 // floor still win.
 func TestEffectiveRetryBudget_ConfigFloorWins(t *testing.T) {
-	phase := &director.Phase{
+	phase := &supervision.Phase{
 		ID: "P1",
-		Tasks: []director.Task{
+		Tasks: []supervision.Task{
 			{ID: "t1", RetryBudget: 1},
 			{ID: "t2", RetryBudget: 4},
 			{ID: "t3", RetryBudget: 0},

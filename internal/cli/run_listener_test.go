@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/mcp"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // TestStartRunListener_MountsMCPAtMcpPrefix asserts the run-wide

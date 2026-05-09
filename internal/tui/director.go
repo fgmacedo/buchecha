@@ -9,8 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // escalationState is the modal sub-state machine: while latched, the
@@ -68,14 +68,14 @@ func (m *Model) SignalPlanFailed(message string) {
 // dashboard renders the plan tree without waiting for the loop's first
 // PhasePlanned event.
 type planReadyMsg struct {
-	plan *director.Plan
+	plan *supervision.Plan
 }
 
 // SignalPlanReady tells the Model the Planner returned a plan. The
 // dashboard latches the tree onto the director panel and clears the
 // planning placeholder; no confirmation is gated, the loop starts
 // right after.
-func (m *Model) SignalPlanReady(plan *director.Plan) {
+func (m *Model) SignalPlanReady(plan *supervision.Plan) {
 	if m.program == nil {
 		return
 	}
@@ -91,7 +91,7 @@ func (m *Model) SignalPlanReady(plan *director.Plan) {
 // The panel is hidden when the run is not Director-driven (plan == nil),
 // keeping the MVP layout intact for the legacy path.
 type directorPanel struct {
-	plan             *director.Plan
+	plan             *supervision.Plan
 	currentPhaseID   string
 	currentIteration int
 	currentAttempt   int
@@ -185,7 +185,7 @@ func (m phaseMark) glyph() string {
 // onPhasePlanned latches the confirmed Plan and resets the per-phase
 // status map. The plan pointer is shared read-only with the loop; the
 // panel never mutates it.
-func (d *directorPanel) onPhasePlanned(p *director.Plan) {
+func (d *directorPanel) onPhasePlanned(p *supervision.Plan) {
 	d.plan = p
 	d.phaseStatus = make(map[string]phaseMark, len(p.Phases))
 	d.currentPhaseID = ""
@@ -258,7 +258,7 @@ func isPseudoTaskID(id string) bool {
 // cursor at it. iteration is the 1-based index of this brief→execute→
 // review cycle within the phase; the executor retry counter is tracked
 // separately and updated by onPhaseReviewed.
-func (d *directorPanel) onPhaseBriefed(phaseID string, iteration int, b *director.Briefing, cap phaseCapability) {
+func (d *directorPanel) onPhaseBriefed(phaseID string, iteration int, b *supervision.Briefing, cap phaseCapability) {
 	if d.phaseStatus == nil {
 		d.phaseStatus = map[string]phaseMark{}
 	}
@@ -325,7 +325,7 @@ func (d *directorPanel) onEscalation(phaseID string, attempt int, reasoning stri
 // onCost folds an executor result-summary cost into the running total.
 // Director-call costs (planner / briefer / reviewer) are not currently
 // surfaced as events; the panel treats per-iteration executor cost as
-// the live cumulative total. A future event for DirectorCallStats can
+// the live cumulative total. A future event for SpawnStats can
 // flow into the same accumulator without a render-side change.
 func (d *directorPanel) onCost(usd float64) {
 	d.cumulativeCost += usd

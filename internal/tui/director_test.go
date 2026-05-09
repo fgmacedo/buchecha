@@ -8,15 +8,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
-func samplePlan() *director.Plan {
-	return &director.Plan{
+func samplePlan() *supervision.Plan {
+	return &supervision.Plan{
 		Goal:     "ship the director TUI panel",
 		SpecHash: "abc123",
-		Phases: []director.Phase{
+		Phases: []supervision.Phase{
 			{ID: "p1", Title: "Domain types"},
 			{ID: "p2", Title: "Adapter scaffold"},
 			{ID: "p3", Title: "TUI panel"},
@@ -64,7 +64,7 @@ func TestCapabilityBadge(t *testing.T) {
 func TestDirectorPanel_PhaseBriefed_RendersCapabilityBadge(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-1", PhaseID: "p1"}, phaseCapability{
+	d.onPhaseBriefed("p1", 1, &supervision.Briefing{IterationID: "p1-1", PhaseID: "p1"}, phaseCapability{
 		ExecutorModel:  "claude-opus-4-7",
 		ExecutorEffort: "high",
 		BrieferSkipped: true,
@@ -97,7 +97,7 @@ func TestDirectorPanel_FreshPlan_RendersChecklist(t *testing.T) {
 func TestDirectorPanel_PhaseInProgress_HighlightsActive(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-1", PhaseID: "p1"}, phaseCapability{})
+	d.onPhaseBriefed("p1", 1, &supervision.Briefing{IterationID: "p1-1", PhaseID: "p1"}, phaseCapability{})
 	if d.currentPhaseID != "p1" {
 		t.Errorf("currentPhaseID = %q, want p1", d.currentPhaseID)
 	}
@@ -113,8 +113,8 @@ func TestDirectorPanel_PhaseInProgress_HighlightsActive(t *testing.T) {
 func TestDirectorPanel_PhaseBriefed_SecondIterationRendersIter2(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-01", PhaseID: "p1"}, phaseCapability{})
-	d.onPhaseBriefed("p1", 2, &director.Briefing{IterationID: "p1-02", PhaseID: "p1"}, phaseCapability{})
+	d.onPhaseBriefed("p1", 1, &supervision.Briefing{IterationID: "p1-01", PhaseID: "p1"}, phaseCapability{})
+	d.onPhaseBriefed("p1", 2, &supervision.Briefing{IterationID: "p1-02", PhaseID: "p1"}, phaseCapability{})
 	if d.currentIteration != 2 || d.currentAttempt != 0 {
 		t.Errorf("after second brief: iteration=%d attempt=%d, want 2/0",
 			d.currentIteration, d.currentAttempt)
@@ -128,7 +128,7 @@ func TestDirectorPanel_PhaseBriefed_SecondIterationRendersIter2(t *testing.T) {
 func TestDirectorPanel_PhaseReviewed_AfterBriefShowsIterAndAttempt(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p1", 1, &director.Briefing{IterationID: "p1-01", PhaseID: "p1"}, phaseCapability{})
+	d.onPhaseBriefed("p1", 1, &supervision.Briefing{IterationID: "p1-01", PhaseID: "p1"}, phaseCapability{})
 	d.onPhaseReviewed("p1", 2, "revise")
 	out := d.view(80)
 	if !strings.Contains(out, "iter 1 · attempt 2") {
@@ -216,7 +216,7 @@ func TestDirectorPanel_PlanningTrack_RendersFirstEntry(t *testing.T) {
 func TestDirectorPanel_SubDAGHighlight_RendersUnderActivePhase(t *testing.T) {
 	d := directorPanel{}
 	d.onPhasePlanned(samplePlan())
-	d.onPhaseBriefed("p2", 1, &director.Briefing{
+	d.onPhaseBriefed("p2", 1, &supervision.Briefing{
 		IterationID:   "p2-1",
 		PhaseID:       "p2",
 		SubDAGTaskIDs: []string{"p2.t1", "p2.t2"},
@@ -229,7 +229,7 @@ func TestDirectorPanel_SubDAGHighlight_RendersUnderActivePhase(t *testing.T) {
 	}
 
 	// Switching the active phase to one without sub-DAG drops the rows.
-	d.onPhaseBriefed("p3", 1, &director.Briefing{
+	d.onPhaseBriefed("p3", 1, &supervision.Briefing{
 		IterationID:   "p3-1",
 		PhaseID:       "p3",
 		SubDAGTaskIDs: nil,
@@ -289,7 +289,7 @@ func TestUpdate_DirectorEventsFlowToPanel(t *testing.T) {
 
 	got, _ = mm.Update(eventMsg{ev: loop.PhaseBriefed{
 		PhaseID: "p1", Iteration: 1,
-		Briefing: &director.Briefing{IterationID: "p1-1", PhaseID: "p1"},
+		Briefing: &supervision.Briefing{IterationID: "p1-1", PhaseID: "p1"},
 		At:       at.Add(time.Second),
 	}})
 	mm = got.(Model)
@@ -325,7 +325,7 @@ func TestUpdate_AgentResultSummary_FoldsCostIntoDirectorPanel(t *testing.T) {
 	}}})
 	mm := got.(Model)
 	if mm.director.cumulativeCost < 0.41 || mm.director.cumulativeCost > 0.43 {
-		t.Errorf("director.cumulativeCost = %f, want ~0.42", mm.director.cumulativeCost)
+		t.Errorf("supervision.cumulativeCost = %f, want ~0.42", mm.director.cumulativeCost)
 	}
 }
 

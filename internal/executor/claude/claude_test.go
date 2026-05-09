@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -387,12 +387,12 @@ func TestRun_StreamsEventsFromFixture(t *testing.T) {
 	}
 }
 
-// newTestStore creates a fresh director.Store for tests that need prompt
+// newTestStore creates a fresh supervision.Store for tests that need prompt
 // persistence. Store is rooted in t.TempDir() so cleanup is automatic.
-func newTestStore(t *testing.T) *director.Store {
+func newTestStore(t *testing.T) *supervision.Store {
 	t.Helper()
 	base := t.TempDir()
-	store, _, err := director.CreateSession(base, "/tmp/spec.md", "deadbeef",
+	store, _, err := supervision.CreateSession(base, "/tmp/spec.md", "deadbeef",
 		time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

@@ -12,36 +12,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
-	"github.com/fgmacedo/buchecha/internal/director/fake"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/fake"
 )
 
 // directorTestPlan returns a small but representative two-phase Plan
 // with explicit RetryBudgets: phase-1 allows two retries, phase-2 one.
-func directorTestPlan() *director.Plan {
-	return &director.Plan{
+func directorTestPlan() *supervision.Plan {
+	return &supervision.Plan{
 		Goal: "Director loop coverage",
 		SuccessCriteria: []string{
 			"phases run sequentially",
 			"per-task DAG state drives the loop",
 		},
-		Phases: []director.Phase{
+		Phases: []supervision.Phase{
 			{
 				ID:     "phase-1",
 				Title:  "First",
 				Intent: "do thing 1",
-				Tasks: []director.Task{
+				Tasks: []supervision.Task{
 					{
 						ID:     "t1",
 						Title:  "build",
 						Intent: "compiles",
-						Acceptance: []director.AcceptanceItem{
-							{ID: "a1", Description: "compiles", Evidence: director.EvidenceBuild},
+						Acceptance: []supervision.AcceptanceItem{
+							{ID: "a1", Description: "compiles", Evidence: supervision.EvidenceBuild},
 						},
-						Status:      director.TaskPending,
+						Status:      supervision.TaskPending,
 						RetryBudget: 2,
 					},
 				},
@@ -51,15 +51,15 @@ func directorTestPlan() *director.Plan {
 				Title:     "Second",
 				Intent:    "do thing 2",
 				DependsOn: []string{"phase-1"},
-				Tasks: []director.Task{
+				Tasks: []supervision.Task{
 					{
 						ID:     "t1",
 						Title:  "test",
 						Intent: "tests pass",
-						Acceptance: []director.AcceptanceItem{
-							{ID: "a2", Description: "tests pass", Evidence: director.EvidenceTest},
+						Acceptance: []supervision.AcceptanceItem{
+							{ID: "a2", Description: "tests pass", Evidence: supervision.EvidenceTest},
 						},
-						Status:      director.TaskPending,
+						Status:      supervision.TaskPending,
 						RetryBudget: 1,
 					},
 				},
@@ -151,8 +151,8 @@ func (e *directorFakeExec) Run(ctx context.Context, _ string, events chan<- agen
 	return loop.ExecResult{ExitCode: 0}, nil
 }
 
-func directorNewExecutor(h *dag.Handler, signal agentcontract.Signal, runs *directorFakeRuns) func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
-	return func(args dag.RegisterArgs, renderSystem func(string) (string, error), _ *director.RoleAssignment) loop.Executor {
+func directorNewExecutor(h *dag.Handler, signal agentcontract.Signal, runs *directorFakeRuns) func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(string) (string, error), _ *supervision.RoleAssignment) loop.Executor {
 		if renderSystem != nil {
 			if _, err := renderSystem("integration-executor-agent"); err != nil {
 				return &failingDirectorExec{err: err}
@@ -175,10 +175,10 @@ func (e *failingDirectorExec) Run(_ context.Context, _ string, _ chan<- agentcon
 // briefingEmitter wires a fake.Briefer that emits a Briefing for the
 // loop's iteration via handler.HandleCall, mirroring what the production
 // claude adapter would do over MCP.
-func briefingEmitter(t *testing.T, h *dag.Handler) director.Briefer {
+func briefingEmitter(t *testing.T, h *dag.Handler) supervision.Briefer {
 	t.Helper()
 	return &fake.Briefer{
-		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		BriefFn: func(ctx context.Context, in supervision.BrieferInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			ids := make([]any, len(in.SubDAGTaskIDs))
 			for i, s := range in.SubDAGTaskIDs {
 				ids[i] = s
@@ -196,17 +196,17 @@ func briefingEmitter(t *testing.T, h *dag.Handler) director.Briefer {
 			if _, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input); err != nil {
 				return nil, err
 			}
-			return &director.DirectorCallStats{}, nil
+			return &supervision.SpawnStats{}, nil
 		},
 	}
 }
 
 // approvingReviewer marks every sub-DAG task done and finalises with
 // outcome=approve.
-func approvingReviewer(t *testing.T, h *dag.Handler) director.Reviewer {
+func approvingReviewer(t *testing.T, h *dag.Handler) supervision.Reviewer {
 	t.Helper()
 	return &fake.Reviewer{
-		ReviewFn: func(ctx context.Context, in director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		ReviewFn: func(ctx context.Context, in supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			for _, tid := range in.SubDAG {
 				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
 					"agent_id": in.AgentID,
@@ -220,17 +220,17 @@ func approvingReviewer(t *testing.T, h *dag.Handler) director.Reviewer {
 				"outcome":   "approve",
 				"reasoning": "ok",
 			})
-			return &director.DirectorCallStats{}, err
+			return &supervision.SpawnStats{}, err
 		},
 	}
 }
 
 // alwaysReviseReviewer marks every sub-DAG task needs_fix and finalises
 // with outcome=revise.
-func alwaysReviseReviewer(t *testing.T, h *dag.Handler) director.Reviewer {
+func alwaysReviseReviewer(t *testing.T, h *dag.Handler) supervision.Reviewer {
 	t.Helper()
 	return &fake.Reviewer{
-		ReviewFn: func(ctx context.Context, in director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		ReviewFn: func(ctx context.Context, in supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			for _, tid := range in.SubDAG {
 				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskNeedsFix, map[string]any{
 					"agent_id": in.AgentID,
@@ -245,7 +245,7 @@ func alwaysReviseReviewer(t *testing.T, h *dag.Handler) director.Reviewer {
 				"outcome":   "revise",
 				"reasoning": "still not right",
 			})
-			return &director.DirectorCallStats{}, err
+			return &supervision.SpawnStats{}, err
 		},
 	}
 }
@@ -260,9 +260,9 @@ func directorTestSpec(t *testing.T, dir string) string {
 	return specPath
 }
 
-func directorTestStore(t *testing.T, tmp, specPath string) *director.Store {
+func directorTestStore(t *testing.T, tmp, specPath string) *supervision.Store {
 	t.Helper()
-	store, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	store, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -271,7 +271,7 @@ func directorTestStore(t *testing.T, tmp, specPath string) *director.Store {
 
 // directorTestHandler returns a handler bound to a fresh state derived
 // from plan, with no audit/persister wired (tests don't need them).
-func directorTestHandler(plan *director.Plan) *dag.Handler {
+func directorTestHandler(plan *supervision.Plan) *dag.Handler {
 	state := dag.NewStateFromPlan(plan)
 	registry := dag.NewAgentRegistry(nil)
 	h := dag.NewHandler(state, registry)
@@ -454,7 +454,7 @@ func TestDirectorIntegration_BlockedSignal(t *testing.T) {
 	h := directorTestHandler(plan)
 	reviewerCalls := 0
 	reviewer := &fake.Reviewer{
-		ReviewFn: func(_ context.Context, _ director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		ReviewFn: func(_ context.Context, _ supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			reviewerCalls++
 			return nil, errors.New("reviewer must not be called when executor blocks")
 		},
@@ -492,8 +492,8 @@ func TestDirectorIntegration_SessionLifecycle_RunningAtStart(t *testing.T) {
 	tmp := t.TempDir()
 	specPath := directorTestSpec(t, tmp)
 	store := directorTestStore(t, tmp, specPath)
-	if got := store.Session().Status; got != director.SessionRunning {
-		t.Errorf("freshly created session status = %q, want %q", got, director.SessionRunning)
+	if got := store.Session().Status; got != supervision.SessionRunning {
+		t.Errorf("freshly created session status = %q, want %q", got, supervision.SessionRunning)
 	}
 }
 
@@ -515,13 +515,13 @@ func TestDirectorIntegration_SessionLifecycle_EscalationMarksPending(t *testing.
 	runsCounter := &directorFakeRuns{}
 
 	gate := make(chan loop.EscalationReply, 1)
-	observed := make(chan director.SessionStatus, 1)
+	observed := make(chan supervision.SessionStatus, 1)
 	probeDone := make(chan struct{})
 	go func() {
 		defer close(probeDone)
 		for {
-			reopened, err := director.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
-			if err == nil && reopened.Session().Status == director.SessionEscalatedPending {
+			reopened, err := supervision.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+			if err == nil && reopened.Session().Status == supervision.SessionEscalatedPending {
 				observed <- reopened.Session().Status
 				gate <- loop.EscalationReply{Kind: loop.EscalationAbort}
 				return
@@ -556,8 +556,8 @@ func TestDirectorIntegration_SessionLifecycle_EscalationMarksPending(t *testing.
 	}
 	select {
 	case got := <-observed:
-		if got != director.SessionEscalatedPending {
-			t.Fatalf("observed status = %q, want %q", got, director.SessionEscalatedPending)
+		if got != supervision.SessionEscalatedPending {
+			t.Fatalf("observed status = %q, want %q", got, supervision.SessionEscalatedPending)
 		}
 	default:
 		t.Fatal("session status was never observed as escalated_pending")
@@ -573,16 +573,16 @@ func TestDirectorIntegration_EscalateResumeWithHint(t *testing.T) {
 	tmp := t.TempDir()
 	specPath := directorTestSpec(t, tmp)
 	store := directorTestStore(t, tmp, specPath)
-	plan := &director.Plan{
+	plan := &supervision.Plan{
 		Goal: "hint propagation",
-		Phases: []director.Phase{{
+		Phases: []supervision.Phase{{
 			ID: "phase-1", Title: "First", Intent: "do thing 1",
-			Tasks: []director.Task{{
+			Tasks: []supervision.Task{{
 				ID: "t1", Title: "build", Intent: "compiles",
-				Acceptance: []director.AcceptanceItem{
-					{ID: "a1", Description: "compiles", Evidence: director.EvidenceBuild},
+				Acceptance: []supervision.AcceptanceItem{
+					{ID: "a1", Description: "compiles", Evidence: supervision.EvidenceBuild},
 				},
-				Status:      director.TaskPending,
+				Status:      supervision.TaskPending,
 				RetryBudget: 0,
 			}},
 		}},
@@ -598,7 +598,7 @@ func TestDirectorIntegration_EscalateResumeWithHint(t *testing.T) {
 
 	outerIter := 0
 	reviewer := &fake.Reviewer{
-		ReviewFn: func(ctx context.Context, in director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		ReviewFn: func(ctx context.Context, in supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			outerIter++
 			if outerIter < 2 {
 				for _, tid := range in.SubDAG {
@@ -611,7 +611,7 @@ func TestDirectorIntegration_EscalateResumeWithHint(t *testing.T) {
 				_, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodReviewFinished, map[string]any{
 					"agent_id": in.AgentID, "outcome": "revise", "reasoning": "no",
 				})
-				return &director.DirectorCallStats{}, err
+				return &supervision.SpawnStats{}, err
 			}
 			for _, tid := range in.SubDAG {
 				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
@@ -623,7 +623,7 @@ func TestDirectorIntegration_EscalateResumeWithHint(t *testing.T) {
 			_, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodReviewFinished, map[string]any{
 				"agent_id": in.AgentID, "outcome": "approve", "reasoning": "ok",
 			})
-			return &director.DirectorCallStats{}, err
+			return &supervision.SpawnStats{}, err
 		},
 	}
 
@@ -683,16 +683,16 @@ func TestDirectorIntegration_EscalateForceApprove(t *testing.T) {
 	tmp := t.TempDir()
 	specPath := directorTestSpec(t, tmp)
 	store := directorTestStore(t, tmp, specPath)
-	plan := &director.Plan{
+	plan := &supervision.Plan{
 		Goal: "force approve last iter",
-		Phases: []director.Phase{{
+		Phases: []supervision.Phase{{
 			ID: "phase-1", Title: "First", Intent: "do thing 1",
-			Tasks: []director.Task{{
+			Tasks: []supervision.Task{{
 				ID: "t1", Title: "build", Intent: "compiles",
-				Acceptance: []director.AcceptanceItem{
-					{ID: "a1", Description: "compiles", Evidence: director.EvidenceBuild},
+				Acceptance: []supervision.AcceptanceItem{
+					{ID: "a1", Description: "compiles", Evidence: supervision.EvidenceBuild},
 				},
-				Status:      director.TaskPending,
+				Status:      supervision.TaskPending,
 				RetryBudget: 0,
 			}},
 		}},
@@ -731,7 +731,7 @@ func TestDirectorIntegration_EscalateForceApprove(t *testing.T) {
 	state := h.State()
 	for _, tid := range []dag.TaskID{"t1"} {
 		stats := state.SubDAGStatuses("phase-1", []dag.TaskID{tid})
-		if got := stats[tid]; got != director.TaskDone {
+		if got := stats[tid]; got != supervision.TaskDone {
 			t.Errorf("task %s status = %q, want done", tid, got)
 		}
 	}
@@ -763,8 +763,8 @@ func TestDirectorIntegration_SilentReviewerEscalatesImmediately(t *testing.T) {
 	// silent: returns without calling any MCP method, in particular
 	// without bcc_review_finished, leaving the iteration outcome empty.
 	silent := &fake.Reviewer{
-		ReviewFn: func(_ context.Context, _ director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
-			return &director.DirectorCallStats{}, nil
+		ReviewFn: func(_ context.Context, _ supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
+			return &supervision.SpawnStats{}, nil
 		},
 	}
 	cr := &countingReviewer{inner: silent}
@@ -836,10 +836,10 @@ func equalStrings(a, b []string) bool {
 type countingBriefer struct {
 	calls int
 	mu    sync.Mutex
-	inner director.Briefer
+	inner supervision.Briefer
 }
 
-func (b *countingBriefer) Brief(ctx context.Context, in director.BrieferInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+func (b *countingBriefer) Brief(ctx context.Context, in supervision.BrieferInput, events chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 	b.mu.Lock()
 	b.calls++
 	b.mu.Unlock()
@@ -857,10 +857,10 @@ func (b *countingBriefer) callCount() int {
 type countingReviewer struct {
 	calls int
 	mu    sync.Mutex
-	inner director.Reviewer
+	inner supervision.Reviewer
 }
 
-func (r *countingReviewer) Review(ctx context.Context, in director.ReviewerInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+func (r *countingReviewer) Review(ctx context.Context, in supervision.ReviewerInput, events chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
@@ -939,11 +939,11 @@ func TestDirectorIntegration_PreparedBriefingSkipsBriefer(t *testing.T) {
 	store := directorTestStore(t, tmp, specPath)
 	plan := directorTestPlan()
 	plan.SpecHash = "deadbeef"
-	plan.Phases[0].PreparedBriefing = &director.PreparedBriefing{
+	plan.Phases[0].PreparedBriefing = &supervision.PreparedBriefing{
 		SubDAGTaskIDs: []string{"t1"},
 		Instructions:  "ship it",
 	}
-	plan.Phases[1].PreparedBriefing = &director.PreparedBriefing{
+	plan.Phases[1].PreparedBriefing = &supervision.PreparedBriefing{
 		SubDAGTaskIDs: []string{"t1"},
 		Instructions:  "ship it again",
 	}
@@ -1008,10 +1008,10 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 
 	h := directorTestHandler(plan)
 	statsPath := filepath.Join(t.TempDir(), "stats.jsonl")
-	statsLog := director.NewStatsLog(statsPath)
+	statsLog := supervision.NewStatsLog(statsPath)
 
 	statsBriefer := &fake.Briefer{
-		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		BriefFn: func(ctx context.Context, in supervision.BrieferInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			ids := make([]any, len(in.SubDAGTaskIDs))
 			for i, s := range in.SubDAGTaskIDs {
 				ids[i] = s
@@ -1029,14 +1029,14 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 			if _, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input); err != nil {
 				return nil, err
 			}
-			return &director.DirectorCallStats{
+			return &supervision.SpawnStats{
 				DurationMS: 800, CostUSD: 0.012,
 				InputTokens: 900, OutputTokens: 400,
 			}, nil
 		},
 	}
 	statsReviewer := &fake.Reviewer{
-		ReviewFn: func(ctx context.Context, in director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		ReviewFn: func(ctx context.Context, in supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			for _, tid := range in.SubDAG {
 				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
 					"agent_id": in.AgentID, "id": tid,
@@ -1049,7 +1049,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 			}); err != nil {
 				return nil, err
 			}
-			return &director.DirectorCallStats{
+			return &supervision.SpawnStats{
 				DurationMS: 1200, CostUSD: 0.022,
 				InputTokens: 1400, OutputTokens: 700,
 			}, nil
@@ -1092,7 +1092,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		var e director.StatsEntry
+		var e supervision.StatsEntry
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			t.Fatalf("unmarshal stats line %q: %v", line, err)
 		}
@@ -1127,20 +1127,20 @@ func TestDirectorIntegration_PhaseSubDAGSequence(t *testing.T) {
 	tmp := t.TempDir()
 	specPath := directorTestSpec(t, tmp)
 	store := directorTestStore(t, tmp, specPath)
-	plan := &director.Plan{
+	plan := &supervision.Plan{
 		Goal:     "subset coverage",
 		SpecHash: "deadbeef",
-		Phases: []director.Phase{{
+		Phases: []supervision.Phase{{
 			ID: "phase-1", Title: "First", Intent: "do thing",
-			Tasks: []director.Task{
-				{ID: "t1", Title: "a", Intent: "a", Status: director.TaskPending,
-					Acceptance:  []director.AcceptanceItem{{ID: "a1", Description: "a", Evidence: director.EvidenceBuild}},
+			Tasks: []supervision.Task{
+				{ID: "t1", Title: "a", Intent: "a", Status: supervision.TaskPending,
+					Acceptance:  []supervision.AcceptanceItem{{ID: "a1", Description: "a", Evidence: supervision.EvidenceBuild}},
 					RetryBudget: 2},
-				{ID: "t2", Title: "b", Intent: "b", Status: director.TaskPending,
-					Acceptance:  []director.AcceptanceItem{{ID: "a2", Description: "b", Evidence: director.EvidenceBuild}},
+				{ID: "t2", Title: "b", Intent: "b", Status: supervision.TaskPending,
+					Acceptance:  []supervision.AcceptanceItem{{ID: "a2", Description: "b", Evidence: supervision.EvidenceBuild}},
 					RetryBudget: 2},
-				{ID: "t3", Title: "c", Intent: "c", Status: director.TaskPending,
-					Acceptance:  []director.AcceptanceItem{{ID: "a3", Description: "c", Evidence: director.EvidenceBuild}},
+				{ID: "t3", Title: "c", Intent: "c", Status: supervision.TaskPending,
+					Acceptance:  []supervision.AcceptanceItem{{ID: "a3", Description: "c", Evidence: supervision.EvidenceBuild}},
 					RetryBudget: 2},
 			},
 		}},
@@ -1156,7 +1156,7 @@ func TestDirectorIntegration_PhaseSubDAGSequence(t *testing.T) {
 	// handler, exactly mirroring the production wire.
 	var brieferCalls int
 	subsetBriefer := &fake.Briefer{
-		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		BriefFn: func(ctx context.Context, in supervision.BrieferInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			brieferCalls++
 			var picked []string
 			if brieferCalls == 1 {
@@ -1181,7 +1181,7 @@ func TestDirectorIntegration_PhaseSubDAGSequence(t *testing.T) {
 			if _, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input); err != nil {
 				return nil, err
 			}
-			return &director.DirectorCallStats{}, nil
+			return &supervision.SpawnStats{}, nil
 		},
 	}
 

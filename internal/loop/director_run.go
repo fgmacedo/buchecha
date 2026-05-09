@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // runDirector drives the DAG-driven Director state machine:
@@ -38,10 +38,10 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		return l.terminate(events, "fatal", ExitInvalid),
 			errors.New("loop: Director requires Plan, Briefer, Reviewer, Store, NewExecutor, and Handler")
 	}
-	if err := director.ValidatePlan(d.Plan); err != nil {
+	if err := supervision.ValidatePlan(d.Plan); err != nil {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan: %w", err)
 	}
-	if err := director.ValidatePlanAgainstMenus(d.Plan, d.Handler.RoleMenus()); err != nil {
+	if err := supervision.ValidatePlanAgainstMenus(d.Plan, d.Handler.RoleMenus()); err != nil {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan routing: %w", err)
 	}
 	state := d.Handler.State()
@@ -57,9 +57,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		if d.Store == nil || d.Store.Session() == nil {
 			return
 		}
-		status := director.SessionAborted
+		status := supervision.SessionAborted
 		if code == ExitDone {
-			status = director.SessionDone
+			status = supervision.SessionDone
 		}
 		_ = d.Store.Touch(status, time.Now())
 	}()
@@ -102,9 +102,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		phaseIterations[phaseID]++
 		iteration := phaseIterations[phaseID]
 		iterationID := fmt.Sprintf("%s-%02d", phaseID, iteration)
-		var briefing *director.Briefing
+		var briefing *supervision.Briefing
 		if phase.PreparedBriefing != nil {
-			synthetic := director.Briefing{
+			synthetic := supervision.Briefing{
 				IterationID:   iterationID,
 				PhaseID:       phaseID,
 				SubDAGTaskIDs: append([]string(nil), phase.PreparedBriefing.SubDAGTaskIDs...),
@@ -126,7 +126,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				return l.terminate(events, "fatal", ExitInvalid),
 					fmt.Errorf("director: register briefer: %w", err)
 			}
-			briefIn, err := director.BriefingFor(d.Plan, l.SpecPath, phaseID, iteration, subDAG, priorFeedback)
+			briefIn, err := supervision.BriefingFor(d.Plan, l.SpecPath, phaseID, iteration, subDAG, priorFeedback)
 			if err != nil {
 				registry.Deregister(brieferID)
 				return l.terminate(events, "fatal", ExitInvalid),
@@ -135,7 +135,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			briefIn.AgentID = string(brieferID)
 			briefIn.Assignment = phase.AssignmentFor("briefer")
 			briefIn.Attempt = iteration
-			var brieferStats *director.DirectorCallStats
+			var brieferStats *supervision.SpawnStats
 			brierr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
 				stats, e := d.Briefer.Brief(ctx, *briefIn, agentEvents)
 				brieferStats = stats
@@ -143,7 +143,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			})
 			registry.Deregister(brieferID)
 			if brieferStats != nil {
-				if err := d.Stats.Append(director.StatsEntry{
+				if err := d.Stats.Append(supervision.StatsEntry{
 					At:           time.Now(),
 					Role:         string(dag.RoleBriefer),
 					PhaseID:      phaseID,
@@ -178,7 +178,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 
 		hintForIteration := pendingHint
 		pendingHint = ""
-		userPrompt, err := director.RenderBriefingUser(briefing, phase, hintForIteration)
+		userPrompt, err := supervision.RenderBriefingUser(briefing, phase, hintForIteration)
 		if err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: render briefing user prompt: %w", err)
@@ -203,7 +203,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		// rewrites the same path because each attempt registers a fresh
 		// agent_id; only the latest rendered file is consumed.
 		renderSystem := func(agentID string) (string, error) {
-			systemPrompt, err := director.RenderBriefingSystem(agentID)
+			systemPrompt, err := supervision.RenderBriefingSystem(agentID)
 			if err != nil {
 				return "", fmt.Errorf("director: render briefing system prompt: %w", err)
 			}
@@ -287,7 +287,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				return l.terminate(events, "fatal", ExitInvalid), execErr
 			}
 			if execStats != nil {
-				if err := d.Stats.Append(director.StatsEntry{
+				if err := d.Stats.Append(supervision.StatsEntry{
 					At:           time.Now(),
 					Role:         string(dag.RoleExecutor),
 					PhaseID:      phaseID,
@@ -341,9 +341,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 					return l.terminate(events, "fatal", ExitInvalid),
 						fmt.Errorf("director: register reviewer: %w", err)
 				}
-				var reviewerStats *director.DirectorCallStats
+				var reviewerStats *supervision.SpawnStats
 				rerr := runWithAgentEvents(ctx, events, func(agentEvents chan<- agentcontract.AgentEvent) error {
-					stats, e := d.Reviewer.Review(ctx, director.ReviewerInput{
+					stats, e := d.Reviewer.Review(ctx, supervision.ReviewerInput{
 						AgentID:     string(reviewerID),
 						IterationID: briefing.IterationID,
 						PhaseID:     phaseID,
@@ -360,7 +360,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 						fmt.Errorf("director: review phase %s attempt %d: %w", phaseID, attempt, rerr)
 				}
 				if reviewerStats != nil {
-					if err := d.Stats.Append(director.StatsEntry{
+					if err := d.Stats.Append(supervision.StatsEntry{
 						At:           time.Now(),
 						Role:         string(dag.RoleReviewer),
 						PhaseID:      phaseID,
@@ -407,7 +407,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				continue
 			case DirectorEscalate:
 				if d.Store != nil && d.Store.Session() != nil {
-					_ = d.Store.Touch(director.SessionEscalatedPending, time.Now())
+					_ = d.Store.Touch(supervision.SessionEscalatedPending, time.Now())
 				}
 				emit(events, DirectorEscalation{
 					PhaseID: phaseID, Attempt: attempt,
@@ -420,14 +420,14 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				switch reply.Kind {
 				case EscalationResume:
 					if d.Store != nil && d.Store.Session() != nil {
-						_ = d.Store.Touch(director.SessionRunning, time.Now())
+						_ = d.Store.Touch(supervision.SessionRunning, time.Now())
 					}
 					priorFeedback = reasoning
 					pendingHint = reply.Hint
 					iterationDone = true
 				case EscalationForceApprove:
 					if d.Store != nil && d.Store.Session() != nil {
-						_ = d.Store.Touch(director.SessionRunning, time.Now())
+						_ = d.Store.Touch(supervision.SessionRunning, time.Now())
 					}
 					if err := d.Handler.ForceApprovePending(briefing.IterationID, reply.Hint); err != nil {
 						return l.terminate(events, "fatal", ExitInvalid),
@@ -489,7 +489,7 @@ func runWithAgentEvents(ctx context.Context, events chan<- Event, fn func(chan<-
 // (the Reviewer audits regardless and decides advance/retry). The
 // returned stats pointer carries the executor's last result summary
 // (cost, tokens, duration) when the agent emitted one, nil otherwise.
-func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, events chan<- Event, handler *dag.Handler, briefingID string) (agentcontract.Signal, *director.DirectorCallStats, error) {
+func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, events chan<- Event, handler *dag.Handler, briefingID string) (agentcontract.Signal, *supervision.SpawnStats, error) {
 	if exec == nil {
 		return agentcontract.SignalUnknown, nil, errors.New("director: NewExecutor returned nil executor")
 	}
@@ -510,13 +510,13 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 	result, err := exec.Run(ctx, userPrompt, agentEvents)
 	close(agentEvents)
 	<-pumpDone
-	var stats *director.DirectorCallStats
+	var stats *supervision.SpawnStats
 	if lastSummary != nil {
 		var dur int64
 		if !summaryAt.IsZero() {
 			dur = lastSummary.DurationMS
 		}
-		stats = &director.DirectorCallStats{
+		stats = &supervision.SpawnStats{
 			DurationMS:   dur,
 			CostUSD:      lastSummary.TotalCostUSD,
 			InputTokens:  lastSummary.InputTokens,
@@ -589,7 +589,7 @@ func parseSignalString(v string) agentcontract.Signal {
 // every assignment is non-nil and complete by the time the loop
 // reaches it; nil here returns empty strings so headless renderers
 // have something to print without crashing.
-func resolveAssignment(a *director.RoleAssignment) (string, string) {
+func resolveAssignment(a *supervision.RoleAssignment) (string, string) {
 	if a == nil {
 		return "", ""
 	}
@@ -603,7 +603,7 @@ func resolveAssignment(a *director.RoleAssignment) (string, string) {
 // run-wide budget (Config.Loop.RetryBudget) the user asked for in
 // .bcc.toml. Per-task overrides may raise the budget above the floor;
 // they cannot drop below it.
-func effectiveRetryBudget(phase *director.Phase, subDAG []string, configFloor int) int {
+func effectiveRetryBudget(phase *supervision.Phase, subDAG []string, configFloor int) int {
 	return max(maxRetryBudget(phase, subDAG), configFloor)
 }
 
@@ -611,7 +611,7 @@ func effectiveRetryBudget(phase *director.Phase, subDAG []string, configFloor in
 // a single iteration-level budget. The maximum across the sub-DAG's
 // tasks is the safe choice: every task tolerates at least its own
 // budget, and the sub-DAG retries as a whole.
-func maxRetryBudget(phase *director.Phase, subDAG []string) int {
+func maxRetryBudget(phase *supervision.Phase, subDAG []string) int {
 	best := 0
 	for _, tid := range subDAG {
 		t := phase.TaskByID(tid)

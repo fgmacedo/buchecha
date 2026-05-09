@@ -13,28 +13,28 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // trivialPlan returns a one-phase one-task plan, the smallest valid
 // shape NewStateFromPlan accepts. The handlers tests do not care about
 // plan contents; they only need a non-empty DAG to render.
-func trivialPlan() *director.Plan {
-	return &director.Plan{
+func trivialPlan() *supervision.Plan {
+	return &supervision.Plan{
 		Goal:     "x",
 		SpecHash: "deadbeef",
-		Phases: []director.Phase{{
+		Phases: []supervision.Phase{{
 			ID:     "P1",
 			Title:  "phase",
 			Intent: "intent",
-			Tasks: []director.Task{{
+			Tasks: []supervision.Task{{
 				ID:         "T1",
 				Title:      "task",
 				Intent:     "intent",
-				Acceptance: []director.AcceptanceItem{{ID: "A1", Description: "d", Evidence: "diff"}},
-				Status:     director.TaskPending,
+				Acceptance: []supervision.AcceptanceItem{{ID: "A1", Description: "d", Evidence: "diff"}},
+				Status:     supervision.TaskPending,
 			}},
 		}},
 	}
@@ -44,26 +44,26 @@ func trivialPlan() *director.Plan {
 // httptest server backed by services.New + api.New. The live session
 // has a non-nil DAG handler; the archived one persists its dag.json
 // under <sessionDir>/dag.json.
-func snapshotServer(t *testing.T) (srv *httptest.Server, archived, live director.Session) {
+func snapshotServer(t *testing.T) (srv *httptest.Server, archived, live supervision.Session) {
 	t.Helper()
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	archived = director.Session{
+	archived = supervision.Session{
 		ID:        "abcdef0001ab",
 		SpecPath:  "/spec/a.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-2 * time.Hour),
 		UpdatedAt: now.Add(-1 * time.Hour),
-		Status:    director.SessionDone,
+		Status:    supervision.SessionDone,
 	}
-	live = director.Session{
+	live = supervision.Session{
 		ID:        "abcdef0002ab",
 		SpecPath:  "/spec/b.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-30 * time.Minute),
 		UpdatedAt: now.Add(-20 * time.Minute),
-		Status:    director.SessionRunning,
+		Status:    supervision.SessionRunning,
 	}
 	writeManifest(t, baseDir, archived)
 	writeManifest(t, baseDir, live)
@@ -71,14 +71,14 @@ func snapshotServer(t *testing.T) (srv *httptest.Server, archived, live director
 	// Persist a dag.json for the archived session so Snapshot has
 	// something to load.
 	archState := dag.NewStateFromPlan(trivialPlan())
-	if err := archState.SetTaskStatus("P1", "T1", director.TaskDone); err != nil {
+	if err := archState.SetTaskStatus("P1", "T1", supervision.TaskDone); err != nil {
 		t.Fatalf("SetTaskStatus: %v", err)
 	}
 	if err := dag.SaveStateFile(archState, filepath.Join(baseDir, "sessions", archived.ID, "dag.json")); err != nil {
 		t.Fatalf("SaveStateFile: %v", err)
 	}
 
-	store, err := director.OpenSession(baseDir, live.ID)
+	store, err := supervision.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}

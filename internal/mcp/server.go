@@ -28,7 +28,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/fgmacedo/buchecha/internal/director/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // RoleHeader names the request header an agent must set so the server

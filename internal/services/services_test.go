@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // TestNew_WiresAllServices is the aggregator-level smoke test: every
@@ -96,16 +96,16 @@ func productionDeps(t *testing.T) Deps {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := director.Session{
+	sess := supervision.Session{
 		ID:        "ffeeddccbbaa",
 		SpecPath:  "/spec/agg.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    director.SessionRunning,
+		Status:    supervision.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
-	store, err := director.OpenSession(baseDir, sess.ID)
+	store, err := supervision.OpenSession(baseDir, sess.ID)
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}

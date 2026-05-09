@@ -5,8 +5,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // planInput captures the {id} path parameter that addresses the
@@ -15,13 +15,13 @@ type planInput struct {
 	ID string `path:"id" doc:"Session id (the directory name under .bcc/sessions/)." minLength:"1"`
 }
 
-// planOutput returns the bare director.Plan JSON form. The structural
+// planOutput returns the bare supervision.Plan JSON form. The structural
 // fields (phases, tasks) are stable after the planner emits; the
 // per-task status carried in this payload reflects the moment the
 // loop persisted the plan, which is "pending" for every task right
 // after planning. Live status changes flow through the events stream.
 type planOutput struct {
-	Body *director.Plan
+	Body *supervision.Plan
 }
 
 // registerPlan wires GET /sessions/{id}/plan. The handler delegates

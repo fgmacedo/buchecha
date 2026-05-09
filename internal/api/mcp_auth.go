@@ -33,7 +33,7 @@ const mcpRoleHeader = "X-BCC-Role"
 // Token values are never logged; the middleware logs at debug level
 // with the request method and path only.
 //
-// The api package does not import internal/director/dag or
+// The api package does not import internal/supervision/dag or
 // internal/mcp; it receives the allowed roles as a closed list from
 // the composition root.
 func MCPAuth(token string, allowedRoles []string) func(http.Handler) http.Handler {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // withWorkingDir cd's into dir for the duration of the test and
@@ -47,11 +47,11 @@ func TestRunSessionsList_TextWithRows(t *testing.T) {
 	tmp := t.TempDir()
 	withWorkingDir(t, tmp)
 
-	a, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/a.md", "h1", time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC))
+	a, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/a.md", "h1", time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/b.md", "h2", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	b, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/b.md", "h2", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestRunSessionsList_JSON(t *testing.T) {
 	tmp := t.TempDir()
 	withWorkingDir(t, tmp)
 
-	_, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/spec.md", "h1", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	_, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/spec.md", "h1", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestRunSessionsList_JSON(t *testing.T) {
 	if err := runSessionsList(&w, "json"); err != nil {
 		t.Fatalf("runSessionsList: %v", err)
 	}
-	var got []director.Session
+	var got []supervision.Session
 	if err := json.Unmarshal(w.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal json: %v\n%s", err, w.String())
 	}
@@ -101,7 +101,7 @@ func TestRunSessionsShow_TextHappyPath(t *testing.T) {
 	tmp := t.TempDir()
 	withWorkingDir(t, tmp)
 
-	store, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/spec.md", "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	store, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/spec.md", "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestRunSessionsShow_JSONHappyPath(t *testing.T) {
 	tmp := t.TempDir()
 	withWorkingDir(t, tmp)
 
-	store, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/spec.md", "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	store, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), "/tmp/spec.md", "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestRunSessionsShow_JSONHappyPath(t *testing.T) {
 	if err := runSessionsShow(&w, "json", store.Session().ID); err != nil {
 		t.Fatalf("runSessionsShow: %v", err)
 	}
-	var got director.Session
+	var got supervision.Session
 	if err := json.Unmarshal(w.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, w.String())
 	}
@@ -149,7 +149,7 @@ func TestRunSessionsShow_MissingReturnsError(t *testing.T) {
 
 	var w bytes.Buffer
 	err := runSessionsShow(&w, "text", "abcdef012345")
-	if !errors.Is(err, director.ErrSessionNotFound) {
+	if !errors.Is(err, supervision.ErrSessionNotFound) {
 		t.Fatalf("err = %v, want ErrSessionNotFound", err)
 	}
 	if !errors.Is(err, fs.ErrNotExist) {

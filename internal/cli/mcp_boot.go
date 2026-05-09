@@ -9,12 +9,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/executor/claude"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/mcp"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // mcpBoot is the run-wide MCP plumbing: a State (nil in legacy
@@ -104,7 +104,7 @@ func (p *dagSnapshotPersister) WriteDAGSnapshot(s *dag.State) error {
 // to answer bcc_get_journal_delta; pass the active spec format adapter.
 // head, when non-nil, answers bcc_get_baseline. mcpAudit toggles the
 // per-session JSONL audit log.
-func (b *mcpBoot) bindSession(store *director.Store, mcpAudit bool, head dag.HeadProvider, journal dag.JournalDeltaProvider) {
+func (b *mcpBoot) bindSession(store *supervision.Store, mcpAudit bool, head dag.HeadProvider, journal dag.JournalDeltaProvider) {
 	if b == nil || b.handler == nil || store == nil {
 		return
 	}

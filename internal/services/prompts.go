@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/fgmacedo/buchecha/internal/director"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // Prompt is the rendered system prompt for one role within a session.
@@ -148,9 +148,9 @@ func (s *PromptService) sessionDir(sessionID string) (string, error) {
 	if s.deps.SessionsBaseDir == "" {
 		return "", ErrSessionNotFound.WithDetails(map[string]any{"id": sessionID})
 	}
-	store, err := director.OpenSession(s.deps.SessionsBaseDir, sessionID)
+	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, sessionID)
 	if err != nil {
-		if errors.Is(err, director.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return "", ErrSessionNotFound.WithDetails(map[string]any{"id": sessionID})
 		}
 		return "", fmt.Errorf("services: open session %q: %w", sessionID, err)

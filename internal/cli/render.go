@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // Output mode names accepted by --output.
@@ -95,7 +95,7 @@ func drainJSON(in <-chan loop.Event, done chan<- struct{}, w io.Writer) {
 // and a numbered phase table (id, title, retry_budget, depends_on). It
 // targets a wide terminal and never colorizes; styling is decided by the
 // renderer that wraps this in TUI/text modes.
-func RenderPlan(p *director.Plan, w io.Writer) {
+func RenderPlan(p *supervision.Plan, w io.Writer) {
 	if p == nil {
 		fmt.Fprintln(w, "bcc: director plan: <nil>")
 		return

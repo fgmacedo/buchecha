@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // SessionMeta is the per-session metadata every adapter renders into
@@ -85,7 +85,7 @@ func (s *SessionService) List(ctx context.Context) ([]SessionMeta, error) {
 	if s.deps.SessionsBaseDir == "" {
 		return nil, ErrInternal.WithMessage("session service: no sessions base dir configured")
 	}
-	stored, err := director.ListSessions(s.deps.SessionsBaseDir)
+	stored, err := supervision.ListSessions(s.deps.SessionsBaseDir)
 	if err != nil {
 		return nil, fmt.Errorf("services: list sessions: %w", err)
 	}
@@ -141,9 +141,9 @@ func (s *SessionService) Get(ctx context.Context, id string) (SessionMeta, error
 	if s.deps.SessionsBaseDir == "" {
 		return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
-	store, err := director.OpenSession(s.deps.SessionsBaseDir, id)
+	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, id)
 	if err != nil {
-		if errors.Is(err, director.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 		}
 		return SessionMeta{}, fmt.Errorf("services: get session %q: %w", id, err)
@@ -180,9 +180,9 @@ func (s *SessionService) Snapshot(ctx context.Context, id string) (Snapshot, err
 	if s.deps.SessionsBaseDir == "" {
 		return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
-	store, err := director.OpenSession(s.deps.SessionsBaseDir, id)
+	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, id)
 	if err != nil {
-		if errors.Is(err, director.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 		}
 		return Snapshot{}, fmt.Errorf("services: snapshot session %q: %w", id, err)
@@ -207,7 +207,7 @@ func (s *SessionService) Snapshot(ctx context.Context, id string) (Snapshot, err
 // resolves to the bound live session, then to LiveAliasArchivedID for
 // dev mode; ErrSessionNotFound covers unknown ids and ErrPlanNotFound
 // covers a session whose planner has not emitted yet.
-func (s *SessionService) Plan(ctx context.Context, id string) (*director.Plan, error) {
+func (s *SessionService) Plan(ctx context.Context, id string) (*supervision.Plan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -232,9 +232,9 @@ func (s *SessionService) Plan(ctx context.Context, id string) (*director.Plan, e
 	if s.deps.SessionsBaseDir == "" {
 		return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
-	store, err := director.OpenSession(s.deps.SessionsBaseDir, id)
+	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, id)
 	if err != nil {
-		if errors.Is(err, director.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 		}
 		return nil, fmt.Errorf("services: plan session %q: %w", id, err)
@@ -243,7 +243,7 @@ func (s *SessionService) Plan(ctx context.Context, id string) (*director.Plan, e
 	return resolvePlanReadError(plan, err, id)
 }
 
-func resolvePlanReadError(plan *director.Plan, err error, id string) (*director.Plan, error) {
+func resolvePlanReadError(plan *supervision.Plan, err error, id string) (*supervision.Plan, error) {
 	if err == nil {
 		return plan, nil
 	}
@@ -253,14 +253,14 @@ func resolvePlanReadError(plan *director.Plan, err error, id string) (*director.
 	return nil, fmt.Errorf("services: read plan %q: %w", id, err)
 }
 
-func (s *SessionService) liveSession() *director.Session {
+func (s *SessionService) liveSession() *supervision.Session {
 	if s.deps.SessionStore == nil {
 		return nil
 	}
 	return s.deps.SessionStore.Session()
 }
 
-func (s *SessionService) liveSnapshot(live director.Session) (Snapshot, error) {
+func (s *SessionService) liveSnapshot(live supervision.Session) (Snapshot, error) {
 	if s.deps.DAGHandler == nil {
 		return Snapshot{
 			Session: sessionMetaFrom(live),
@@ -293,12 +293,12 @@ func loadArchivedDAG(sessionDir string) (*dag.State, error) {
 	return state, nil
 }
 
-// sessionMetaFrom projects director.Session to SessionMeta, mapping
+// sessionMetaFrom projects supervision.Session to SessionMeta, mapping
 // the lifecycle status to the wire form (a plain string) and using
 // CreatedAt as StartedAt. FinishedAt is non-zero only when the
 // session reached a terminal status; otherwise the field is left
 // zero so consumers know the run is still in flight.
-func sessionMetaFrom(sess director.Session) SessionMeta {
+func sessionMetaFrom(sess supervision.Session) SessionMeta {
 	meta := SessionMeta{
 		ID:             sess.ID,
 		SpecPath:       sess.SpecPath,
@@ -307,7 +307,7 @@ func sessionMetaFrom(sess director.Session) SessionMeta {
 		IterationIndex: sess.IterationIndex,
 		MaxIter:        sess.MaxIter,
 	}
-	if sess.Status != director.SessionRunning && !sess.UpdatedAt.IsZero() {
+	if sess.Status != supervision.SessionRunning && !sess.UpdatedAt.IsZero() {
 		meta.FinishedAt = sess.UpdatedAt
 	}
 	return meta

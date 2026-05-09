@@ -14,38 +14,38 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/config"
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
-	"github.com/fgmacedo/buchecha/internal/director/fake"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/fake"
 )
 
 // scriptedPlan returns a Plan with two phases that pass ValidatePlan,
 // suitable as the FakePlanner output for runDirectorWith tests.
-func scriptedPlan() *director.Plan {
-	return &director.Plan{
+func scriptedPlan() *supervision.Plan {
+	return &supervision.Plan{
 		Goal: "Wire the Director MVP",
 		SuccessCriteria: []string{
 			"go test -race ./... is green",
 			"bcc run --director boots end to end",
 		},
-		Phases: []director.Phase{
+		Phases: []supervision.Phase{
 			{
 				ID:        "phase-1",
 				Title:     "First phase",
 				Intent:    "Bootstrap things",
 				DependsOn: nil,
-				Tasks: []director.Task{
+				Tasks: []supervision.Task{
 					{
 						ID:     "t1",
 						Title:  "build it",
 						Intent: "ensure it compiles",
-						Acceptance: []director.AcceptanceItem{
-							{ID: "a1", Description: "compiles", Evidence: director.EvidenceBuild},
+						Acceptance: []supervision.AcceptanceItem{
+							{ID: "a1", Description: "compiles", Evidence: supervision.EvidenceBuild},
 						},
-						Status:      director.TaskPending,
+						Status:      supervision.TaskPending,
 						RetryBudget: 2,
 					},
 				},
@@ -55,15 +55,15 @@ func scriptedPlan() *director.Plan {
 				Title:     "Second phase",
 				Intent:    "Round it out",
 				DependsOn: []string{"phase-1"},
-				Tasks: []director.Task{
+				Tasks: []supervision.Task{
 					{
 						ID:     "t1",
 						Title:  "test it",
 						Intent: "tests pass",
-						Acceptance: []director.AcceptanceItem{
-							{ID: "a2", Description: "tests pass", Evidence: director.EvidenceTest},
+						Acceptance: []supervision.AcceptanceItem{
+							{ID: "a2", Description: "tests pass", Evidence: supervision.EvidenceTest},
 						},
-						Status:      director.TaskPending,
+						Status:      supervision.TaskPending,
 						RetryBudget: 1,
 					},
 				},
@@ -86,13 +86,13 @@ func writeTestSpec(t *testing.T, dir string) string {
 // tmp/.bcc/sessions/<id>/ for the supplied spec path. Tests use it
 // instead of poking at directory paths so the production session
 // lifecycle is what is exercised.
-func mkSessionStore(t *testing.T, tmp, specPath string) *director.Store {
+func mkSessionStore(t *testing.T, tmp, specPath string) *supervision.Store {
 	t.Helper()
 	hash := "deadbeef"
 	if data, err := os.ReadFile(specPath); err == nil {
-		hash = director.SpecHash(data)
+		hash = supervision.SpecHash(data)
 	}
-	store, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), specPath, hash, time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	store, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, hash, time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -124,7 +124,7 @@ func withOutputMode(t *testing.T, mode string) {
 // observe it via Handler.Briefing(iterationID).
 func scriptedBriefer(h *dag.Handler) *fake.Briefer {
 	return &fake.Briefer{
-		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		BriefFn: func(ctx context.Context, in supervision.BrieferInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			ids := make([]any, len(in.SubDAGTaskIDs))
 			for i, s := range in.SubDAGTaskIDs {
 				ids[i] = s
@@ -140,7 +140,7 @@ func scriptedBriefer(h *dag.Handler) *fake.Briefer {
 				},
 			}
 			_, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input)
-			return &director.DirectorCallStats{}, err
+			return &supervision.SpawnStats{}, err
 		},
 	}
 }
@@ -149,7 +149,7 @@ func scriptedBriefer(h *dag.Handler) *fake.Briefer {
 // outcome=approve through the handler.
 func approvingReviewer(h *dag.Handler) *fake.Reviewer {
 	return &fake.Reviewer{
-		ReviewFn: func(ctx context.Context, in director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		ReviewFn: func(ctx context.Context, in supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			for _, tid := range in.SubDAG {
 				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
 					"agent_id": in.AgentID,
@@ -163,7 +163,7 @@ func approvingReviewer(h *dag.Handler) *fake.Reviewer {
 				"outcome":   "approve",
 				"reasoning": "looks good",
 			})
-			return &director.DirectorCallStats{}, err
+			return &supervision.SpawnStats{}, err
 		},
 	}
 }
@@ -216,7 +216,7 @@ type recordingExecutor struct {
 	promptPaths      []string
 	handler          *dag.Handler
 	args             dag.RegisterArgs
-	assignment       *director.RoleAssignment
+	assignment       *supervision.RoleAssignment
 }
 
 func (r *recordingExecutor) Run(ctx context.Context, _ string, _ chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
@@ -246,9 +246,9 @@ func (r *recordingExecutor) Run(ctx context.Context, _ string, _ chan<- agentcon
 // The factory captures the system_prompt_file path on each call. The
 // handler reference lets the executor mirror a production agent: it
 // registers, reports the iteration signal via MCP, and deregisters.
-func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor, *recordingExecutor) {
+func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor, *recordingExecutor) {
 	rec := &recordingExecutor{emitSignal: signal, handler: h}
-	return func(args dag.RegisterArgs, renderSystem func(string) (string, error), assignment *director.RoleAssignment) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(string) (string, error), assignment *supervision.RoleAssignment) loop.Executor {
 		path := ""
 		if renderSystem != nil {
 			p, err := renderSystem("test-executor-agent")
@@ -320,7 +320,7 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 
 	plannerCalls := 0
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, in supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			plannerCalls++
 			if in.SpecPath != specPath {
 				t.Errorf("planner spec_path = %q, want %q", in.SpecPath, specPath)
@@ -328,14 +328,14 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 			if in.SpecHash == "" {
 				t.Error("planner spec_hash empty")
 			}
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
+			return scriptedPlan(), &supervision.SpawnStats{}, nil
 		},
 	}
 
 	h := newTestHandler()
 	briefCalls := 0
 	briefer := &fake.Briefer{
-		BriefFn: func(ctx context.Context, in director.BrieferInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+		BriefFn: func(ctx context.Context, in supervision.BrieferInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			briefCalls++
 			input := map[string]any{
 				"agent_id": in.AgentID,
@@ -348,7 +348,7 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 				},
 			}
 			_, err := h.HandleCall(ctx, string(dag.RoleBriefer), dag.MethodBriefingEmit, input)
-			return &director.DirectorCallStats{}, err
+			return &supervision.SpawnStats{}, err
 		},
 	}
 
@@ -397,7 +397,7 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("read persisted plan: %v", readErr)
 	}
-	var got director.Plan
+	var got supervision.Plan
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("parse persisted plan: %v", err)
 	}
@@ -410,12 +410,12 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 	}
 
 	// Session lifecycle: a clean run lands in status=done.
-	reopened, err := director.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+	reopened, err := supervision.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
 	if err != nil {
 		t.Fatalf("OpenSession after run: %v", err)
 	}
-	if reopened.Session().Status != director.SessionDone {
-		t.Errorf("session status = %q, want %q", reopened.Session().Status, director.SessionDone)
+	if reopened.Session().Status != supervision.SessionDone {
+		t.Errorf("session status = %q, want %q", reopened.Session().Status, supervision.SessionDone)
 	}
 }
 
@@ -430,8 +430,8 @@ func TestRunDirectorWith_RejectsEmptyPlan(t *testing.T) {
 	specPath := writeTestSpec(t, tmp)
 
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			return &director.Plan{Goal: "x", Phases: nil}, &director.DirectorCallStats{}, nil
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
+			return &supervision.Plan{Goal: "x", Phases: nil}, &supervision.SpawnStats{}, nil
 		},
 	}
 	store := mkSessionStore(t, tmp, specPath)
@@ -443,7 +443,7 @@ func TestRunDirectorWith_RejectsEmptyPlan(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -480,14 +480,14 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 
 	h := newTestHandler()
 	planner := &fake.Planner{
-		PlanFn: func(ctx context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(ctx context.Context, in supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			if _, err := h.HandleCall(ctx, string(dag.RolePlanner), dag.MethodPlanSkip, map[string]any{
 				"agent_id": in.AgentID,
 				"reason":   "every acceptance bullet is checked off in the spec journal",
 			}); err != nil {
 				return nil, nil, err
 			}
-			return nil, &director.DirectorCallStats{}, nil
+			return nil, &supervision.SpawnStats{}, nil
 		},
 	}
 	store := mkSessionStore(t, tmp, specPath)
@@ -498,7 +498,7 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		registerFn: testRegisterFn(h),
@@ -527,12 +527,12 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(store.SessionDir(), "plan.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("plan persisted despite skip: %v", statErr)
 	}
-	reopened, err := director.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+	reopened, err := supervision.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
 	if err != nil {
 		t.Fatalf("OpenSession after skip: %v", err)
 	}
-	if reopened.Session().Status != director.SessionDone {
-		t.Errorf("Session status = %q, want %q", reopened.Session().Status, director.SessionDone)
+	if reopened.Session().Status != supervision.SessionDone {
+		t.Errorf("Session status = %q, want %q", reopened.Session().Status, supervision.SessionDone)
 	}
 }
 
@@ -550,14 +550,14 @@ func TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero(t *testing.T) {
 
 	h := newTestHandler()
 	planner := &fake.Planner{
-		PlanFn: func(ctx context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(ctx context.Context, in supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			if _, err := h.HandleCall(ctx, string(dag.RolePlanner), dag.MethodPlanSkip, map[string]any{
 				"agent_id": in.AgentID,
 				"reason":   "spec already complete; skipped",
 			}); err != nil {
 				return nil, nil, err
 			}
-			return nil, &director.DirectorCallStats{}, errors.New("director/claude: claude exited 1")
+			return nil, &supervision.SpawnStats{}, errors.New("director/claude: claude exited 1")
 		},
 	}
 	store := mkSessionStore(t, tmp, specPath)
@@ -568,7 +568,7 @@ func TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		registerFn: testRegisterFn(h),
@@ -606,8 +606,8 @@ func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
 
 	h := newTestHandler()
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			return nil, &director.DirectorCallStats{}, errors.New("director/claude: claude exited 1")
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
+			return nil, &supervision.SpawnStats{}, errors.New("director/claude: claude exited 1")
 		},
 	}
 	store := mkSessionStore(t, tmp, specPath)
@@ -618,7 +618,7 @@ func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		registerFn: testRegisterFn(h),
@@ -668,14 +668,14 @@ func TestRunDirectorWith_ResumeMatchingHash_SkipsPlanner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
-	persisted.SpecHash = director.SpecHash(specContent)
+	persisted.SpecHash = supervision.SpecHash(specContent)
 	store := mkSessionStore(t, tmp, specPath)
 	if err := store.WritePlan(persisted); err != nil {
 		t.Fatalf("seed plan: %v", err)
 	}
 
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			t.Fatal("planner should not be called when spec hash matches")
 			return nil, nil, nil
 		},
@@ -741,14 +741,14 @@ func TestRunDirectorWith_ResumeMatchingHash_PreservesDAGProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
-	persisted.SpecHash = director.SpecHash(specContent)
+	persisted.SpecHash = supervision.SpecHash(specContent)
 	store := mkSessionStore(t, tmp, specPath)
 	if err := store.WritePlan(persisted); err != nil {
 		t.Fatalf("seed plan: %v", err)
 	}
 
 	priorState := dag.NewStateFromPlan(persisted)
-	if err := priorState.SetTaskStatus("phase-1", "t1", director.TaskDone); err != nil {
+	if err := priorState.SetTaskStatus("phase-1", "t1", supervision.TaskDone); err != nil {
 		t.Fatalf("seed prior progress: %v", err)
 	}
 	dagPath := filepath.Join(store.SessionDir(), "dag.json")
@@ -757,7 +757,7 @@ func TestRunDirectorWith_ResumeMatchingHash_PreservesDAGProgress(t *testing.T) {
 	}
 
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			t.Fatal("planner should not be called when spec hash matches")
 			return nil, nil, nil
 		},
@@ -811,9 +811,9 @@ func TestRunDirectorWith_ResumeNoPlan_FallsThroughToFresh(t *testing.T) {
 
 	plannerCalls := 0
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			plannerCalls++
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
+			return scriptedPlan(), &supervision.SpawnStats{}, nil
 		},
 	}
 	h := newTestHandler()
@@ -875,29 +875,29 @@ func TestRunDirectorWith_ResumeHashMismatch_ReplansAndProceeds(t *testing.T) {
 
 	plannerCalls := 0
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			plannerCalls++
 			plan := scriptedPlan()
 			plan.Phases[0].Title = "Renamed phase"
-			plan.Phases = append(plan.Phases, director.Phase{
+			plan.Phases = append(plan.Phases, supervision.Phase{
 				ID:        "phase-3",
 				Title:     "New phase",
 				Intent:    "Added in re-plan",
 				DependsOn: []string{"phase-2"},
-				Tasks: []director.Task{
+				Tasks: []supervision.Task{
 					{
 						ID:     "t1",
 						Title:  "still build",
 						Intent: "still compiles",
-						Acceptance: []director.AcceptanceItem{
-							{ID: "a3", Description: "still compiles", Evidence: director.EvidenceBuild},
+						Acceptance: []supervision.AcceptanceItem{
+							{ID: "a3", Description: "still compiles", Evidence: supervision.EvidenceBuild},
 						},
-						Status:      director.TaskPending,
+						Status:      supervision.TaskPending,
 						RetryBudget: 1,
 					},
 				},
 			})
-			return plan, &director.DirectorCallStats{}, nil
+			return plan, &supervision.SpawnStats{}, nil
 		},
 	}
 	h := newTestHandler()
@@ -980,8 +980,8 @@ func TestRunDirectorWith_AutoResolvesSession_OnFreshRun(t *testing.T) {
 	specPath := writeTestSpec(t, tmp)
 
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
+			return scriptedPlan(), &supervision.SpawnStats{}, nil
 		},
 	}
 	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
@@ -1010,7 +1010,7 @@ func TestRunDirectorWith_AutoResolvesSession_OnFreshRun(t *testing.T) {
 		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
 	}
 
-	sessions, err := director.ListSessions(filepath.Join(tmp, ".bcc"))
+	sessions, err := supervision.ListSessions(filepath.Join(tmp, ".bcc"))
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -1020,8 +1020,8 @@ func TestRunDirectorWith_AutoResolvesSession_OnFreshRun(t *testing.T) {
 	if sessions[0].SpecPath != specPath {
 		t.Errorf("session.SpecPath = %q, want %q", sessions[0].SpecPath, specPath)
 	}
-	if sessions[0].Status != director.SessionDone {
-		t.Errorf("session.Status = %q, want %q", sessions[0].Status, director.SessionDone)
+	if sessions[0].Status != supervision.SessionDone {
+		t.Errorf("session.Status = %q, want %q", sessions[0].Status, supervision.SessionDone)
 	}
 }
 
@@ -1037,13 +1037,13 @@ func TestRunDirectorWith_SessionFlag_OpensSpecificSession(t *testing.T) {
 	seed := mkSessionStore(t, tmp, specPath)
 	persisted := scriptedPlan()
 	specContent, _ := os.ReadFile(specPath)
-	persisted.SpecHash = director.SpecHash(specContent)
+	persisted.SpecHash = supervision.SpecHash(specContent)
 	if err := seed.WritePlan(persisted); err != nil {
 		t.Fatalf("seed plan: %v", err)
 	}
 
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			t.Fatal("planner should not run when resuming a matching session")
 			return nil, nil, nil
 		},
@@ -1078,7 +1078,7 @@ func TestRunDirectorWith_SessionFlag_OpensSpecificSession(t *testing.T) {
 		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
 	}
 
-	sessions, err := director.ListSessions(filepath.Join(tmp, ".bcc"))
+	sessions, err := supervision.ListSessions(filepath.Join(tmp, ".bcc"))
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -1100,7 +1100,7 @@ func TestRunDirectorWith_SessionFlag_RejectsUnknownID(t *testing.T) {
 	specPath := writeTestSpec(t, tmp)
 
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, _ director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			t.Fatal("planner should not run when session is not found")
 			return nil, nil, nil
 		},
@@ -1113,7 +1113,7 @@ func TestRunDirectorWith_SessionFlag_RejectsUnknownID(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		baseDir:  filepath.Join(tmp, ".bcc"),
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -1129,7 +1129,7 @@ func TestRunDirectorWith_SessionFlag_RejectsUnknownID(t *testing.T) {
 	defer cancel()
 
 	err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if !errors.Is(err, director.ErrSessionNotFound) {
+	if !errors.Is(err, supervision.ErrSessionNotFound) {
 		t.Fatalf("err = %v, want ErrSessionNotFound", err)
 	}
 	if ExitCode != loop.ExitInvalid {
@@ -1160,7 +1160,7 @@ func TestRunDirectorWith_SessionFlag_RejectsSpecMismatch(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		baseDir:  filepath.Join(tmp, ".bcc"),
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -1176,7 +1176,7 @@ func TestRunDirectorWith_SessionFlag_RejectsSpecMismatch(t *testing.T) {
 	defer cancel()
 
 	err := runDirectorWith(ctx, cancel, otherSpec, cfg, deps, dio)
-	if !errors.Is(err, director.ErrSessionSpecMismatch) {
+	if !errors.Is(err, supervision.ErrSessionSpecMismatch) {
 		t.Fatalf("err = %v, want ErrSessionSpecMismatch", err)
 	}
 	if ExitCode != loop.ExitInvalid {
@@ -1193,11 +1193,11 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 
 	tmp := t.TempDir()
 	specPath := writeTestSpec(t, tmp)
-	a, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h1", time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC))
+	a, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h1", time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := director.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h2", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	b, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h2", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1210,7 +1210,7 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 		reviewer: &fake.Reviewer{},
 		baseDir:  filepath.Join(tmp, ".bcc"),
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now: time.Now,
@@ -1226,7 +1226,7 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 	defer cancel()
 
 	err = runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if !errors.Is(err, director.ErrSessionAmbiguous) {
+	if !errors.Is(err, supervision.ErrSessionAmbiguous) {
 		t.Fatalf("err = %v, want ErrSessionAmbiguous", err)
 	}
 	if !strings.Contains(err.Error(), a.Session().ID) || !strings.Contains(err.Error(), b.Session().ID) {
@@ -1245,13 +1245,13 @@ func TestFreshPlan_ThreadsPromptToPlannerInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
 	}
-	hash := director.ComputeSessionHash(specContent, "foo")
+	hash := supervision.ComputeSessionHash(specContent, "foo")
 
 	var receivedPrompt string
 	planner := &fake.Planner{
-		PlanFn: func(_ context.Context, in director.PlannerInput, _ chan<- agentcontract.AgentEvent) (*director.Plan, *director.DirectorCallStats, error) {
+		PlanFn: func(_ context.Context, in supervision.PlannerInput, _ chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
 			receivedPrompt = in.Prompt
-			return scriptedPlan(), &director.DirectorCallStats{}, nil
+			return scriptedPlan(), &supervision.SpawnStats{}, nil
 		},
 	}
 
@@ -1264,7 +1264,7 @@ func TestFreshPlan_ThreadsPromptToPlannerInput(t *testing.T) {
 		reviewer: approvingReviewer(h),
 		store:    store,
 		git:      newAdvancingGit(),
-		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
+		newExecutor: func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 			return &recordingExecutor{}
 		},
 		now:    time.Now,

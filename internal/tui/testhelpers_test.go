@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // testSvcResult groups the test services with its input channel and a
@@ -29,7 +29,7 @@ type testSvcResult struct {
 func newTestSvc(t *testing.T) testSvcResult {
 	t.Helper()
 	tmp := t.TempDir()
-	store, _, err := director.CreateSession(
+	store, _, err := supervision.CreateSession(
 		filepath.Join(tmp, ".bcc"),
 		"testspec.md",
 		"testhash",

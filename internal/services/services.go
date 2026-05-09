@@ -1,5 +1,5 @@
 // Package services is the application services layer. It is the only
-// caller of the domain core (internal/director, internal/director/dag,
+// caller of the domain core (internal/supervision, internal/supervision/dag,
 // internal/loop, internal/config) from above. Protocol adapters
 // (internal/api, internal/mcp, internal/tui) consume Services rather
 // than reaching into the core directly, so a change in the core does
@@ -7,7 +7,7 @@
 //
 // Layer rules:
 //
-//   - services depends on internal/director, internal/director/dag,
+//   - services depends on internal/supervision, internal/supervision/dag,
 //     internal/loop, internal/loop/agentcontract, and internal/config
 //     for value objects and behavior the services aggregate.
 //   - services does NOT depend on any protocol adapter (internal/api,
@@ -19,9 +19,9 @@ package services
 import (
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // Deps is the seam between the domain core and the application
@@ -47,7 +47,7 @@ type Deps struct {
 	// SessionStore is the live session's persistence facade. It
 	// describes where the session directory lives on disk and
 	// exposes the manifest the live SessionService surfaces.
-	SessionStore *director.Store
+	SessionStore *supervision.Store
 
 	// SessionsBaseDir is the parent directory under which every
 	// session lives (.bcc/sessions/<id>/). The SessionService uses

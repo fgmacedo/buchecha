@@ -17,9 +17,9 @@ package loop
 import (
 	"context"
 
-	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // Executor runs the configured agent against a prompt and emits a stream
@@ -102,22 +102,22 @@ type EscalationReply struct {
 // not re-plan.
 type DirectorPorts struct {
 	// Plan is the confirmed Plan to execute. Required.
-	Plan *director.Plan
+	Plan *supervision.Plan
 
 	// Briefer spawns the Briefer agent for one iteration. Required.
 	// The agent emits the Briefing through bcc_briefing_emit; the loop
 	// reads it back from Handler.Briefing(iterationID).
-	Briefer director.Briefer
+	Briefer supervision.Briefer
 
 	// Reviewer spawns the Reviewer agent for one iteration. Required.
 	// The agent reports per-task outcomes through bcc_task_approved /
 	// bcc_task_needs_fix and a final bcc_review_finished; the loop
 	// reads the resulting DAG state and review outcome from Handler.
-	Reviewer director.Reviewer
+	Reviewer supervision.Reviewer
 
 	// Store persists per-session artifacts under .bcc/sessions/<id>/.
 	// Required.
-	Store *director.Store
+	Store *supervision.Store
 
 	// NewExecutor builds a fresh Executor for one (phase, attempt). The
 	// factory registers the Executor against the run-wide registry so it
@@ -129,7 +129,7 @@ type DirectorPorts struct {
 	// model+effort routing for the Executor role; the factory applies it
 	// as override on top of the configured defaults. nil means use the
 	// configured defaults. Required.
-	NewExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) Executor
+	NewExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *supervision.RoleAssignment) Executor
 
 	// Handler is the run-wide MCP handler. The loop reads briefings,
 	// per-task statuses, and review outcomes through it; the Briefer
@@ -147,5 +147,5 @@ type DirectorPorts struct {
 	// (Briefer, Executor, Reviewer; the Planner is recorded by the
 	// caller before constructing the loop). nil disables persistence;
 	// the loop continues normally.
-	Stats *director.StatsLog
+	Stats *supervision.StatsLog
 }

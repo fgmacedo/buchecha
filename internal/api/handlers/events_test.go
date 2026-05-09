@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/api"
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // liveEventsServer seeds a live session and returns the test server,
@@ -31,16 +31,16 @@ func liveEventsServer(t *testing.T) (*httptest.Server, chan loop.Event, string, 
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	live := director.Session{
+	live := supervision.Session{
 		ID:        "abcdef000559",
 		SpecPath:  "/spec/sse.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    director.SessionRunning,
+		Status:    supervision.SessionRunning,
 	}
 	writeManifest(t, baseDir, live)
-	store, err := director.OpenSession(baseDir, live.ID)
+	store, err := supervision.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}
@@ -316,16 +316,16 @@ func TestEvents_HeartbeatOnFastInterval(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	live := director.Session{
+	live := supervision.Session{
 		ID:        "abcdef00abc1",
 		SpecPath:  "/spec/hb.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    director.SessionRunning,
+		Status:    supervision.SessionRunning,
 	}
 	writeManifest(t, baseDir, live)
-	store, err := director.OpenSession(baseDir, live.ID)
+	store, err := supervision.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -390,13 +390,13 @@ func TestEvents_ReplaysArchivedSession(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	archived := director.Session{
+	archived := supervision.Session{
 		ID:        "abcdef00a4ce",
 		SpecPath:  "/spec/a.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-1 * time.Hour),
 		UpdatedAt: now.Add(-30 * time.Minute),
-		Status:    director.SessionDone,
+		Status:    supervision.SessionDone,
 	}
 	writeManifest(t, baseDir, archived)
 	sessionDir := filepath.Join(baseDir, "sessions", archived.ID)

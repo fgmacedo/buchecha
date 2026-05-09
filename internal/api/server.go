@@ -38,7 +38,7 @@ type Mounts struct {
 	MCP http.Handler
 	// MCPAuth, when non-nil, wraps MCP with a path-scoped auth
 	// middleware. The composition root supplies it so the api package
-	// does not import internal/director/dag or internal/mcp; see
+	// does not import internal/supervision/dag or internal/mcp; see
 	// MCPAuth in this package for the canonical implementation. nil
 	// leaves /mcp/* unauthenticated.
 	MCPAuth func(http.Handler) http.Handler

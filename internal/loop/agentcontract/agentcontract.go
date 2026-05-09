@@ -12,7 +12,7 @@
 // streaming agent activity. The format-neutral markdown blocks
 // (wire_protocol.md, absolute_restrictions.md, working_tree.md) ship
 // from here so there is one canonical bcc-level statement of these
-// rules; every per-role prompt under internal/director/prompts/
+// rules; every per-role prompt under internal/supervision/prompts/
 // composes its template by extending Partials().
 //
 // What is NOT here: the MCP transport itself (HTTP server, mcp-config
@@ -20,7 +20,7 @@
 // executor adapter; the per-vendor stream-json parser, which lives
 // under the relevant adapter (e.g. internal/executor/claude/streamjson);
 // the MCP method dispatch table that translates bcc_* method calls into
-// DAG mutations, which lives in internal/director/dag.
+// DAG mutations, which lives in internal/supervision/dag.
 package agentcontract
 
 import (

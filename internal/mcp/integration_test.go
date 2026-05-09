@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/mcp"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 )
 
 // TestEndToEnd_DAGHandlerOverHTTP exercises the real Handler over the

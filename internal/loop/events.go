@@ -3,8 +3,8 @@ package loop
 import (
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/director"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // ExecResult is the result of one Executor.Run.
@@ -77,7 +77,7 @@ func (IterationFinished) isLoopEvent() {}
 // after the Plan has been confirmed by the user. The Plan pointer is
 // shared (read-only) with the consumer; the loop never mutates it.
 type PhasePlanned struct {
-	Plan *director.Plan
+	Plan *supervision.Plan
 	At   time.Time
 }
 
@@ -105,7 +105,7 @@ func (PhasePlanned) isLoopEvent() {}
 type PhaseBriefed struct {
 	PhaseID        string
 	Iteration      int
-	Briefing       *director.Briefing
+	Briefing       *supervision.Briefing
 	BrieferModel   string
 	BrieferEffort  string
 	ExecutorModel  string

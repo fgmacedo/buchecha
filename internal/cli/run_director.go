@@ -20,14 +20,14 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/fgmacedo/buchecha/internal/config"
-	"github.com/fgmacedo/buchecha/internal/director"
-	directorclaude "github.com/fgmacedo/buchecha/internal/director/claude"
-	"github.com/fgmacedo/buchecha/internal/director/dag"
 	"github.com/fgmacedo/buchecha/internal/executor/claude"
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+	directorclaude "github.com/fgmacedo/buchecha/internal/supervision/claude"
+	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/tui"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
@@ -57,14 +57,14 @@ func (e errPlannerSkipped) Error() string {
 // produced a Briefing.
 type directorDeps struct {
 	cfg         *config.Config
-	planner     director.Planner
-	briefer     director.Briefer
-	reviewer    director.Reviewer
+	planner     supervision.Planner
+	briefer     supervision.Briefer
+	reviewer    supervision.Reviewer
 	registerFn  func(role dag.Role) (string, func(), error)
 	baseDir     string
-	store       *director.Store
+	store       *supervision.Store
 	git         loop.GitProbe
-	newExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor
+	newExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *supervision.RoleAssignment) loop.Executor
 	now         func() time.Time
 	// handler, when non-nil, overrides the run-wide MCP handler the
 	// loop receives in DirectorPorts. Tests inject one to drive the
@@ -79,7 +79,7 @@ type directorDeps struct {
 	// stats, when non-nil, persists per-role spawn telemetry to
 	// stats.jsonl in the session directory. Bound after session
 	// resolution; tests typically leave nil to opt out.
-	stats *director.StatsLog
+	stats *supervision.StatsLog
 	// serviceEvents, when non-nil, is the long-lived loop.Event channel
 	// the services aggregator consumes. Per-run tees forward every loop
 	// event onto it (non-blocking) so /api/v1/sessions/{id}/events
@@ -201,7 +201,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath, promp
 // Pre-resolving the session means the services aggregator passed to api.New
 // has a live SessionStore from t=0. When specPath is empty (prompt-only run),
 // os.ReadFile is skipped and the hash is derived from the prompt alone.
-func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*director.Store, error) {
+func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*supervision.Store, error) {
 	var content []byte
 	if specPath != "" {
 		var err error
@@ -210,7 +210,7 @@ func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*dire
 			return nil, fmt.Errorf("director: read spec %s: %w", specPath, err)
 		}
 	}
-	hash := director.ComputeSessionHash(content, prompt)
+	hash := supervision.ComputeSessionHash(content, prompt)
 	deps := directorDeps{baseDir: ".bcc", now: time.Now, prompt: prompt}
 	store, err := resolveDirectorSession(deps, dio, specPath, hash)
 	if err != nil {
@@ -222,7 +222,7 @@ func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*dire
 // directorAuditPath returns the per-session MCP audit log path when the
 // audit toggle is on, otherwise empty. Matches the path mcpBoot.bindSession
 // uses so the services Audit and the dag handler agree on the destination.
-func directorAuditPath(cfg *config.Config, store *director.Store) string {
+func directorAuditPath(cfg *config.Config, store *supervision.Store) string {
 	if cfg == nil || store == nil || !cfg.Debug.IsMCPAuditEnabled() {
 		return ""
 	}
@@ -233,7 +233,7 @@ func directorAuditPath(cfg *config.Config, store *director.Store) string {
 // the persist_events_log toggle is on, otherwise empty. The same file
 // is later read back by EventService.Replay for archived sessions and
 // by bcc dev for replay-driven UI development.
-func directorEventsLogPath(cfg *config.Config, store *director.Store) string {
+func directorEventsLogPath(cfg *config.Config, store *supervision.Store) string {
 	if cfg == nil || store == nil || !cfg.Debug.IsPersistEventsLogEnabled() {
 		return ""
 	}
@@ -343,13 +343,13 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 // handler for tier and summary lookups when validating bcc_plan_emit
 // payloads and for renders that want a flat catalog (auditing, future
 // API endpoints).
-func buildCapabilityRegistry() director.CapabilityRegistry {
+func buildCapabilityRegistry() supervision.CapabilityRegistry {
 	known := config.KnownProviderList()
-	lists := make([][]director.Capability, 0, len(known))
+	lists := make([][]supervision.Capability, 0, len(known))
 	for _, kp := range known {
-		caps := make([]director.Capability, 0, len(kp.Models))
+		caps := make([]supervision.Capability, 0, len(kp.Models))
 		for _, m := range kp.Models {
-			caps = append(caps, director.Capability{
+			caps = append(caps, supervision.Capability{
 				Provider: m.Provider,
 				Model:    m.Model,
 				Tier:     m.Tier,
@@ -359,7 +359,7 @@ func buildCapabilityRegistry() director.CapabilityRegistry {
 		}
 		lists = append(lists, caps)
 	}
-	return director.MergeCapabilityRegistries(lists...)
+	return supervision.MergeCapabilityRegistries(lists...)
 }
 
 // buildRoleMenus converts the user-facing config menus into the
@@ -367,14 +367,14 @@ func buildCapabilityRegistry() director.CapabilityRegistry {
 // summary metadata when bcc has them in its built-in registry. Options
 // with no curated entry render in the Planner prompt without tier or
 // summary, but with the user's free-form note when present.
-func buildRoleMenus(cfg *config.Config) director.RoleMenus {
+func buildRoleMenus(cfg *config.Config) supervision.RoleMenus {
 	if cfg == nil {
-		return director.RoleMenus{}
+		return supervision.RoleMenus{}
 	}
-	convert := func(policy config.RolePolicy) director.RoleMenu {
-		out := make([]director.MenuOption, 0, len(policy.Options))
+	convert := func(policy config.RolePolicy) supervision.RoleMenu {
+		out := make([]supervision.MenuOption, 0, len(policy.Options))
 		for _, opt := range policy.Options {
-			mo := director.MenuOption{
+			mo := supervision.MenuOption{
 				Provider: opt.Provider,
 				Model:    opt.Model,
 				Efforts:  append([]string(nil), opt.Efforts...),
@@ -386,9 +386,9 @@ func buildRoleMenus(cfg *config.Config) director.RoleMenus {
 			}
 			out = append(out, mo)
 		}
-		return director.RoleMenu{Options: out}
+		return supervision.RoleMenu{Options: out}
 	}
-	return director.RoleMenus{
+	return supervision.RoleMenus{
 		Planner:  convert(cfg.Roles.Planner),
 		Briefer:  convert(cfg.Roles.Briefer),
 		Executor: convert(cfg.Roles.Executor),
@@ -401,12 +401,12 @@ func buildRoleMenus(cfg *config.Config) director.RoleMenus {
 // menu. Falls back to a clearly-empty RoleAssignment when no options
 // survived; the adapter then errors out at spawn time with a useful
 // message.
-func plannerAssignmentFor(cfg *config.Config) director.RoleAssignment {
+func plannerAssignmentFor(cfg *config.Config) supervision.RoleAssignment {
 	if cfg == nil || len(cfg.Roles.Planner.Options) == 0 {
-		return director.RoleAssignment{}
+		return supervision.RoleAssignment{}
 	}
 	opt := cfg.Roles.Planner.Options[0]
-	a := director.RoleAssignment{Provider: opt.Provider, Model: opt.Model}
+	a := supervision.RoleAssignment{Provider: opt.Provider, Model: opt.Model}
 	if len(opt.Efforts) > 0 {
 		a.Effort = opt.Efforts[0]
 	}
@@ -435,10 +435,10 @@ func makeNewExecutor(
 	boot *mcpBoot,
 	subprocessStderr io.Writer,
 	logSinks func(args dag.RegisterArgs, agentID string) (executorLogSinks, error),
-	store *director.Store,
+	store *supervision.Store,
 	loopEvents chan<- loop.Event,
-) func(dag.RegisterArgs, func(string) (string, error), *director.RoleAssignment) loop.Executor {
-	return func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *director.RoleAssignment) loop.Executor {
+) func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
+	return func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *supervision.RoleAssignment) loop.Executor {
 		mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
 		if err != nil {
 			return &failingExecutor{err: fmt.Errorf("register executor agent: %w", err)}
@@ -535,7 +535,7 @@ func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
 	}
 	bucketFor := func(role, iter string) string {
 		if role == string(dag.RolePlanner) {
-			return director.PlannerRunsBucket
+			return supervision.PlannerRunsBucket
 		}
 		return iter
 	}
@@ -652,7 +652,7 @@ func runDirectorWith(
 			return fmt.Errorf("director: read spec %s: %w", specPath, err)
 		}
 	}
-	hash := director.ComputeSessionHash(content, deps.prompt)
+	hash := supervision.ComputeSessionHash(content, deps.prompt)
 
 	if deps.store == nil {
 		store, sessErr := resolveDirectorSession(deps, dio, specPath, hash)
@@ -669,10 +669,10 @@ func runDirectorWith(
 		if g, ok := deps.git.(dag.HeadProvider); ok {
 			headProvider = g
 		}
-		deps.boot.bindSession(deps.store, cfg.Debug.IsMCPAuditEnabled(), headProvider, director.JournalDeltaProvider{})
+		deps.boot.bindSession(deps.store, cfg.Debug.IsMCPAuditEnabled(), headProvider, supervision.JournalDeltaProvider{})
 	}
 	if deps.store != nil && deps.stats == nil {
-		deps.stats = director.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
+		deps.stats = supervision.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
 	}
 
 	enableDebugLogCapture(cfg, &deps)
@@ -692,7 +692,7 @@ func runDirectorWith(
 		if errors.As(err, &skipped) {
 			return finishHeadlessNothingToDo(deps, dio, skipped.reason)
 		}
-		_ = deps.store.Touch(director.SessionAborted, deps.now())
+		_ = deps.store.Touch(supervision.SessionAborted, deps.now())
 		return err
 	}
 
@@ -717,7 +717,7 @@ func runDirectorWith(
 	events, drained, derr := dispatchEvents(runOutput, loop.LevelInfo)
 	if derr != nil {
 		ExitCode = loop.ExitInvalid
-		_ = deps.store.Touch(director.SessionAborted, deps.now())
+		_ = deps.store.Touch(supervision.SessionAborted, deps.now())
 		return derr
 	}
 
@@ -743,7 +743,7 @@ func runDirectorWith(
 //  3. --session <id> only (no --resume): require the session to exist;
 //     do not silently overwrite by creating a fresh one.
 //  4. neither: create a new session.
-func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash string) (*director.Store, error) {
+func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash string) (*supervision.Store, error) {
 	now := deps.now
 	if now == nil {
 		now = time.Now
@@ -759,7 +759,7 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 
 	// persistPrompt stamps the prompt onto a freshly created session
 	// manifest so bcc sessions show reflects the user's directive.
-	persistPrompt := func(store *director.Store) *director.Store {
+	persistPrompt := func(store *supervision.Store) *supervision.Store {
 		if deps.prompt == "" || store == nil {
 			return store
 		}
@@ -767,36 +767,36 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 		if now == nil {
 			now = time.Now
 		}
-		_ = store.Touch(director.SessionRunning, now())
+		_ = store.Touch(supervision.SessionRunning, now())
 		return store
 	}
 
 	switch {
 	case dio.session != "":
-		sess, err := director.ResolveSession(deps.baseDir, dio.session, specPath)
+		sess, err := supervision.ResolveSession(deps.baseDir, dio.session, specPath)
 		if err != nil {
 			return nil, fmt.Errorf("director: resolve session: %w", err)
 		}
-		store, err := director.OpenSession(deps.baseDir, sess.ID)
+		store, err := supervision.OpenSession(deps.baseDir, sess.ID)
 		if err != nil {
 			return nil, fmt.Errorf("director: open session %s: %w", sess.ID, err)
 		}
 		return store, nil
 	case dio.resume:
-		matches, err := director.FindSessionsForSpec(deps.baseDir, sessionSpecPath)
+		matches, err := supervision.FindSessionsForSpec(deps.baseDir, sessionSpecPath)
 		if err != nil {
 			return nil, fmt.Errorf("director: list sessions: %w", err)
 		}
 		switch len(matches) {
 		case 0:
 			fmt.Fprintln(dio.stderr, "bcc: --resume requested but no session for this spec; creating a fresh one")
-			store, _, cerr := director.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
+			store, _, cerr := supervision.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
 			if cerr != nil {
 				return nil, fmt.Errorf("director: create session: %w", cerr)
 			}
 			return persistPrompt(store), nil
 		case 1:
-			store, err := director.OpenSession(deps.baseDir, matches[0].ID)
+			store, err := supervision.OpenSession(deps.baseDir, matches[0].ID)
 			if err != nil {
 				return nil, fmt.Errorf("director: open session %s: %w", matches[0].ID, err)
 			}
@@ -807,10 +807,10 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 				ids = append(ids, m.ID)
 			}
 			return nil, fmt.Errorf("%w: candidates: %s",
-				director.ErrSessionAmbiguous, strings.Join(ids, ", "))
+				supervision.ErrSessionAmbiguous, strings.Join(ids, ", "))
 		}
 	default:
-		store, _, err := director.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
+		store, _, err := supervision.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
 		if err != nil {
 			return nil, fmt.Errorf("director: create session: %w", err)
 		}
@@ -976,7 +976,7 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 	// channel. Used by both the first-run orchestrator and the session
 	// Resume factory; loop.Loop.Run owns the channel lifecycle and emits
 	// a terminal LoopFinished plus close on every exit path.
-	runLoopOn := func(plan *director.Plan, ch chan loop.Event) {
+	runLoopOn := func(plan *supervision.Plan, ch chan loop.Event) {
 		defer func() {
 			if r := recover(); r != nil {
 				setLatest(runResult{
@@ -1066,14 +1066,14 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		if perr != nil {
 			var skipped errPlannerSkipped
 			if errors.As(perr, &skipped) {
-				_ = deps.store.Touch(director.SessionDone, deps.now())
+				_ = deps.store.Touch(supervision.SessionDone, deps.now())
 				model.SignalPlanSkipped(skipped.reason)
 				setLatest(runResult{code: loop.ExitDone, err: nil})
 				emitLoopFinished(raw, LoopFinishedReasonNothingToDo, loop.ExitDone)
 				close(raw)
 				return
 			}
-			_ = deps.store.Touch(director.SessionAborted, deps.now())
+			_ = deps.store.Touch(supervision.SessionAborted, deps.now())
 			// Planner crashed without producing a terminal MCP call
 			// (e.g. claude exited 1 because the account ran out of
 			// credits). Keep the TUI alive in session mode so the
@@ -1152,7 +1152,7 @@ func finishHeadlessNothingToDo(deps directorDeps, dio directorIO, reason string)
 	if now == nil {
 		now = time.Now
 	}
-	_ = deps.store.Touch(director.SessionDone, now())
+	_ = deps.store.Touch(supervision.SessionDone, now())
 
 	events, drained, derr := dispatchEvents(runOutput, loop.LevelInfo)
 	if derr != nil {
@@ -1196,7 +1196,7 @@ func resolveDirectorPlanTUI(
 	deps directorDeps,
 	dio directorIO,
 	raw chan<- loop.Event,
-) (*director.Plan, error) {
+) (*supervision.Plan, error) {
 	// resolveDirectorPlan accepts an events sink that, when non-nil,
 	// receives the planner's AgentEvents already wrapped as
 	// loop.AgentEventReceived; the existing flow is otherwise unchanged.
@@ -1228,7 +1228,7 @@ func resolveDirectorPlan(
 	deps directorDeps,
 	dio directorIO,
 	raw chan<- loop.Event,
-) (*director.Plan, error) {
+) (*supervision.Plan, error) {
 	if dio.resume {
 		existing, readErr := deps.store.ReadPlan()
 		if readErr == nil {
@@ -1278,7 +1278,7 @@ func resolveDirectorPlan(
 // A missing dag.json is not an error: the session may have been
 // created but never advanced past planning. In that case the loop
 // initializes the state from the plan as usual.
-func loadPersistedDAGState(deps directorDeps, plan *director.Plan) error {
+func loadPersistedDAGState(deps directorDeps, plan *supervision.Plan) error {
 	handler := directorEffectiveHandler(deps)
 	if handler == nil || deps.store == nil {
 		return nil
@@ -1304,7 +1304,7 @@ func loadPersistedDAGState(deps directorDeps, plan *director.Plan) error {
 //
 // When raw is non-nil, the planner's AgentEvents are forwarded onto
 // raw as loop.AgentEventReceived for the TUI to render in real time.
-func freshPlan(ctx context.Context, specPath string, hash string, deps directorDeps, raw chan<- loop.Event) (*director.Plan, error) {
+func freshPlan(ctx context.Context, specPath string, hash string, deps directorDeps, raw chan<- loop.Event) (*supervision.Plan, error) {
 	agentID, deregister, err := registerDirectorAgent(deps, dag.RolePlanner)
 	if err != nil {
 		ExitCode = loop.ExitInvalid
@@ -1331,8 +1331,8 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	}
 
 	var (
-		plannerRegistry director.CapabilityRegistry
-		plannerMenus    director.RoleMenus
+		plannerRegistry supervision.CapabilityRegistry
+		plannerMenus    supervision.RoleMenus
 	)
 	if h := directorEffectiveHandler(deps); h != nil {
 		if reg := h.CapabilityRegistry(); reg != nil {
@@ -1340,7 +1340,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		}
 		plannerMenus = h.RoleMenus()
 	}
-	plan, plannerStats, runErr := deps.planner.Plan(ctx, director.PlannerInput{
+	plan, plannerStats, runErr := deps.planner.Plan(ctx, supervision.PlannerInput{
 		AgentID:    agentID,
 		SpecPath:   specPath,
 		SpecHash:   hash,
@@ -1354,7 +1354,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	}
 	<-pumpDone
 	if plannerStats != nil && deps.stats != nil {
-		if err := deps.stats.Append(director.StatsEntry{
+		if err := deps.stats.Append(supervision.StatsEntry{
 			At:           deps.now(),
 			Role:         string(dag.RolePlanner),
 			DurationMS:   plannerStats.DurationMS,
@@ -1390,7 +1390,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	if plan.PlannedAt.IsZero() {
 		plan.PlannedAt = deps.now()
 	}
-	if err := director.ValidatePlan(plan); err != nil {
+	if err := supervision.ValidatePlan(plan); err != nil {
 		ExitCode = loop.ExitInvalid
 		return nil, err
 	}
@@ -1415,11 +1415,11 @@ func rePlanFlow(
 	ctx context.Context,
 	specPath string,
 	hash string,
-	old *director.Plan,
+	old *supervision.Plan,
 	deps directorDeps,
 	dio directorIO,
 	raw chan<- loop.Event,
-) (*director.Plan, error) {
+) (*supervision.Plan, error) {
 	if raw == nil {
 		fmt.Fprintln(dio.stderr, "bcc: --resume; spec hash diverged from persisted plan; replanning")
 	}
@@ -1428,8 +1428,8 @@ func rePlanFlow(
 		return nil, err
 	}
 	if raw == nil {
-		diff := director.ComputePlanDiff(old, newPlan)
-		director.RenderPlanDiff(diff, dio.stderr)
+		diff := supervision.ComputePlanDiff(old, newPlan)
+		supervision.RenderPlanDiff(diff, dio.stderr)
 	}
 
 	if err := deps.store.WritePlan(newPlan); err != nil {
