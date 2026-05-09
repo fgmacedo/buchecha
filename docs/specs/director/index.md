@@ -52,14 +52,14 @@ graph TD
     BCC --> SESS[".bcc/sessions/&lt;id&gt;/"]
     BCC --> MCP[in-process MCP server]
     BCC --> PLANNER[Planner]
-    PLANNER -- bcc_plan_emit --> MCP
+    PLANNER -- plan_emit --> MCP
     MCP --> DAG[in-memory DAG state]
     BCC --> BRIEFER[Briefer]
-    BRIEFER -- bcc_briefing_emit --> MCP
+    BRIEFER -- briefing_emit --> MCP
     BCC --> EXEC[Executor]
-    EXEC -- bcc_task_started/completed/iteration_finished --> MCP
+    EXEC -- task_started/completed/iteration_finished --> MCP
     BCC --> REV[Reviewer]
-    REV -- bcc_task_approved/needs_fix, bcc_review_finished --> MCP
+    REV -- task_approved/needs_fix, review_finished --> MCP
     MCP --> TUI[Live TUI]
 ```
 
@@ -67,13 +67,13 @@ bcc is still the orchestrator at the process layer. The Director roles are the c
 
 ### Role responsibilities
 
-The **Planner** reads the spec and emits a typed Plan via `bcc_plan_emit`: phases, tasks, dependencies, per-task acceptance criteria, retry budgets. The Plan is a DAG, not a list.
+The **Planner** reads the spec and emits a typed Plan via `plan_emit`: phases, tasks, dependencies, per-task acceptance criteria, retry budgets. The Plan is a DAG, not a list.
 
-The **Briefer** picks the next sub-DAG inside an eligible phase, packages a Briefing (instructions, sub-DAG task ids, prior feedback if retrying), and emits it via `bcc_briefing_emit`. The Reviewer's previous feedback rides into the next briefing as `prior_feedback`; on user escalation, the user's hint is prepended.
+The **Briefer** picks the next sub-DAG inside an eligible phase, packages a Briefing (instructions, sub-DAG task ids, prior feedback if retrying), and emits it via `briefing_emit`. The Reviewer's previous feedback rides into the next briefing as `prior_feedback`; on user escalation, the user's hint is prepended.
 
-The **Executor** consumes the Briefing through MCP queries (`bcc_get_briefing`, `bcc_get_pending_tasks`), edits the working tree, calls `bcc_task_started`/`bcc_task_completed` per task, and reports the iteration outcome via `bcc_iteration_finished`.
+The **Executor** consumes the Briefing through MCP queries (`get_briefing`, `get_pending_tasks`), edits the working tree, calls `task_started`/`task_completed` per task, and reports the iteration outcome via `iteration_finished`.
 
-The **Reviewer** audits each task in the sub-DAG against its acceptance criteria using `bcc_get_baseline`, `bcc_get_journal_delta`, and `bcc_get_dag_snapshot`. It reports outcomes via `bcc_task_approved` / `bcc_task_needs_fix` and closes with `bcc_review_finished` (`approve` / `revise` / `escalate`).
+The **Reviewer** audits each task in the sub-DAG against its acceptance criteria using `get_baseline`, `get_journal_delta`, and `get_dag_snapshot`. It reports outcomes via `task_approved` / `task_needs_fix` and closes with `review_finished` (`approve` / `revise` / `escalate`).
 
 bcc itself does not edit files, does not run `git` mutations beyond the head reads, does not talk to the user freely, and does not re-read the spec at runtime. It runs the MCP server, persists DAG state and audit log to `.bcc/sessions/<id>/`, drives the loop, and renders the TUI.
 

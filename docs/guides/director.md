@@ -50,10 +50,10 @@ spec → Planner ─► Plan (DAG of phases and tasks)
               approve | revise | escalate
 ```
 
-1. The Planner reads the spec via the Read tool and submits the Plan through `bcc_plan_emit`. bcc validates the structure (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps) and persists it to the session directory.
-2. While any task is still `pending` or `needs_fix`, the Briefer picks one eligible phase, decides which subset of its tasks to attempt this iteration (the **sub-DAG**), and submits the Briefing through `bcc_briefing_emit`.
-3. The Executor reads the Briefing through `bcc_get_briefing`, runs the work, and reports per-task progress through `bcc_task_started` / `bcc_task_completed`. It closes with `bcc_iteration_finished(signal, summary)`.
-4. The Reviewer reads the Briefing, the phase baseline (`bcc_get_baseline`), and the journal delta (`bcc_get_journal_delta`); uses Bash with git diff/log/show to inspect the cumulative work; audits each task; calls `bcc_task_approved` or `bcc_task_needs_fix(feedback)`; and closes with `bcc_review_finished(outcome, reasoning)`.
+1. The Planner reads the spec via the Read tool and submits the Plan through `plan_emit`. bcc validates the structure (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps) and persists it to the session directory.
+2. While any task is still `pending` or `needs_fix`, the Briefer picks one eligible phase, decides which subset of its tasks to attempt this iteration (the **sub-DAG**), and submits the Briefing through `briefing_emit`.
+3. The Executor reads the Briefing through `get_briefing`, runs the work, and reports per-task progress through `task_started` / `task_completed`. It closes with `iteration_finished(signal, summary)`.
+4. The Reviewer reads the Briefing, the phase baseline (`get_baseline`), and the journal delta (`get_journal_delta`); uses Bash with git diff/log/show to inspect the cumulative work; audits each task; calls `task_approved` or `task_needs_fix(feedback)`; and closes with `review_finished(outcome, reasoning)`.
 5. The decider walks the sub-DAG state: every task `done` advances the iteration; any `needs_fix` retries the Executor with the per-task feedback rolled into the next prompt; an explicit `escalate` outcome (or running out of retry budget) pauses the loop and asks the user.
 
 `bcc run` returns `ExitDone` only when the DAG has no pending tasks left.
@@ -108,10 +108,10 @@ Every message between bcc and an agent is an MCP method call routed through bcc'
 
 | Role | Reads | Writes |
 |---|---|---|
-| Planner | spec via Read tool | `bcc_plan_emit`, `bcc_task_started/completed("planning")` |
-| Briefer | `bcc_get_dag_snapshot` | `bcc_briefing_emit` |
-| Executor | `bcc_get_briefing`, `bcc_get_pending_tasks` | `bcc_task_started/completed`, `bcc_iteration_finished` |
-| Reviewer | `bcc_get_briefing`, `bcc_get_baseline`, `bcc_get_journal_delta`, `bcc_get_dag_snapshot` | `bcc_task_approved`, `bcc_task_needs_fix(feedback)`, `bcc_review_finished` |
+| Planner | spec via Read tool | `plan_emit`, `task_started/completed("planning")` |
+| Briefer | `get_dag_snapshot` | `briefing_emit` |
+| Executor | `get_briefing`, `get_pending_tasks` | `task_started/completed`, `iteration_finished` |
+| Reviewer | `get_briefing`, `get_baseline`, `get_journal_delta`, `get_dag_snapshot` | `task_approved`, `task_needs_fix(feedback)`, `review_finished` |
 
 Every call carries the `agent_id` bcc embedded in the role's prompt. Calls without `agent_id`, with an unregistered id, or with a role that does not match the connection are rejected with a structured error.
 
@@ -138,9 +138,9 @@ tail -n 50 .bcc/sessions/<id>/mcp-log.jsonl
 
 Each line is `{at, role, agent_id, method, input, result, err?}`. Common patterns:
 
-- **Planner kept rejecting `bcc_plan_emit`**: the validator error is in `err`; usually a phase cycle, an empty phase, or a duplicate id.
-- **Briefer emitted an empty sub-DAG**: shows up as `bcc_briefing_emit` errors with `empty sub_dag_task_ids`. The eligible phase had no `pending` or `needs_fix` tasks; check `dag.json`.
-- **Reviewer never called `bcc_review_finished`**: the loop treats this as `escalate`. The audit log shows the missing terminal method; the Reviewer probably exited early.
+- **Planner kept rejecting `plan_emit`**: the validator error is in `err`; usually a phase cycle, an empty phase, or a duplicate id.
+- **Briefer emitted an empty sub-DAG**: shows up as `briefing_emit` errors with `empty sub_dag_task_ids`. The eligible phase had no `pending` or `needs_fix` tasks; check `dag.json`.
+- **Reviewer never called `review_finished`**: the loop treats this as `escalate`. The audit log shows the missing terminal method; the Reviewer probably exited early.
 - **Executor head did not advance**: the loop terminates with `head_stuck`. The Executor produced no commits during the attempt; usually a tooling failure or a prompt that did not commit.
 
 Disable the audit log with `[director].mcp_audit = false` if it grows uncomfortably large; the format is plain JSONL but a long run can produce hundreds of kilobytes.

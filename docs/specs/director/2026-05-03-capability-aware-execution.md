@@ -147,7 +147,7 @@ installs the result on the run-wide handler via
 
 ## Wire surface
 
-`bcc_plan_emit` accepts the five optional Phase fields documented
+`plan_emit` accepts the five optional Phase fields documented
 above. The handler validates per-phase assignments against the attached
 CapabilityRegistry (model must be in the registry, effort must be in
 the model's `Efforts` list when set) and validates `prepared_briefing`
@@ -159,7 +159,7 @@ ValidatePlan failure.
 
 There is no new MCP method. The registry travels into the Planner
 prompt at template render time; the Briefer reads assignments from the
-DAG snapshot it already fetches via `bcc_get_dag_snapshot`. The
+DAG snapshot it already fetches via `get_dag_snapshot`. The
 Executor never queries the registry; the loop applies the assignment
 when constructing the per-iteration Executor.
 
@@ -235,7 +235,7 @@ edit the spec.
 - `internal/director/dag/handler.go`: `SetCapabilityRegistry`,
   `CapabilityRegistry()`, `RecordSyntheticBriefing`,
   `RecordSyntheticApproval`, `storeValidatedBriefing` (shared with
-  `bcc_briefing_emit`).
+  `briefing_emit`).
 - `internal/director/prompts/plan.md`: Available models table and the
   PreparedBriefing guidance.
 - `internal/director/schemas/plan.schema.json`: `roleAssignment`,
