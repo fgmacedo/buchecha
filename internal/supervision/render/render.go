@@ -1,10 +1,29 @@
-package supervision
+package render
 
 import (
 	"bytes"
 	"fmt"
 
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/supervision"
+)
+
+// Type aliases so callers and tests in this package can reference
+// supervision types without qualification.
+type (
+	Briefing       = supervision.Briefing
+	Phase          = supervision.Phase
+	Task           = supervision.Task
+	AcceptanceItem = supervision.AcceptanceItem
+	EvidenceKind   = supervision.EvidenceKind
+)
+
+// Constants forwarded from supervision so tests in this package can use
+// short names.
+const (
+	EvidenceTest = supervision.EvidenceTest
+	EvidenceDiff = supervision.EvidenceDiff
+	TaskPending  = supervision.TaskPending
 )
 
 // briefingView is the flat field set the briefing template consumes.

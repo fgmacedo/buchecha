@@ -1,4 +1,4 @@
-package supervision
+package render
 
 import (
 	"flag"
@@ -6,13 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.md golden files")
 
 // TestRenderBriefingUser_Golden pins the rendered user prompt for a
 // fixed (Briefing, Phase) pair to a checked-in fixture. Run with
-// `go test -update-golden ./internal/supervision/` after intentional
+// `go test -update-golden ./internal/supervision/render/` after intentional
 // template changes to refresh the file.
 func TestRenderBriefingUser_Golden(t *testing.T) {
 	phase := &Phase{
@@ -264,3 +266,7 @@ func TestRenderBriefingUser_FiltersToSubDAG(t *testing.T) {
 		t.Errorf("sub-DAG filter dropped target task:\n%s", got)
 	}
 }
+
+// Ensure the supervision package import is used (type aliases resolve at compile time,
+// but the import is needed for the constant forwarding and AcceptanceItem).
+var _ supervision.Briefing

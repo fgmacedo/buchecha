@@ -23,12 +23,6 @@ var briefPromptMD string
 //go:embed prompts/review.md
 var reviewPromptMD string
 
-//go:embed prompts/briefing.md
-var briefingPromptMD string
-
-//go:embed prompts/briefing_system.md
-var briefingSystemMD string
-
 //go:embed schemas/plan.schema.json
 var planSchemaJSON []byte
 

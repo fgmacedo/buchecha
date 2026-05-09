@@ -15,6 +15,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/supervision/menu"
+	"github.com/fgmacedo/buchecha/internal/supervision/render"
 )
 
 // runDirector drives the DAG-driven Director state machine:
@@ -179,7 +180,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 
 		hintForIteration := pendingHint
 		pendingHint = ""
-		userPrompt, err := supervision.RenderBriefingUser(briefing, phase, hintForIteration)
+		userPrompt, err := render.RenderBriefingUser(briefing, phase, hintForIteration)
 		if err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: render briefing user prompt: %w", err)
@@ -204,7 +205,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		// rewrites the same path because each attempt registers a fresh
 		// agent_id; only the latest rendered file is consumed.
 		renderSystem := func(agentID string) (string, error) {
-			systemPrompt, err := supervision.RenderBriefingSystem(agentID)
+			systemPrompt, err := render.RenderBriefingSystem(agentID)
 			if err != nil {
 				return "", fmt.Errorf("director: render briefing system prompt: %w", err)
 			}
