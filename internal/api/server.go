@@ -6,7 +6,7 @@
 // skeleton.
 //
 // Layer rules: api may import internal/services and stdlib. It must
-// not import any other internal package (loop, director, director/dag,
+// not import any other internal package (loop, supervision, supervision/dag,
 // cli, tui, mcp, executor adapters, or git adapters).
 package api
 

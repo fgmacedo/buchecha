@@ -39,46 +39,51 @@ internal/api/                    (HTTP API server, chi router, handlers)
 internal/webui/                  (embedded SPA bundle http.Handler)
         ↓
 internal/services/               (application services layer: SessionService,
-                                  EventService, BriefingService, PromptService,
-                                  read APIs over the core, audit log, events
-                                  fan-out with seq numbers, ring buffer, closed
-                                  error enum)
+                                  BriefingService, PromptService; CRUD readers,
+                                  audit log, error codes, file IO helpers)
+internal/services/events/        (EventService, SeqEvent, MarshalEvent,
+                                  IsFinalEvent; fan-out, ring buffer, monotonic
+                                  sequence numbers)
         ↓
 internal/loop/                   (DAG-driven loop driver, decider, exit codes;
                                   defines Executor / GitProbe ports)
 internal/loop/agentcontract/     (shared markdown blocks composed into prompts:
                                   wire_protocol.md, absolute_restrictions.md,
                                   working_tree.md; Signal / AgentEvent types)
-internal/director/               (Plan / Phase / Task / Briefing types;
-                                  Planner / Briefer / Reviewer ports;
-                                  embedded prompts; Session / Store; journal
-                                  delta helper)
-internal/director/dag/           (in-memory DAG state, agent registry,
-                                  per-method MCP handler dispatch, audit log)
-internal/director/schemas/mcp/   (per-method JSON schemas embedded via go:embed)
+internal/supervision/            (wire value objects: Plan, Phase, Task, Briefing;
+                                  Planner / Briefer / Reviewer ports)
+internal/supervision/menu/       (Capability, RoleMenus, plan validation helpers)
+internal/supervision/render/     (briefing prompt rendering; embedded prompts)
+internal/supervision/session/    (Session, Store; on-disk session layout)
+internal/supervision/stats/      (StatsEntry, StatsLog)
+internal/supervision/journal/    (journal delta, git diff helpers)
+internal/supervision/dag/        (in-memory DAG state, agent registry,
+                                  per-method MCP handler dispatch, MCP log;
+                                  embedded MCP schemas)
 internal/config/                 (Config types, defaults, env precedence)
 internal/mcp/                    (stdlib HTTP MCP server with per-connection
                                   auth; mounted at /mcp/* on the API listener)
         ↑
-internal/director/claude/        (claude adapter for Planner/Briefer/Reviewer)
+internal/supervision/claude/     (claude adapter for Planner/Briefer/Reviewer)
+internal/supervision/fake/       (test fakes for Planner/Briefer/Reviewer)
 internal/executor/<adapter>/     (e.g. claude/) implements loop.Executor
 internal/git/<adapter>/          (e.g. cli/) implements loop.GitProbe
 internal/configloader/<adapter>/ (e.g. toml/) reads .bcc.toml into config.Config
 ```
 
-The application services layer (`internal/services/`) is the only caller of the core from above. It owns business operations: read APIs over core state, the audit log, and the events fan-out system with monotonic sequence numbers and a ring buffer of recent events. Protocol adapters (TUI, API, MCP) consume services and are peers at the protocol layer; they expose a behavioral surface (TUI bubbletea program, HTTP API router, MCP handler) while presentation adapters (WebUI SPA) consume the protocol layer but own no business logic themselves.
+The application services layer (`internal/services/`) is the only caller of the core from above. It owns the CRUD readers, audit log, and error codes; `internal/services/events/` owns the EventService with its fan-out, ring buffer, and monotonic sequence numbers. Protocol adapters (TUI, API, MCP) consume services and are peers at the protocol layer; they expose a behavioral surface (TUI bubbletea program, HTTP API router, MCP handler) while presentation adapters (WebUI SPA) consume the protocol layer but own no business logic themselves.
 
 Rules:
 
-1. `internal/loop/agentcontract`, `internal/director` (top-level), and `internal/config` import **no adapters** and depend only on stdlib (plus the embedded JSON schema lib in `director/dag`). They are pure value objects + pure parsers.
-1. `internal/loop` imports `agentcontract`, `config`, `director`, and `director/dag`. It defines its own ports (`ports.go`) for what it consumes from outside (Executor, GitProbe). It does not import any executor or git adapter.
-1. `internal/director/dag` owns the in-memory DAG state, the agent registry, and the MCP handler. It imports `internal/director` for typed value objects (Plan, Phase, Task, TaskStatus, Briefing) and stdlib only.
-1. `internal/services/` owns business operations and is the sole caller of the core. It exports read-only service methods plus the audit log and error enum. Protocol adapters route every read and (V2+) every mutation through internal/services; they import the core only for typed value objects.
-1. `internal/director/claude/` (and future siblings) implement the Director ports (Planner, Briefer, Reviewer). They know about the agent CLI, stream-json, and per-spawn `mcp-config` files.
+1. `internal/loop/agentcontract`, `internal/supervision` (root), and `internal/config` import **no adapters** and depend only on stdlib (plus the embedded JSON schema lib in `supervision/dag`). They are pure value objects + pure parsers.
+1. `internal/loop` imports `agentcontract`, `config`, `supervision`, and `supervision/dag`. It defines its own ports (`ports.go`) for what it consumes from outside (Executor, GitProbe). It does not import any executor or git adapter.
+1. `internal/supervision/dag` owns the in-memory DAG state, the agent registry, and the MCP handler. It imports `internal/supervision` for typed value objects (Plan, Phase, Task, TaskStatus, Briefing), `internal/loop/agentcontract`, and stdlib only.
+1. `internal/services/` owns the CRUD readers, audit log, error codes, and file IO helpers; `internal/services/events/` owns the EventService. Protocol adapters route every read and (V2+) every mutation through internal/services; they import the core only for typed value objects.
+1. `internal/supervision/claude/` (and future siblings) implement the Planner/Briefer/Reviewer ports. They know about the agent CLI, stream-json, and per-spawn `mcp-config` files.
 1. `internal/executor/claude/` (and future siblings) implements `loop.Executor`. It knows about subprocess, stream-json, env, and the MCP wiring (URL, token, role connection name, agent_id) bcc passes via Config. The loop does not.
 1. `internal/api/` and `internal/mcp/` are protocol adapters that consume `internal/services/`. The API uses chi router and huma for OpenAPI; the MCP is a stdlib-only HTTP handler with per-connection authorization mounted at `/mcp/*`. Both depend on services, not on the core directly.
 1. `internal/webui/` is a presentation adapter that exposes an http.Handler serving the embedded SPA bundle. It imports stdlib only and has no knowledge of services, core, or other adapters.
-1. `internal/tui/` imports `services`, `loop` types, `director` types, and `agentcontract` types. Never the reverse.
+1. `internal/tui/` imports `services`, `loop` types, `supervision` types, and `agentcontract` types. Never the reverse.
 1. `internal/git/cli/` shells out to `git` via `os/exec`. Anything else that needs git later goes through the same port.
 1. `internal/cli/` wires everything: load config → build services → build adapters → build loop → run.
 
@@ -93,13 +98,13 @@ bcc never inlines the user's spec content into prompts. Each role receives only 
 The boundary cuts both ways:
 
 1. The framework cannot rely on user-space files. Project docs, `CLAUDE.md`, `AGENTS.md`, custom skills are the user's. A user running `bcc` outside this repo may have none of them, or may have ones that conflict with bcc's contract. Code that reads user-space paths from inside the framework is a leak.
-1. The framework prompts are assertive and self-contained. Per-role prompts live at `internal/director/prompts/{plan,brief,review}.md` and the executor prompt is generated from the rendered Briefing on disk. All prompts compose the shared markdown blocks from `internal/loop/agentcontract/` (`wire_protocol.md`, `absolute_restrictions.md`, `working_tree.md`).
+1. The framework prompts are assertive and self-contained. Per-role prompts live at `internal/supervision/render/prompts/` and the executor prompt is generated from the rendered Briefing on disk. All prompts compose the shared markdown blocks from `internal/loop/agentcontract/` (`wire_protocol.md`, `absolute_restrictions.md`, `working_tree.md`).
 
 ## Domain language (DDD, lightweight)
 
 The domain is small. We use the parts of DDD that pay off and skip the rest.
 
-- **Value objects** (immutable, equality by value, no identity): `Plan`, `Phase`, `Task`, `TaskStatus` (`pending` / `in_progress` / `done` / `needs_fix`), `Briefing`, `Signal` (the iteration outcome string the Executor reports via `bcc_iteration_finished`), `AgentEvent`, `CommitSHA`, `IterationID`, `AgentID`, `Role`. Wire-protocol partials live in `internal/loop/agentcontract/`; Director value objects live in `internal/director/`.
+- **Value objects** (immutable, equality by value, no identity): `Plan`, `Phase`, `Task`, `TaskStatus` (`pending` / `in_progress` / `done` / `needs_fix`), `Briefing`, `Signal` (the iteration outcome string the Executor reports via `bcc_iteration_finished`), `AgentEvent`, `CommitSHA`, `IterationID`, `AgentID`, `Role`. Wire-protocol partials live in `internal/loop/agentcontract/`; supervision value objects live in `internal/supervision/`.
 - **Entities** (identity, lifecycle): `Session` (a `bcc run` instance, identified by id), `Iteration` (per phase + attempt within a session).
 - **Domain services** (behavior that does not belong on a single entity): `DirectorDecide` (per-task aggregation: advance / retry / escalate / abort), `ValidatePlan` (DAG cycle detection at phase and task levels).
 - **Ports**: `Executor`, `GitProbe`, `Planner`, `Briefer`, `Reviewer`, `JournalDeltaProvider`, `GitDiffProvider`. Interfaces in the consumer package.
@@ -112,20 +117,20 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 
 ### SOLID, applied here
 
-- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `director/dag` changes when MCP method semantics change. `director/claude` changes when the per-role agent invocation changes. Mixed concerns are a smell.
+- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `supervision/dag` changes when MCP method semantics change. `supervision/claude` changes when the per-role agent invocation changes. Mixed concerns are a smell.
 - **OCP**: adding a new agent vendor is a new package under `executor/` and `director/<vendor>/`, not edits to existing ones. Adding a new MCP method is a new schema + a new dispatch entry, not surgery on the dispatch table.
 - **LSP**: any `Executor` or Director-role implementation must honor the contract (cancellable via context, exit code propagated, agent events streamed line-by-line, MCP calls obey scope authz). Tests use fakes that prove the contract.
 - **ISP**: small interfaces. `Executor` has one method (`Run`). `Planner`/`Briefer`/`Reviewer` have one method each. `GitProbe` has the few methods the loop actually calls. No god interfaces.
-- **DIP**: `loop` does not import `executor/claude` or `director/claude`. It depends on the ports. Adapters wire up at the cli boundary.
+- **DIP**: `loop` does not import `executor/claude` or `supervision/claude`. It depends on the ports. Adapters wire up at the cli boundary.
 
 ### Orthogonality (Pragmatic Programmer)
 
 A change in one dimension must not cascade into others.
 
 - Replace `bubbletea` with another TUI: touches `internal/tui/` only.
-- Add a `codex` agent: new packages `internal/executor/codex/` and `internal/director/codex/`. No edit to `loop` or `director` (top-level).
+- Add a `codex` agent: new packages `internal/executor/codex/` and `internal/supervision/codex/`. No edit to `loop` or `supervision` (root).
 - Switch from TOML to YAML for config: new adapter under `internal/configloader/`. The `Config` type does not move.
-- Add an MCP method: new JSON schema under `internal/director/schemas/mcp/`, new handler function in `internal/director/dag/handler.go`, new prompt instruction. No loop edit.
+- Add an MCP method: new JSON schema under `internal/supervision/dag/` (embedded MCP schemas), new handler function in `internal/supervision/dag/handler.go`, new prompt instruction. No loop edit.
 
 Red flag: a feature requires editing four or more packages. Stop, revisit cohesion.
 
@@ -189,8 +194,8 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 
 We work in **TDD where it pays** and **retroactive coverage where it does not**. The areas where TDD pays in this codebase:
 
-- DAG validator (`internal/director`): cycle detection, scope checks, schema enforcement.
-- MCP handler dispatch (`internal/director/dag`): per-method handlers under valid input, missing/unregistered `agent_id`, role mismatches, scope violations, cross-method invariants.
+- DAG validator (`internal/supervision`): cycle detection, scope checks, schema enforcement.
+- MCP handler dispatch (`internal/supervision/dag`): per-method handlers under valid input, missing/unregistered `agent_id`, role mismatches, scope violations, cross-method invariants.
 - Director decider (`internal/loop`): per-task aggregation produces expected action and exit code.
 - Config loader (`internal/config`): given TOML + env, produce expected resolved Config.
 
@@ -288,7 +293,7 @@ The absolute restrictions embedded in [`internal/loop/agentcontract/absolute_res
 - This is a solo project (one author plus you). When a better port shape, type, layout, or naming choice emerges, propose the breaking change directly and ship it. No backwards-compatibility shims, deprecation aliases, or parallel old-and-new APIs unless explicitly requested. Compatibility scaffolding only matters once external users exist.
 - **Specs are normative, not historical.** Describe what to build, not how the spec got here. When refining a spec, rewrite the affected text in place. Do not narrate the change with "the previous version did X", "after the prior draft", "REMOVED:", "now we changed to Y", or "Breaking changes from previous spec". Each rewrite must read as if the doc were always this way. Design history belongs in commit messages and in the spec's Execution Journal, not in the body. Same rule applies to ADRs, PRDs, initiative docs, and any other design doc under `docs/`. Apply it equally to your own first drafts: write the target state directly, never the diff.
 - Before touching any package, scan the existing tests to understand the contract.
-- Respect layer boundaries: never import an adapter from `internal/loop/`, `internal/director/`, `internal/director/dag/`, or `internal/config/`. Wire adapters at the cli boundary.
+- Respect layer boundaries: never import an adapter from `internal/loop/`, `internal/supervision/`, `internal/supervision/dag/`, or `internal/config/`. Wire adapters at the cli boundary.
 - Never put a god `util` or `helpers` package. If a helper is small and obvious, inline it; if it is reused, it has a real home.
 - Working tree clean between milestones. Use `git reset` (non-destructive) before `git add <specific paths>` before `git status -s` to confirm. Never `git add -A` blindly.
 - Tests must pass on `go test -race ./...` before any commit that touches concurrent code.
