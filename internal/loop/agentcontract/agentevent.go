@@ -17,7 +17,7 @@ const (
 	KindResultSummary AgentEventKind = "result_summary"
 )
 
-// AgentEvent is a normalized event emitted by an Executor or Director
+// AgentEvent is a normalized event emitted by an Executor or supervision
 // adapter. Only the field(s) relevant to the Kind are populated; the
 // rest are zero. The same envelope shape is used regardless of which
 // agent role (executor, planner, briefer, reviewer) produced the event.

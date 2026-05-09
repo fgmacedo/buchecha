@@ -118,7 +118,7 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 ### SOLID, applied here
 
 - **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `supervision/dag` changes when MCP method semantics change. `supervision/claude` changes when the per-role agent invocation changes. Mixed concerns are a smell.
-- **OCP**: adding a new agent vendor is a new package under `executor/` and `director/<vendor>/`, not edits to existing ones. Adding a new MCP method is a new schema + a new dispatch entry, not surgery on the dispatch table.
+- **OCP**: adding a new agent vendor is a new package under `executor/` and `supervision/<vendor>/`, not edits to existing ones. Adding a new MCP method is a new schema + a new dispatch entry, not surgery on the dispatch table.
 - **LSP**: any `Executor` or Director-role implementation must honor the contract (cancellable via context, exit code propagated, agent events streamed line-by-line, MCP calls obey scope authz). Tests use fakes that prove the contract.
 - **ISP**: small interfaces. `Executor` has one method (`Run`). `Planner`/`Briefer`/`Reviewer` have one method each. `GitProbe` has the few methods the loop actually calls. No god interfaces.
 - **DIP**: `loop` does not import `executor/claude` or `supervision/claude`. It depends on the ports. Adapters wire up at the cli boundary.
@@ -144,7 +144,7 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 
 ### Naming
 
-- Package names: lowercase, short, singular noun (`director`, not `directors`; `loop`, not `looping`).
+- Package names: lowercase, short, singular noun (`supervision`, not `supervisions`; `loop`, not `looping`).
 - Exported types: `CamelCase`. Unexported: `camelCase`.
 - Receivers: short, consistent across methods of the same type (`s *Session`, `l *Loop`, `h *Handler`).
 - Test functions: `TestThing_Behavior`. Subtests: `t.Run("descriptive case", ...)`.
@@ -152,7 +152,7 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 
 ### Errors
 
-- Wrap with context: `fmt.Errorf("director: register briefer: %w", err)`. Always `%w`.
+- Wrap with context: `fmt.Errorf("loop: register briefer: %w", err)`. Always `%w`.
 - Sentinel errors as package-level vars: `var ErrSessionNotFound = errors.New("session not found")`.
 - Compare with `errors.Is/As`, never string match.
 - Domain errors carry enough context to diagnose without the stack trace.
@@ -171,7 +171,7 @@ Red flag: a feature requires editing four or more packages. Stop, revisit cohesi
 ### Logging
 
 - `log/slog` from stdlib. No external logger.
-- Structured: `slog.Info("director iter finished", "phase", phaseID, "attempt", n, "signal", sig)`. Never `fmt.Sprintf` into messages.
+- Structured: `slog.Info("loop: iter finished", "phase", phaseID, "attempt", n, "signal", sig)`. Never `fmt.Sprintf` into messages.
 - Levels: `Debug` for tracing, `Info` for milestones, `Warn` for recoverable issues, `Error` for aborts. Default level is `Info`.
 - **Never log values of env vars or anything resembling a credential.** Names only. Adapters that handle env must enforce this.
 

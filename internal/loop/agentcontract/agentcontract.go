@@ -1,7 +1,7 @@
 // Package agentcontract owns the format-agnostic surface of bcc's
 // contract with any agent: the canonical Signal alphabet that closes
 // every iteration, the normalized stream-telemetry envelope every
-// executor / director adapter produces, and the cross-role markdown
+// executor / supervision adapter produces, and the cross-role markdown
 // blocks that ship inside every prompt bcc renders.
 //
 // Signal (continue / review / done / blocked) is the wire vocabulary
@@ -33,7 +33,7 @@ import (
 // prefixes every tool name with `mcp__<connection>__` on the agent
 // side, so any tool_use whose tool.name starts with MCPToolNamePrefix
 // came from a call to a bcc MCP method. Single source of truth for
-// both wire emission (executor/director adapters that name the
+// both wire emission (executor/supervision adapters that name the
 // connection) and observability filters (UI, logs) that recognise bcc
 // protocol traffic without hard-coding the literal.
 const MCPServerName = "bcc"
