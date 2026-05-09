@@ -6,8 +6,19 @@ import (
 	"sort"
 
 	"github.com/fgmacedo/buchecha/internal/director"
-	"github.com/fgmacedo/buchecha/internal/mcp"
 )
+
+// ToolDescriptor is a neutral wire-value type that carries the name,
+// description, and inputSchema for one MCP tool. It belongs to the dag
+// package so callers in internal/director/dag never need to import an
+// MCP transport adapter. Protocol adapters convert a []ToolDescriptor
+// to whatever concrete type their transport requires at the composition
+// boundary.
+type ToolDescriptor struct {
+	Name        string
+	Description string
+	InputSchema map[string]any
+}
 
 // Tools returns the bcc MCP tool surface advertised on tools/list to
 // every agent connected to the run-wide MCP server, regardless of
@@ -26,9 +37,9 @@ import (
 //
 // The returned slice is sorted by tool name so test fixtures and
 // snapshots stay stable across runs.
-func Tools() ([]mcp.Tool, error) {
+func Tools() ([]ToolDescriptor, error) {
 	fs := director.MCPSchemaFS()
-	tools := make([]mcp.Tool, 0, len(methodSchemaFile))
+	tools := make([]ToolDescriptor, 0, len(methodSchemaFile))
 	for method, path := range methodSchemaFile {
 		body, err := fs.ReadFile(path)
 		if err != nil {
@@ -48,7 +59,7 @@ func Tools() ([]mcp.Tool, error) {
 			}
 			input[k] = v
 		}
-		tools = append(tools, mcp.Tool{
+		tools = append(tools, ToolDescriptor{
 			Name:        method,
 			Description: desc,
 			InputSchema: input,

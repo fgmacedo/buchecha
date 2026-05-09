@@ -27,6 +27,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/fgmacedo/buchecha/internal/director/dag"
 )
 
 // RoleHeader names the request header an agent must set so the server
@@ -41,6 +43,17 @@ type Tool struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+}
+
+// ToolFromDescriptor converts a dag.ToolDescriptor to a Tool at the
+// MCP adapter boundary. Call this when wiring dag.Tools() output into
+// a ServerConfig so the dag package stays free of the mcp import.
+func ToolFromDescriptor(d dag.ToolDescriptor) Tool {
+	return Tool{
+		Name:        d.Name,
+		Description: d.Description,
+		InputSchema: d.InputSchema,
+	}
 }
 
 // Handler is the protocol of record for tools/call dispatch. Implementations

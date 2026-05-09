@@ -51,9 +51,13 @@ type mcpBoot struct {
 func newMCPBoot(state *dag.State) (*mcpBoot, error) {
 	registry := dag.NewAgentRegistry(nil)
 	handler := dag.NewHandler(state, registry)
-	tools, err := dag.Tools()
+	descs, err := dag.Tools()
 	if err != nil {
 		return nil, fmt.Errorf("mcp boot: build director tools: %w", err)
+	}
+	tools := make([]mcp.Tool, len(descs))
+	for i, d := range descs {
+		tools[i] = mcp.ToolFromDescriptor(d)
 	}
 	srv, err := mcp.New(mcp.ServerConfig{
 		Tools:   tools,
