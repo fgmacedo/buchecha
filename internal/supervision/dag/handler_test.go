@@ -1039,7 +1039,7 @@ func TestHandleGetJournalDelta_UsesProvider(t *testing.T) {
 func TestHandleCall_AuditLogRecordsSuccessAndFailure(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "mcp-log.jsonl")
-	audit := NewAuditLog(logPath)
+	audit := NewMCPLog(logPath)
 	defer audit.Close()
 	registry := NewAgentRegistry(nil)
 	h := NewHandlerWithOptions(nil, registry, HandlerOptions{Audit: audit})
@@ -1087,7 +1087,7 @@ func TestHandleCall_SchemaRejectsMissingRequiredField(t *testing.T) {
 func TestForceApprovePending_MarksPendingDoneAndAudits(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "mcp-log.jsonl")
-	audit := NewAuditLog(logPath)
+	audit := NewMCPLog(logPath)
 	defer audit.Close()
 	registry := NewAgentRegistry(nil)
 	h := NewHandlerWithOptions(nil, registry, HandlerOptions{Audit: audit})

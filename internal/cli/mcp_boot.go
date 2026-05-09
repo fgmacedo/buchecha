@@ -115,7 +115,7 @@ func (b *mcpBoot) bindSession(store *session.Store, mcpAudit bool, head dag.Head
 		&dagSnapshotPersister{path: dagPath},
 	)
 	if mcpAudit {
-		b.handler.AttachAudit(dag.NewAuditLog(filepath.Join(store.SessionDir(), "mcp-log.jsonl")))
+		b.handler.AttachAudit(dag.NewMCPLog(filepath.Join(store.SessionDir(), "mcp-log.jsonl")))
 	}
 	b.handler.AttachProviders(head, journal)
 }

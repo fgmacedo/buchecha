@@ -25,7 +25,7 @@ func TestEndToEnd_DAGHandlerOverHTTP(t *testing.T) {
 	auditPath := filepath.Join(dir, "mcp-log.jsonl")
 	registry := dag.NewAgentRegistry(nil)
 	handler := dag.NewHandlerWithOptions(nil, registry, dag.HandlerOptions{
-		Audit: dag.NewAuditLog(auditPath),
+		Audit: dag.NewMCPLog(auditPath),
 	})
 	srv, err := mcp.New(mcp.ServerConfig{
 		Handler:         handler,
@@ -104,10 +104,10 @@ func TestEndToEnd_DAGHandlerOverHTTP(t *testing.T) {
 		t.Fatal("plan not stored")
 	}
 
-	if err := dag.NewAuditLog(auditPath).Close(); err != nil {
-		t.Fatalf("close audit: %v", err)
+	if err := dag.NewMCPLog(auditPath).Close(); err != nil {
+		t.Fatalf("close mcp log: %v", err)
 	}
-	// The audit log handle owned by the handler still points at the
+	// The MCP log handle owned by the handler still points at the
 	// open file. Read the file directly to assert the recorded entry.
 	logged, err := readJSONL(auditPath)
 	if err != nil {

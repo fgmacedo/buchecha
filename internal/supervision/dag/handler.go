@@ -124,7 +124,7 @@ type Handler struct {
 
 	head     HeadProvider
 	journal  JournalDeltaProvider
-	audit    *AuditLog
+	audit    *MCPLog
 	observer HandlerObserver
 
 	planStore     PlanPersister
@@ -150,7 +150,7 @@ type Handler struct {
 type HandlerOptions struct {
 	Head               HeadProvider
 	Journal            JournalDeltaProvider
-	Audit              *AuditLog
+	Audit              *MCPLog
 	PlanStore          PlanPersister
 	BriefingStore      BriefingPersister
 	DAGSnapshotStore   DAGSnapshotPersister
@@ -326,11 +326,11 @@ func (h *Handler) Briefing(iterationID string) *supervision.Briefing {
 	return bs.briefing
 }
 
-// AttachAudit binds an AuditLog to the handler. Late-binding is the
+// AttachAudit binds an MCPLog to the handler. Late-binding is the
 // production path: cli boot constructs the handler before the session
-// directory is known, then attaches the audit log once the session is
-// resolved. nil disables auditing.
-func (h *Handler) AttachAudit(audit *AuditLog) {
+// directory is known, then attaches the MCP log once the session is
+// resolved. nil disables logging.
+func (h *Handler) AttachAudit(audit *MCPLog) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.audit = audit
@@ -508,7 +508,7 @@ func (h *Handler) logCall(role, agentID, method string, input map[string]any, re
 	if h.audit == nil {
 		return
 	}
-	entry := AuditEntry{
+	entry := MCPLogEntry{
 		At:      h.now(),
 		Role:    role,
 		AgentID: agentID,
@@ -670,7 +670,7 @@ func (h *Handler) RecordSyntheticBriefing(brief supervision.Briefing) error {
 		return err
 	}
 	if h.audit != nil {
-		_ = h.audit.Append(AuditEntry{
+		_ = h.audit.Append(MCPLogEntry{
 			At:     h.now(),
 			Role:   "planner",
 			Method: "synthetic_briefing",
@@ -741,7 +741,7 @@ func (h *Handler) RecordSyntheticApproval(iterationID string) error {
 		if len(approved) > 0 {
 			input["approved_task_ids"] = stringSliceToAny(approved)
 		}
-		_ = h.audit.Append(AuditEntry{
+		_ = h.audit.Append(MCPLogEntry{
 			At:     h.now(),
 			Role:   "planner",
 			Method: "synthetic_approval",
@@ -1228,7 +1228,7 @@ func (h *Handler) ForceApprovePending(iterationID, hint string) error {
 			}
 			input["approved_task_ids"] = ids
 		}
-		_ = h.audit.Append(AuditEntry{
+		_ = h.audit.Append(MCPLogEntry{
 			At:     h.now(),
 			Role:   "user",
 			Method: "bcc_force_approve",
