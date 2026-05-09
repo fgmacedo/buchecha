@@ -204,6 +204,59 @@ describe('Inspector - localStorage persistence', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Tests: selection-aware tab labels
+// ---------------------------------------------------------------------------
+
+describe('Inspector - tab labels by selection kind', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify('# briefing'), { status: 200 }),
+    ))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  it('shows Overview, Agents, Events tabs for task selection', () => {
+    const selectionTask = { kind: 'task' as const, phaseId: 'P1', taskId: 'T1' }
+    render(
+      <SelectionProvider sessionId={SESSION_ID}>
+        <Inspector
+          selection={selectionTask}
+          events={[]}
+          snapshot={null}
+          sessionId={SESSION_ID}
+          onClose={() => {}}
+        />
+      </SelectionProvider>,
+    )
+    const tabs = screen.getAllByRole('button', { name: /tab$/i })
+    const labels = tabs.map((btn) => btn.getAttribute('aria-label')?.replace(' tab', ''))
+    expect(labels).toEqual(['Overview', 'Agents', 'Events'])
+  })
+
+  it('shows Overview, Briefing, Prompts, Events tabs for phase selection', () => {
+    render(
+      <SelectionProvider sessionId={SESSION_ID}>
+        <Inspector
+          selection={SELECTION_PHASE}
+          events={PHASE_EVENTS}
+          snapshot={null}
+          sessionId={SESSION_ID}
+          onClose={() => {}}
+        />
+      </SelectionProvider>,
+    )
+    const tabs = screen.getAllByRole('button', { name: /tab$/i })
+    const labels = tabs.map((btn) => btn.getAttribute('aria-label')?.replace(' tab', ''))
+    expect(labels).toEqual(['Overview', 'Briefing', 'Prompts', 'Events'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Tests: badge counts
 // ---------------------------------------------------------------------------
 

@@ -50,17 +50,10 @@ type Executor interface {
 
 // GitProbe is the read-only view of the working tree the loop needs.
 // All methods may shell out to the git binary, but never mutate state.
-//
-// Diff returns the unified diff between two SHAs (baseSHA..headSHA). The
-// Director's review pipeline consumes it as the primary evidence the
-// Reviewer judges. Callers that pass equal SHAs receive an empty string
-// without a git invocation; this lets the loop skip review when an
-// iteration produced no commits.
 type GitProbe interface {
 	HeadSHA(ctx context.Context) (string, error)
 	CurrentBranch(ctx context.Context) (string, error)
 	IsClean(ctx context.Context) (bool, error)
-	Diff(ctx context.Context, baseSHA, headSHA string) (string, error)
 }
 
 // EscalationKind is the kind of resolution the user picks when the

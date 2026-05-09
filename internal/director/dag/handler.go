@@ -28,7 +28,7 @@ const (
 	MethodTaskStarted       = "bcc_task_started"
 	MethodTaskCompleted     = "bcc_task_completed"
 	MethodIterationFinished = "bcc_iteration_finished"
-	MethodGetDiff           = "bcc_get_diff"
+	MethodGetBaseline       = "bcc_get_baseline"
 	MethodGetJournalDelta   = "bcc_get_journal_delta"
 	MethodTaskApproved      = "bcc_task_approved"
 	MethodTaskNeedsFix      = "bcc_task_needs_fix"
@@ -90,13 +90,11 @@ type HandlerObserver interface {
 
 // briefingState holds per-briefing handler-side context: the Briefing
 // itself (set by bcc_briefing_emit), plus the inputs needed to answer
-// bcc_get_diff and bcc_get_journal_delta. The loop populates the SHA
-// pair and the journal snapshots via the SetBriefing* setters before
-// the Reviewer is registered against the briefing.
+// bcc_get_journal_delta. The loop populates the journal snapshots via
+// the SetBriefingJournalSnapshots setter before the Reviewer is
+// registered against the briefing.
 type briefingState struct {
 	briefing      *director.Briefing
-	baseSHA       string
-	headSHA       string
 	journalBefore []byte
 	journalAfter  []byte
 	reviewOutcome string
@@ -123,7 +121,7 @@ type Handler struct {
 	dispatch map[string]methodSpec
 	schemas  map[string]*jsonschema.Schema
 
-	git      GitDiffProvider
+	head     HeadProvider
 	journal  JournalDeltaProvider
 	audit    *AuditLog
 	observer HandlerObserver
@@ -133,28 +131,30 @@ type Handler struct {
 	dagStore      DAGSnapshotPersister
 
 	capabilityRegistry *director.CapabilityRegistry
-	planDefaults       director.PlanDefaults
+	roleMenus          director.RoleMenus
 
 	mu             sync.Mutex
 	plan           *director.Plan
 	planSkipped    bool
 	planSkipReason string
 	briefings      map[string]*briefingState
+	phaseBaselines map[string]string
 	now            func() time.Time
 }
 
 // HandlerOptions parameterizes NewHandler. Every field is optional;
 // nil values disable the corresponding feature (no audit log, no
-// persistence, no diff, no journal delta) so tests can construct a
-// handler with only the inputs they need.
+// persistence, no journal delta) so tests can construct a handler
+// with only the inputs they need.
 type HandlerOptions struct {
-	Git                GitDiffProvider
+	Head               HeadProvider
 	Journal            JournalDeltaProvider
 	Audit              *AuditLog
 	PlanStore          PlanPersister
 	BriefingStore      BriefingPersister
 	DAGSnapshotStore   DAGSnapshotPersister
 	CapabilityRegistry *director.CapabilityRegistry
+	RoleMenus          director.RoleMenus
 	Now                func() time.Time
 }
 
@@ -183,14 +183,16 @@ func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOp
 		state:              state,
 		registry:           registry,
 		schemas:            schemas,
-		git:                opts.Git,
+		head:               opts.Head,
 		journal:            opts.Journal,
 		audit:              opts.Audit,
 		planStore:          opts.PlanStore,
 		briefingStore:      opts.BriefingStore,
 		dagStore:           opts.DAGSnapshotStore,
 		capabilityRegistry: opts.CapabilityRegistry,
+		roleMenus:          opts.RoleMenus,
 		briefings:          make(map[string]*briefingState),
+		phaseBaselines:     make(map[string]string),
 		now:                now,
 	}
 	h.dispatch = map[string]methodSpec{
@@ -230,9 +232,9 @@ func NewHandlerWithOptions(state *State, registry *AgentRegistry, opts HandlerOp
 			allowedRoles: rolesSet(RoleExecutor),
 			handle:       (*Handler).handleIterationFinished,
 		},
-		MethodGetDiff: {
+		MethodGetBaseline: {
 			allowedRoles: rolesSet(RoleReviewer),
-			handle:       (*Handler).handleGetDiff,
+			handle:       (*Handler).handleGetBaseline,
 		},
 		MethodGetJournalDelta: {
 			allowedRoles: rolesSet(RoleReviewer),
@@ -355,17 +357,24 @@ func (h *Handler) SetCapabilityRegistry(reg *director.CapabilityRegistry) {
 	h.capabilityRegistry = reg
 }
 
-// SetPlanDefaults installs the per-role model and effort defaults the
-// handler stamps onto each Phase at bcc_plan_emit time when the
-// Planner left an assignment nil. Filling at emit makes the persisted
-// plan.json self-describing: every Phase carries the routing it
-// actually ran with. Empty (zero) defaults are accepted and skipped
-// per role; the assignment stays nil and the loop's runtime fallback
-// applies.
-func (h *Handler) SetPlanDefaults(defaults director.PlanDefaults) {
+// SetRoleMenus installs the per-role option menus the handler uses to
+// fill missing assignments and validate the Planner's per-phase routing
+// at bcc_plan_emit time. Filling at emit makes the persisted plan.json
+// self-describing: every Phase carries the routing it actually ran
+// with. Empty menus on a role accept any value the Planner emitted; in
+// production every role has at least one option after defaults run.
+func (h *Handler) SetRoleMenus(menus director.RoleMenus) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.planDefaults = defaults
+	h.roleMenus = menus
+}
+
+// RoleMenus returns the role-options menus the handler is currently
+// validating bcc_plan_emit against.
+func (h *Handler) RoleMenus() director.RoleMenus {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.roleMenus
 }
 
 // CapabilityRegistry returns the registry the handler validates
@@ -393,33 +402,29 @@ func (h *Handler) AttachStores(plan PlanPersister, briefing BriefingPersister, d
 	}
 }
 
-// AttachProviders binds git and journal providers. Either argument may
-// be nil to leave the corresponding provider untouched.
-func (h *Handler) AttachProviders(git GitDiffProvider, journal JournalDeltaProvider) {
+// AttachProviders binds head and journal providers. Any nil argument
+// leaves the corresponding provider untouched.
+func (h *Handler) AttachProviders(head HeadProvider, journal JournalDeltaProvider) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if git != nil {
-		h.git = git
+	if head != nil {
+		h.head = head
 	}
 	if journal != nil {
 		h.journal = journal
 	}
 }
 
-// SetBriefingDiffRange records the (baseSHA, headSHA) the Reviewer
-// audits for iterationID. The loop calls this between Executor exit
-// and Reviewer registration; the handler then answers bcc_get_diff for
-// the Reviewer agent_id bound to the same briefing.
-func (h *Handler) SetBriefingDiffRange(iterationID, baseSHA, headSHA string) {
+// SetPhaseBaseline records the phase-scoped baseline SHA captured
+// before the first attempt of phaseID. Stable across all attempts
+// of the same phase.
+func (h *Handler) SetPhaseBaseline(phaseID, sha string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	bs := h.briefings[iterationID]
-	if bs == nil {
-		bs = &briefingState{}
-		h.briefings[iterationID] = bs
+	if h.phaseBaselines == nil {
+		h.phaseBaselines = make(map[string]string)
 	}
-	bs.baseSHA = baseSHA
-	bs.headSHA = headSHA
+	h.phaseBaselines[phaseID] = sha
 }
 
 // SetBriefingJournalSnapshots records the spec-content snapshots the
@@ -572,11 +577,13 @@ func (h *Handler) handlePlanEmit(_ context.Context, _ AgentEntry, input map[stri
 	if err := json.Unmarshal(body, &plan); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: parse plan: %w", err)
 	}
-	if err := director.ValidatePlan(&plan, h.capabilityRegistry); err != nil {
+	if err := director.ValidatePlan(&plan); err != nil {
 		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
 	}
-	director.FillPlanDefaults(&plan, h.planDefaults)
-	director.FillProviderFromRegistry(&plan, h.capabilityRegistry)
+	director.FillPlanFromMenus(&plan, h.roleMenus)
+	if err := director.ValidatePlanAgainstMenus(&plan, h.roleMenus); err != nil {
+		return "", fmt.Errorf("dag: bcc_plan_emit: %w", err)
+	}
 	newState := NewStateFromPlan(&plan)
 
 	h.mu.Lock()
@@ -1016,33 +1023,31 @@ func (h *Handler) IterationSignal(briefingID string) string {
 	return bs.iterSignal
 }
 
-// handleGetDiff shells out to the configured GitDiffProvider with the
-// SHA range stored for the briefing the Reviewer audits.
-func (h *Handler) handleGetDiff(ctx context.Context, entry AgentEntry, _ map[string]any) (string, error) {
-	if h.git == nil {
-		return "", errors.New("dag: bcc_get_diff: no git provider configured")
-	}
-	if entry.BriefingID == "" {
-		return "", errors.New("dag: bcc_get_diff: agent has no briefing scope")
+// handleGetBaseline returns the phase-scoped baseline SHA (stable
+// across all attempts of the phase) and the current HEAD SHA so the
+// Reviewer can run git diff/log/show via Bash.
+func (h *Handler) handleGetBaseline(ctx context.Context, entry AgentEntry, _ map[string]any) (string, error) {
+	phaseID := string(entry.PhaseID)
+	if phaseID == "" {
+		return "", errors.New("dag: bcc_get_baseline: agent has no phase scope")
 	}
 	h.mu.Lock()
-	bs := h.briefings[entry.BriefingID]
-	var base, head string
-	if bs != nil {
-		base, head = bs.baseSHA, bs.headSHA
-	}
+	baseSHA, ok := h.phaseBaselines[phaseID]
 	h.mu.Unlock()
-	if bs == nil || base == "" || head == "" {
-		return "", fmt.Errorf("dag: bcc_get_diff: no diff range recorded for briefing %q", entry.BriefingID)
+	if !ok {
+		return "", fmt.Errorf("dag: bcc_get_baseline: no baseline recorded for phase %q", phaseID)
 	}
-	diff, err := h.git.Diff(ctx, base, head)
+	if h.head == nil {
+		return "", errors.New("dag: bcc_get_baseline: no head provider configured")
+	}
+	headSHA, err := h.head.HeadSHA(ctx)
 	if err != nil {
-		return "", fmt.Errorf("dag: bcc_get_diff: %w", err)
+		return "", fmt.Errorf("dag: bcc_get_baseline: %w", err)
 	}
 	body, _ := json.Marshal(map[string]any{
-		"base_sha": base,
-		"head_sha": head,
-		"diff":     diff,
+		"phase_id":           phaseID,
+		"phase_baseline_sha": baseSHA,
+		"current_head_sha":   headSHA,
 	})
 	return string(body), nil
 }

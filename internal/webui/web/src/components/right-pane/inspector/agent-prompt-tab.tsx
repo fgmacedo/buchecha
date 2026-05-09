@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getHighlighter, SHIKI_THEME } from '../../../lib/shiki'
+import ReactMarkdown from 'react-markdown'
 import type { SeqEvent } from '../../../hooks/use-events'
 import { useAgents } from '../../../hooks/use-agents'
 
@@ -18,14 +18,12 @@ export function AgentPromptTab({ agentId, events, sessionId }: AgentPromptTabPro
   const card = agents.byId[agentId]
   const spawnId = card?.spawnId
 
-  const [bodyHtml, setBodyHtml] = useState<string | null>(null)
   const [bodyRaw, setBodyRaw] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!spawnId) {
-      setBodyHtml(null)
       setBodyRaw(null)
       setError(null)
       return
@@ -33,7 +31,6 @@ export function AgentPromptTab({ agentId, events, sessionId }: AgentPromptTabPro
     let cancelled = false
     setLoading(true)
     setError(null)
-    setBodyHtml(null)
     setBodyRaw(null)
 
     void (async () => {
@@ -57,14 +54,6 @@ export function AgentPromptTab({ agentId, events, sessionId }: AgentPromptTabPro
         const text = await res.text()
         if (cancelled) return
         setBodyRaw(text)
-        try {
-          const hl = await getHighlighter()
-          if (cancelled) return
-          const rendered = hl.codeToHtml(text, { lang: 'markdown', theme: SHIKI_THEME })
-          if (!cancelled) setBodyHtml(rendered)
-        } catch {
-          // fall through to raw text rendering
-        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'unknown error')
       } finally {
@@ -87,30 +76,31 @@ export function AgentPromptTab({ agentId, events, sessionId }: AgentPromptTabPro
   }
   if (loading) return <Placeholder text="Loading prompt..." />
   if (error) return <Placeholder text={`Error: ${error}`} />
-  if (bodyHtml) {
-    return (
-      <div
-        style={{ height: '100%', overflow: 'auto', padding: 12 }}
-        dangerouslySetInnerHTML={{ __html: bodyHtml }}
-      />
-    )
-  }
   if (bodyRaw) {
     return (
-      <pre
-        style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          padding: 12,
-          margin: 0,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          height: '100%',
-          overflow: 'auto',
-        }}
-      >
-        {bodyRaw}
-      </pre>
+      <div style={{ height: '100%', overflow: 'auto', padding: 16, fontSize: 13, lineHeight: 1.55 }}>
+        <ReactMarkdown
+          components={{
+            pre: ({ node, ...props }) => (
+              <pre
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  background: 'var(--surface-card)',
+                  padding: 8,
+                  borderRadius: 4,
+                }}
+                {...props}
+              />
+            ),
+            code: ({ node, ...props }) => (
+              <code style={{ wordBreak: 'break-word' }} {...props} />
+            ),
+          }}
+        >
+          {bodyRaw}
+        </ReactMarkdown>
+      </div>
     )
   }
   return <Placeholder text="(empty prompt)" />

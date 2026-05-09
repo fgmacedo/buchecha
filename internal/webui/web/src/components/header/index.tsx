@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { Snapshot } from '../../hooks/use-snapshot'
 import type { SeqEvent } from '../../hooks/use-events'
 import { useCostAggregator } from '../../hooks/use-cost-aggregator'
@@ -52,19 +52,34 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
   const isCompact = useIsCompact()
   const { theme, toggle: toggleTheme } = useTheme()
 
+  const latestIter = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i]
+      if (ev.event.type === 'iter_started') {
+        const iterEvent = ev.event as any
+        if (iterEvent.index !== undefined && iterEvent.max_iter !== undefined) {
+          return { index: iterEvent.index, maxIter: iterEvent.max_iter }
+        }
+      }
+    }
+    return null
+  }, [events])
+
   const session = snapshot?.session
   const specName = session?.spec_path.split('/').pop() ?? 'bcc'
   const shortId = session?.id.slice(0, 8) ?? ''
 
   const elapsedMs = useElapsed(session?.started_at, session?.finished_at)
-  const eta = session
-    ? computeEta(elapsedMs, session.iteration_index, session.max_iter)
-    : null
+
+  const iterIndex = latestIter?.index ?? session?.iteration_index ?? 0
+  const maxIter = latestIter?.maxIter ?? session?.max_iter ?? 0
+
+  const eta = session ? computeEta(elapsedMs, iterIndex, maxIter) : null
   const totalTokens =
     costAgg.totalTokens.input + costAgg.totalTokens.output
   const progressPct =
-    session && session.max_iter > 0
-      ? Math.min(100, (session.iteration_index / session.max_iter) * 100)
+    maxIter > 0
+      ? Math.min(100, (iterIndex / maxIter) * 100)
       : 0
 
   return (
@@ -124,12 +139,12 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
             value={
               <>
                 <span style={{ color: 'var(--color-foreground)' }}>
-                  {session.iteration_index}
+                  {iterIndex}
                 </span>
                 <span
                   style={{ color: 'var(--color-faint, var(--color-muted-foreground))' }}
                 >
-                  /{session.max_iter}
+                  /{maxIter}
                 </span>
               </>
             }

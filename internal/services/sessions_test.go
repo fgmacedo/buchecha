@@ -449,3 +449,32 @@ func TestSessionService_Snapshot_ArchivedWithoutDAGFile(t *testing.T) {
 		t.Fatal("DAG should be nil when dag.json is absent")
 	}
 }
+
+func TestSessionMetaFrom_ProjectsIterationFields(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	sess := director.Session{
+		ID:             "abc123def456",
+		SpecPath:       "/spec/test.md",
+		SpecHash:       "h",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Status:         director.SessionRunning,
+		IterationIndex: 3,
+		MaxIter:        20,
+	}
+
+	meta := sessionMetaFrom(sess)
+
+	if meta.IterationIndex != 3 {
+		t.Fatalf("IterationIndex = %d, want 3", meta.IterationIndex)
+	}
+	if meta.MaxIter != 20 {
+		t.Fatalf("MaxIter = %d, want 20", meta.MaxIter)
+	}
+	if meta.ID != sess.ID {
+		t.Fatalf("ID = %q, want %q", meta.ID, sess.ID)
+	}
+	if meta.SpecPath != sess.SpecPath {
+		t.Fatalf("SpecPath = %q, want %q", meta.SpecPath, sess.SpecPath)
+	}
+}

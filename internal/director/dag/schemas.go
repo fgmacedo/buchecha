@@ -26,7 +26,7 @@ var methodSchemaFile = map[string]string{
 	MethodTaskNeedsFix:      "schemas/mcp/bcc_task_needs_fix.schema.json",
 	MethodIterationFinished: "schemas/mcp/bcc_iteration_finished.schema.json",
 	MethodReviewFinished:    "schemas/mcp/bcc_review_finished.schema.json",
-	MethodGetDiff:           "schemas/mcp/bcc_get_diff.schema.json",
+	MethodGetBaseline:       "schemas/mcp/bcc_get_baseline.schema.json",
 	MethodGetJournalDelta:   "schemas/mcp/bcc_get_journal_delta.schema.json",
 }
 

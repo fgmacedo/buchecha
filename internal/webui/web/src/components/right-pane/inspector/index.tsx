@@ -7,6 +7,7 @@ import { OverviewTab } from './overview-tab'
 import BriefingTab from './briefing-tab'
 import PromptsTab from './prompts-tab'
 import EventsTab from './events-tab'
+import AgentsTab from './agents-tab'
 import { AgentOverviewTab } from './agent-overview-tab'
 import { AgentPromptTab } from './agent-prompt-tab'
 import { AgentStreamTab } from './agent-stream-tab'
@@ -22,33 +23,49 @@ export interface InspectorProps {
   onClose: () => void
 }
 
-// Tab labels vary by selection kind: agent selections inspect the live agent
-// (prompt, stream, files); other kinds fall back to the original four tabs.
-const DEFAULT_TAB_LABELS = ['Overview', 'Briefing', 'Prompts', 'Events'] as const
+// Tab labels vary by selection kind: task selections show Overview/Agents/Events;
+// agent selections inspect the live agent (prompt, stream, files); other kinds
+// fall back to the original four tabs.
 const AGENT_TAB_LABELS = ['Overview', 'Prompt', 'Stream', 'Files'] as const
-type TabIndex = 0 | 1 | 2 | 3
+type TabIndex = number
+
+function tabsFor(kind: Selection['kind']): readonly string[] {
+  if (kind === 'task') return ['Overview', 'Agents', 'Events'] as const
+  if (kind === 'agent') return AGENT_TAB_LABELS
+  return ['Overview', 'Briefing', 'Prompts', 'Events'] as const
+}
 
 const LS_PREFIX = 'bcc.inspector.tab.'
 
-function loadTab(kind: string): TabIndex {
+// loadTab reads a persisted tab index from localStorage, clamping stale values
+// to the valid range for the current tab count.
+function loadTab(kind: string, maxTabs: number): TabIndex {
   try {
     const raw = localStorage.getItem(LS_PREFIX + kind)
     if (raw === null) return 0
     const n = Number.parseInt(raw, 10)
-    if (n >= 0 && n <= 3) return n as TabIndex
+    if (n >= 0 && n < maxTabs) return n
   } catch {
     // ignore
   }
   return 0
 }
 
-function saveTab(kind: string, index: TabIndex): void {
+function saveTab(kind: string, index: number): void {
   try {
     localStorage.setItem(LS_PREFIX + kind, String(index))
   } catch {
     // ignore write failures
   }
 }
+
+// Event types that carry agent_id scoped to a task; used for the Agents badge.
+const TASK_AGENT_EVENT_TYPES = new Set([
+  'task_started',
+  'task_completed',
+  'task_approved',
+  'task_needs_fix',
+])
 
 // selectionLabel derives a human-readable label for the primary identifier.
 function selectionLabel(s: Selection): string {
@@ -66,12 +83,12 @@ function selectionLabel(s: Selection): string {
   }
 }
 
-// Inspector is the inspector shell for the right pane. It renders a four-tab
-// strip (Overview / Briefing / Prompts / Events) with keyboard shortcuts,
-// badge counts, and localStorage-persisted active tab per selection kind.
+// Inspector is the inspector shell for the right pane. It renders a tab strip
+// whose labels depend on the selection kind, with keyboard shortcuts, badge
+// counts, and localStorage-persisted active tab per selection kind.
 export function Inspector({ selection, events, snapshot, sessionId, onClose }: InspectorProps) {
-  const tabLabels = selection.kind === 'agent' ? AGENT_TAB_LABELS : DEFAULT_TAB_LABELS
-  const [activeTab, setActiveTab] = useState<TabIndex>(() => loadTab(selection.kind))
+  const tabLabels = tabsFor(selection.kind)
+  const [activeTab, setActiveTab] = useState<TabIndex>(() => loadTab(selection.kind, tabLabels.length))
   const agents = useAgents(events)
   const agentCard =
     selection.kind === 'agent' ? (agents.byId[selection.spawnId] ?? null) : null
@@ -80,7 +97,7 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
   const [prevKind, setPrevKind] = useState(selection.kind)
   if (prevKind !== selection.kind) {
     setPrevKind(selection.kind)
-    const restored = loadTab(selection.kind)
+    const restored = loadTab(selection.kind, tabsFor(selection.kind).length)
     setActiveTab(restored)
   }
 
@@ -89,7 +106,7 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
     saveTab(selection.kind, activeTab)
   }, [selection.kind, activeTab])
 
-  // Keyboard: 1-4 switch tabs, Escape calls onClose.
+  // Keyboard: 1-N switch tabs (no-op past the visible count), Escape calls onClose.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       // Skip if focus is inside an input/textarea (search box).
@@ -99,17 +116,17 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
       ) {
         return
       }
-      if (e.key === '1') setActiveTab(0)
-      else if (e.key === '2') setActiveTab(1)
-      else if (e.key === '3') setActiveTab(2)
-      else if (e.key === '4') setActiveTab(3)
+      if (e.key === '1' && 0 < tabLabels.length) setActiveTab(0)
+      else if (e.key === '2' && 1 < tabLabels.length) setActiveTab(1)
+      else if (e.key === '3' && 2 < tabLabels.length) setActiveTab(2)
+      else if (e.key === '4' && 3 < tabLabels.length) setActiveTab(3)
       else if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [onClose])
+  }, [onClose, tabLabels])
 
   // Badge counts.
   const phaseId =
@@ -192,10 +209,25 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
     return count
   }, [events, selection])
 
-  function tabBadge(index: TabIndex): number | null {
-    if (index === 1) return briefingAttemptCount > 0 ? briefingAttemptCount : null
-    if (index === 2) return spawnCount > 0 ? spawnCount : null
-    if (index === 3) return eventCount > 0 ? eventCount : null
+  // Agent count for the Agents badge: unique agent_ids on task_* events scoped
+  // to the selected (phaseId, taskId).
+  const agentsCount = useMemo(() => {
+    if (selection.kind !== 'task') return 0
+    const out = new Set<string>()
+    for (const { event } of events) {
+      if (!TASK_AGENT_EVENT_TYPES.has(event.type)) continue
+      if (event.phase_id !== selection.phaseId) continue
+      if (event.task_id !== selection.taskId) continue
+      if (typeof event.agent_id === 'string') out.add(event.agent_id)
+    }
+    return out.size
+  }, [events, selection])
+
+  function tabBadge(label: string): number | null {
+    if (label === 'Briefing') return briefingAttemptCount > 0 ? briefingAttemptCount : null
+    if (label === 'Prompts') return spawnCount > 0 ? spawnCount : null
+    if (label === 'Events') return eventCount > 0 ? eventCount : null
+    if (label === 'Agents') return agentsCount > 0 ? agentsCount : null
     return null
   }
 
@@ -232,16 +264,15 @@ export function Inspector({ selection, events, snapshot, sessionId, onClose }: I
         style={{ backgroundColor: 'var(--surface-panel)' }}
       >
         {tabLabels.map((label, idx) => {
-          const i = idx as TabIndex
-          const isActive = activeTab === i
-          const badge = tabBadge(i)
+          const isActive = activeTab === idx
+          const badge = tabBadge(label)
           return (
             <button
               key={label}
               type="button"
               aria-label={`${label} tab`}
               aria-selected={isActive}
-              onClick={() => setActiveTab(i)}
+              onClick={() => setActiveTab(idx)}
               style={{
                 padding: '6px 12px',
                 fontSize: 11,
@@ -312,6 +343,26 @@ interface InspectorBodiesProps {
 }
 
 function DefaultInspectorBodies({ selection, events, snapshot, sessionId, activeTab }: InspectorBodiesProps) {
+  // Task selections: Overview / Agents / Events (3 tabs; Briefing and Prompts
+  // are phase-scoped and stay empty for tasks, so they are omitted here).
+  if (selection.kind === 'task') {
+    return (
+      <>
+        <div style={{ display: activeTab === 0 ? 'block' : 'none', height: '100%' }}>
+          <OverviewTab selection={selection} events={events} snapshot={snapshot} />
+        </div>
+        <div style={{ display: activeTab === 1 ? 'block' : 'none', height: '100%' }}>
+          <AgentsTab
+            selection={selection as Extract<typeof selection, { kind: 'task' }>}
+            events={events}
+          />
+        </div>
+        <div style={{ display: activeTab === 2 ? 'block' : 'none', height: '100%' }}>
+          <EventsTab selection={selection} events={events} snapshot={snapshot} />
+        </div>
+      </>
+    )
+  }
   return (
     <>
       <div style={{ display: activeTab === 0 ? 'block' : 'none', height: '100%' }}>

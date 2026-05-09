@@ -2,36 +2,38 @@ package director
 
 import "testing"
 
-func TestFillPlanDefaults_NilPlanIsNoop(t *testing.T) {
-	defaults := PlanDefaults{Executor: RoleAssignment{Model: "m", Effort: "low"}}
-	FillPlanDefaults(nil, defaults)
+func TestFillPlanFromMenus_NilPlanIsNoop(t *testing.T) {
+	menus := RoleMenus{Executor: RoleMenu{Options: []MenuOption{
+		{Provider: "claude", Model: "m", Efforts: []string{"low"}},
+	}}}
+	FillPlanFromMenus(nil, menus)
 }
 
-func TestFillPlanDefaults_EmptyDefaultsLeaveAssignmentsNil(t *testing.T) {
+func TestFillPlanFromMenus_EmptyMenusLeaveAssignmentsNil(t *testing.T) {
 	plan := &Plan{Phases: []Phase{
 		{ID: "p1", Tasks: []Task{{ID: "t1"}}},
 	}}
-	FillPlanDefaults(plan, PlanDefaults{})
+	FillPlanFromMenus(plan, RoleMenus{})
 	ph := plan.Phases[0]
 	if ph.BrieferAssignment != nil || ph.ExecutorAssignment != nil || ph.ReviewerAssignment != nil {
-		t.Errorf("empty defaults should leave assignments nil; got %+v", ph)
+		t.Errorf("empty menus should leave assignments nil; got %+v", ph)
 	}
 }
 
-func TestFillPlanDefaults_FillsMissingAssignmentsAcrossRoles(t *testing.T) {
+func TestFillPlanFromMenus_FillsMissingAssignmentsAcrossRoles(t *testing.T) {
 	plan := &Plan{Phases: []Phase{
 		{ID: "p1", Tasks: []Task{{ID: "t1"}}},
 		{ID: "p2", Tasks: []Task{{ID: "t2"}}},
 	}}
-	defaults := PlanDefaults{
-		Briefer:  RoleAssignment{Model: "default-mid"},
-		Executor: RoleAssignment{Model: "default-fast", Effort: "low"},
-		Reviewer: RoleAssignment{Model: "default-mid", Effort: "medium"},
+	menus := RoleMenus{
+		Briefer:  RoleMenu{Options: []MenuOption{{Provider: "claude", Model: "default-mid", Efforts: []string{"medium"}}}},
+		Executor: RoleMenu{Options: []MenuOption{{Provider: "claude", Model: "default-fast", Efforts: []string{"low"}}}},
+		Reviewer: RoleMenu{Options: []MenuOption{{Provider: "claude", Model: "default-mid", Efforts: []string{"medium"}}}},
 	}
-	FillPlanDefaults(plan, defaults)
+	FillPlanFromMenus(plan, menus)
 	for _, ph := range plan.Phases {
-		if ph.BrieferAssignment == nil || ph.BrieferAssignment.Model != "default-mid" {
-			t.Errorf("phase %s briefer = %+v, want default-mid", ph.ID, ph.BrieferAssignment)
+		if ph.BrieferAssignment == nil || ph.BrieferAssignment.Model != "default-mid" || ph.BrieferAssignment.Provider != "claude" {
+			t.Errorf("phase %s briefer = %+v, want claude/default-mid", ph.ID, ph.BrieferAssignment)
 		}
 		if ph.ExecutorAssignment == nil || ph.ExecutorAssignment.Model != "default-fast" || ph.ExecutorAssignment.Effort != "low" {
 			t.Errorf("phase %s executor = %+v, want default-fast/low", ph.ID, ph.ExecutorAssignment)
@@ -42,18 +44,18 @@ func TestFillPlanDefaults_FillsMissingAssignmentsAcrossRoles(t *testing.T) {
 	}
 }
 
-func TestFillPlanDefaults_PreservesPlannerAssignments(t *testing.T) {
-	planner := &RoleAssignment{Model: "frontier-explicit", Effort: "high"}
+func TestFillPlanFromMenus_PreservesPlannerAssignments(t *testing.T) {
+	planner := &RoleAssignment{Provider: "claude", Model: "frontier-explicit", Effort: "high"}
 	plan := &Plan{Phases: []Phase{
 		{
 			ID: "p1", Tasks: []Task{{ID: "t1"}},
 			ExecutorAssignment: planner,
 		},
 	}}
-	defaults := PlanDefaults{
-		Executor: RoleAssignment{Model: "default-fast", Effort: "low"},
+	menus := RoleMenus{
+		Executor: RoleMenu{Options: []MenuOption{{Provider: "claude", Model: "default-fast", Efforts: []string{"low"}}}},
 	}
-	FillPlanDefaults(plan, defaults)
+	FillPlanFromMenus(plan, menus)
 	got := plan.Phases[0].ExecutorAssignment
 	if got != planner {
 		t.Errorf("planner-set executor pointer was replaced; got %p, want %p", got, planner)
@@ -63,23 +65,77 @@ func TestFillPlanDefaults_PreservesPlannerAssignments(t *testing.T) {
 	}
 }
 
-func TestFillPlanDefaults_OnlyFillsRolesWithKnownDefaults(t *testing.T) {
+func TestFillPlanFromMenus_DefaultsEmptyTaskStatusToPending(t *testing.T) {
 	plan := &Plan{Phases: []Phase{
-		{ID: "p1", Tasks: []Task{{ID: "t1"}}},
+		{
+			ID: "p1",
+			Tasks: []Task{
+				{ID: "t1"},
+				{ID: "t2", Status: TaskDone},
+				{ID: "t3"},
+			},
+		},
 	}}
-	// Only executor has a default; briefer and reviewer should stay nil.
-	defaults := PlanDefaults{
-		Executor: RoleAssignment{Model: "default-fast"},
+	FillPlanFromMenus(plan, RoleMenus{})
+	tasks := plan.Phases[0].Tasks
+	if tasks[0].Status != TaskPending {
+		t.Errorf("t1 status = %q, want pending", tasks[0].Status)
 	}
-	FillPlanDefaults(plan, defaults)
-	ph := plan.Phases[0]
-	if ph.ExecutorAssignment == nil || ph.ExecutorAssignment.Model != "default-fast" {
-		t.Errorf("executor default not applied: %+v", ph.ExecutorAssignment)
+	if tasks[1].Status != TaskDone {
+		t.Errorf("t2 status = %q, want preserved done", tasks[1].Status)
 	}
-	if ph.BrieferAssignment != nil {
-		t.Errorf("briefer should stay nil with empty default; got %+v", ph.BrieferAssignment)
+	if tasks[2].Status != TaskPending {
+		t.Errorf("t3 status = %q, want pending", tasks[2].Status)
 	}
-	if ph.ReviewerAssignment != nil {
-		t.Errorf("reviewer should stay nil with empty default; got %+v", ph.ReviewerAssignment)
+}
+
+func TestValidatePlanAgainstMenus_AcceptsMatchingTriple(t *testing.T) {
+	menus := RoleMenus{
+		Executor: RoleMenu{Options: []MenuOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium", "high"}},
+		}},
+	}
+	plan := &Plan{Phases: []Phase{
+		{
+			ID: "p1", Tasks: []Task{{ID: "t1"}},
+			ExecutorAssignment: &RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "high"},
+		},
+	}}
+	if err := ValidatePlanAgainstMenus(plan, menus); err != nil {
+		t.Errorf("expected accept, got %v", err)
+	}
+}
+
+func TestValidatePlanAgainstMenus_RejectsModelOutsideMenu(t *testing.T) {
+	menus := RoleMenus{
+		Executor: RoleMenu{Options: []MenuOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
+		}},
+	}
+	plan := &Plan{Phases: []Phase{
+		{
+			ID: "p1", Tasks: []Task{{ID: "t1"}},
+			ExecutorAssignment: &RoleAssignment{Provider: "claude", Model: "claude-opus-4-7", Effort: "high"},
+		},
+	}}
+	if err := ValidatePlanAgainstMenus(plan, menus); err == nil {
+		t.Errorf("expected reject for model outside menu")
+	}
+}
+
+func TestValidatePlanAgainstMenus_RejectsEffortNotAllowed(t *testing.T) {
+	menus := RoleMenus{
+		Executor: RoleMenu{Options: []MenuOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
+		}},
+	}
+	plan := &Plan{Phases: []Phase{
+		{
+			ID: "p1", Tasks: []Task{{ID: "t1"}},
+			ExecutorAssignment: &RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "high"},
+		},
+	}}
+	if err := ValidatePlanAgainstMenus(plan, menus); err == nil {
+		t.Errorf("expected reject for effort outside option's allowed list")
 	}
 }

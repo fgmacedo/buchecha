@@ -53,7 +53,7 @@ spec → Planner ─► Plan (DAG of phases and tasks)
 1. The Planner reads the spec via the Read tool and submits the Plan through `bcc_plan_emit`. bcc validates the structure (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps) and persists it to the session directory.
 2. While any task is still `pending` or `needs_fix`, the Briefer picks one eligible phase, decides which subset of its tasks to attempt this iteration (the **sub-DAG**), and submits the Briefing through `bcc_briefing_emit`.
 3. The Executor reads the Briefing through `bcc_get_briefing`, runs the work, and reports per-task progress through `bcc_task_started` / `bcc_task_completed`. It closes with `bcc_iteration_finished(signal, summary)`.
-4. The Reviewer reads the Briefing, the diff (`bcc_get_diff`), and the journal delta (`bcc_get_journal_delta`); audits each task; calls `bcc_task_approved` or `bcc_task_needs_fix(feedback)`; and closes with `bcc_review_finished(outcome, reasoning)`.
+4. The Reviewer reads the Briefing, the phase baseline (`bcc_get_baseline`), and the journal delta (`bcc_get_journal_delta`); uses Bash with git diff/log/show to inspect the cumulative work; audits each task; calls `bcc_task_approved` or `bcc_task_needs_fix(feedback)`; and closes with `bcc_review_finished(outcome, reasoning)`.
 5. The decider walks the sub-DAG state: every task `done` advances the iteration; any `needs_fix` retries the Executor with the per-task feedback rolled into the next prompt; an explicit `escalate` outcome (or running out of retry budget) pauses the loop and asks the user.
 
 `bcc run` returns `ExitDone` only when the DAG has no pending tasks left.
@@ -111,7 +111,7 @@ Every message between bcc and an agent is an MCP method call routed through bcc'
 | Planner | spec via Read tool | `bcc_plan_emit`, `bcc_task_started/completed("planning")` |
 | Briefer | `bcc_get_dag_snapshot` | `bcc_briefing_emit` |
 | Executor | `bcc_get_briefing`, `bcc_get_pending_tasks` | `bcc_task_started/completed`, `bcc_iteration_finished` |
-| Reviewer | `bcc_get_briefing`, `bcc_get_diff`, `bcc_get_journal_delta`, `bcc_get_dag_snapshot` | `bcc_task_approved`, `bcc_task_needs_fix(feedback)`, `bcc_review_finished` |
+| Reviewer | `bcc_get_briefing`, `bcc_get_baseline`, `bcc_get_journal_delta`, `bcc_get_dag_snapshot` | `bcc_task_approved`, `bcc_task_needs_fix(feedback)`, `bcc_review_finished` |
 
 Every call carries the `agent_id` bcc embedded in the role's prompt. Calls without `agent_id`, with an unregistered id, or with a role that does not match the connection are rejected with a structured error.
 

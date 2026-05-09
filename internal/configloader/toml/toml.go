@@ -18,10 +18,13 @@ import (
 )
 
 // Load reads the TOML file at path, decodes it into a config.Config, applies
-// defaults, and returns the result.
+// defaults, and runs the host-availability filter so the returned Config
+// only references providers whose binary resolved on PATH.
 //
 // Returns a wrapped fs.ErrNotExist if the file does not exist; callers can
-// use errors.Is(err, fs.ErrNotExist) to distinguish.
+// use errors.Is(err, fs.ErrNotExist) to distinguish. Returns an error when
+// any role ends up with no usable options after filtering (e.g. claude not
+// in PATH).
 func Load(path string) (*config.Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -34,13 +37,16 @@ func Load(path string) (*config.Config, error) {
 	}
 
 	config.ApplyDefaults(&c)
+	if _, err := config.ResolveAvailability(&c); err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
 	return &c, nil
 }
 
 // Discover walks up from start looking for a file named .bcc.toml. Returns
 // (config, foundPath, nil) when found. When the walk reaches the filesystem
-// root without finding one, returns a Config with defaults applied and
-// foundPath == "".
+// root without finding one, returns a Config with defaults applied and the
+// host-availability filter run (foundPath == "").
 func Discover(start string) (*config.Config, string, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
@@ -67,5 +73,8 @@ func Discover(start string) (*config.Config, string, error) {
 
 	c := &config.Config{}
 	config.ApplyDefaults(c)
+	if _, err := config.ResolveAvailability(c); err != nil {
+		return nil, "", fmt.Errorf("config defaults: %w", err)
+	}
 	return c, "", nil
 }

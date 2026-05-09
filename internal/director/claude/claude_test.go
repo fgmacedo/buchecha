@@ -36,9 +36,10 @@ func echoArgsOut(t *testing.T) string {
 func TestPlan_RunsAndReportsStats(t *testing.T) {
 	a := New(Config{Binary: fixture(t, "fake-claude-plan.sh")})
 	plan, stats, err := a.Plan(context.Background(), director.PlannerInput{
-		AgentID:  "planner-001",
-		SpecPath: "spec.md",
-		SpecHash: "abc123",
+		AgentID:    "planner-001",
+		SpecPath:   "spec.md",
+		SpecHash:   "abc123",
+		Assignment: director.RoleAssignment{Provider: "claude", Model: "claude-opus-4-7", Effort: "high"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -59,6 +60,7 @@ func TestBrief_RunsAndReportsStats(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-1",
 		PhaseID:     "p1",
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -75,6 +77,7 @@ func TestReview_RunsAndReportsStats(t *testing.T) {
 		IterationID: "p1-1",
 		PhaseID:     "p1",
 		SubDAG:      []string{"t1"},
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
@@ -103,10 +106,11 @@ func TestRunRole_BudgetExceeded(t *testing.T) {
 		MaxBudgetUSD: 0.10,
 	})
 	stats, err := a.Brief(context.Background(), director.BrieferInput{
-		AgentID:  "briefer-001",
-		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
-		SpecPath: "/tmp/spec.md",
-		PhaseID:  "p1",
+		AgentID:    "briefer-001",
+		Plan:       &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:   "/tmp/spec.md",
+		PhaseID:    "p1",
+		Assignment: &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err == nil {
 		t.Fatalf("expected ErrBudgetExceeded")
@@ -127,17 +131,17 @@ func TestArgs_PassedToBinary(t *testing.T) {
 	argsPath := echoArgsOut(t)
 	a := New(Config{
 		Binary:       fixture(t, "fake-claude-echo-args.sh"),
-		Model:        "test-model",
 		MaxBudgetUSD: 0.5,
 		ExtraArgs:    []string{"--foo"},
 		MCPURL:       "http://127.0.0.1:1/mcp/",
 		MCPToken:     "secret",
 	})
 	_, err := a.Brief(context.Background(), director.BrieferInput{
-		AgentID:  "briefer-001",
-		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
-		SpecPath: "/tmp/spec.md",
-		PhaseID:  "p1",
+		AgentID:    "briefer-001",
+		Plan:       &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
+		SpecPath:   "/tmp/spec.md",
+		PhaseID:    "p1",
+		Assignment: &director.RoleAssignment{Provider: "claude", Model: "test-model"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -186,23 +190,19 @@ func safeAt(s []string, i int) string {
 	return s[i]
 }
 
-// TestBrief_AssignmentOverridesModelAndEffort pins the per-call
-// override path: when BrieferInput.Assignment carries a Model or
-// Effort, the spawned claude args must reflect it instead of the
-// adapter's configured defaults.
-func TestBrief_AssignmentOverridesModelAndEffort(t *testing.T) {
+// TestBrief_AssignmentDrivesModelAndEffort pins the spawn argv: every
+// Brief call must carry a (provider, model, effort) triple via
+// Assignment, and the resolved values must reach --model and --effort
+// on the claude command line.
+func TestBrief_AssignmentDrivesModelAndEffort(t *testing.T) {
 	argsPath := echoArgsOut(t)
-	a := New(Config{
-		Binary: fixture(t, "fake-claude-echo-args.sh"),
-		Model:  "default-model",
-		Effort: "low",
-	})
+	a := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
 	_, err := a.Brief(context.Background(), director.BrieferInput{
 		AgentID:    "briefer-001",
 		Plan:       &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath:   "/tmp/spec.md",
 		PhaseID:    "p1",
-		Assignment: &director.RoleAssignment{Model: "override-model", Effort: "high"},
+		Assignment: &director.RoleAssignment{Provider: "claude", Model: "override-model", Effort: "high"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -215,67 +215,54 @@ func TestBrief_AssignmentOverridesModelAndEffort(t *testing.T) {
 	if !strings.Contains(body, "--effort\nhigh") {
 		t.Errorf("expected --effort high, got: %s", body)
 	}
-	if strings.Contains(body, "default-model") {
-		t.Errorf("default model should be overridden: %s", body)
-	}
-	if strings.Contains(body, "--effort\nlow") {
-		t.Errorf("default effort should be overridden: %s", body)
-	}
 }
 
-// TestBrief_NoAssignmentKeepsConfiguredDefaults pins the fall-through
-// path: a nil Assignment (or empty fields) preserves the configured
-// Model and Effort.
-func TestBrief_NoAssignmentKeepsConfiguredDefaults(t *testing.T) {
-	argsPath := echoArgsOut(t)
-	a := New(Config{
-		Binary: fixture(t, "fake-claude-echo-args.sh"),
-		Model:  "default-model",
-		Effort: "low",
-	})
+// TestBrief_RejectsMissingAssignment pins the contract that every
+// Brief/Review call carries a complete RoleAssignment; a nil one is a
+// programmer error.
+func TestBrief_RejectsMissingAssignment(t *testing.T) {
+	a := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
 	_, err := a.Brief(context.Background(), director.BrieferInput{
 		AgentID:  "briefer-001",
 		Plan:     &director.Plan{Goal: "g", Phases: []director.Phase{{ID: "p1", Title: "t", Intent: "i", Tasks: []director.Task{{ID: "t1", Title: "tt", Intent: "ii", Acceptance: []director.AcceptanceItem{{ID: "a1", Description: "d", Evidence: director.EvidenceTest}}, Status: director.TaskPending}}}}},
 		SpecPath: "/tmp/spec.md",
 		PhaseID:  "p1",
 	}, nil)
-	if err != nil {
-		t.Fatalf("Brief: %v", err)
-	}
-	out, _ := os.ReadFile(argsPath)
-	body := string(out)
-	if !strings.Contains(body, "--model\ndefault-model") {
-		t.Errorf("expected --model default-model, got: %s", body)
-	}
-	if !strings.Contains(body, "--effort\nlow") {
-		t.Errorf("expected --effort low, got: %s", body)
+	if err == nil {
+		t.Fatalf("expected error on missing assignment")
 	}
 }
 
-// TestPlan_RegistryRendersInPrompt confirms the planner prompt embeds
-// the configured CapabilityRegistry models so the agent can pick from
-// them when authoring per-phase assignments.
-func TestPlan_RegistryRendersInPrompt(t *testing.T) {
+// TestPlan_MenusRenderInPrompt confirms the planner prompt embeds the
+// per-role option menus so the agent picks per-phase assignments only
+// from the user's declared cardápio.
+func TestPlan_MenusRenderInPrompt(t *testing.T) {
 	argsPath := echoArgsOut(t)
 	a := New(Config{Binary: fixture(t, "fake-claude-echo-args.sh")})
-	registry := director.CapabilityRegistry{
-		Models: []director.Capability{
-			{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "high"}, Description: "Strongest reasoning."},
-			{Provider: "claude", Model: "claude-haiku-4-5", Tier: "fast", Description: "Cheapest."},
-		},
+	menus := director.RoleMenus{
+		Briefer: director.RoleMenu{Options: []director.MenuOption{
+			{Provider: "claude", Model: "claude-haiku-4-5", Efforts: []string{"low"}, Tier: "fast", Summary: "cheapest"},
+		}},
+		Executor: director.RoleMenu{Options: []director.MenuOption{
+			{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"low", "high"}, Tier: "frontier", Summary: "deep reasoning"},
+		}},
+		Reviewer: director.RoleMenu{Options: []director.MenuOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}, Tier: "balanced"},
+		}},
 	}
 	_, _, err := a.Plan(context.Background(), director.PlannerInput{
-		AgentID:  "planner-001",
-		SpecPath: "/tmp/spec.md",
-		SpecHash: "h",
-		Registry: registry,
+		AgentID:    "planner-001",
+		SpecPath:   "/tmp/spec.md",
+		SpecHash:   "h",
+		Menus:      menus,
+		Assignment: director.RoleAssignment{Provider: "claude", Model: "claude-opus-4-7", Effort: "high"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
 	out, _ := os.ReadFile(argsPath)
 	body := string(out)
-	for _, want := range []string{"claude-opus-4-7", "frontier", "Strongest reasoning", "claude-haiku-4-5", "fast", "low, high"} {
+	for _, want := range []string{"claude-opus-4-7", "frontier", "deep reasoning", "claude-haiku-4-5", "fast", "low, high", "claude-sonnet-4-6"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("planner prompt missing %q in:\n%s", want, body)
 		}
@@ -520,6 +507,7 @@ func TestBrief_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
 		IterationID: "p1-01",
 		PhaseID:     "p1",
 		Attempt:     1,
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -581,9 +569,10 @@ func TestPlan_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
 		Events:       events,
 	})
 	_, _, err := a.Plan(context.Background(), director.PlannerInput{
-		AgentID:  "planner-001",
-		SpecPath: "/tmp/spec.md",
-		SpecHash: "abc123",
+		AgentID:    "planner-001",
+		SpecPath:   "/tmp/spec.md",
+		SpecHash:   "abc123",
+		Assignment: director.RoleAssignment{Provider: "claude", Model: "claude-opus-4-7", Effort: "high"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -632,6 +621,7 @@ func TestReview_WritesPromptAndEmitsSpawnStarted(t *testing.T) {
 		PhaseID:     "p1",
 		SubDAG:      []string{"t1"},
 		Attempt:     2,
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
@@ -684,6 +674,7 @@ func TestBrief_EmitsSpawnFinishedWithCost(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-01",
 		PhaseID:     "p1",
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)
@@ -739,6 +730,7 @@ func TestBrief_EmitsSpawnFinishedZeroCostWhenNoResult(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-01",
 		PhaseID:     "p1",
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 
 	evs := collectLoopEvents(events)
@@ -774,6 +766,7 @@ func TestBrief_EmitsSpawnFinishedOnNonZeroExit(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-01",
 		PhaseID:     "p1",
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 
 	evs := collectLoopEvents(events)
@@ -808,6 +801,7 @@ func TestBrief_NoSpawnStartedWhenNoSessionStore(t *testing.T) {
 		SpecPath:    "/tmp/spec.md",
 		IterationID: "p1-01",
 		PhaseID:     "p1",
+		Assignment:  &director.RoleAssignment{Provider: "claude", Model: "claude-sonnet-4-6", Effort: "medium"},
 	}, nil)
 	if err != nil {
 		t.Fatalf("Brief: %v", err)

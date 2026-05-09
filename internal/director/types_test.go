@@ -62,7 +62,7 @@ func TestPlan_RoundTrip(t *testing.T) {
 
 func TestValidatePlan(t *testing.T) {
 	good := samplePlan(t)
-	if err := ValidatePlan(good, nil); err != nil {
+	if err := ValidatePlan(good); err != nil {
 		t.Fatalf("good plan rejected: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestValidatePlan(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := samplePlan(t)
 			tc.mutate(p)
-			err := ValidatePlan(p, nil)
+			err := ValidatePlan(p)
 			if err == nil {
 				t.Fatalf("expected error containing %q", tc.wantSub)
 			}
@@ -182,7 +182,7 @@ func TestValidatePlan(t *testing.T) {
 		})
 	}
 
-	if err := ValidatePlan(nil, nil); err == nil {
+	if err := ValidatePlan(nil); err == nil {
 		t.Fatalf("ValidatePlan(nil) returned nil error")
 	}
 
@@ -190,64 +190,15 @@ func TestValidatePlan(t *testing.T) {
 		p := samplePlan(t)
 		// samplePlan already uses task id "t1" in both p1 and p2; the
 		// validator must accept this since task ids are phase-scoped.
-		if err := ValidatePlan(p, nil); err != nil {
+		if err := ValidatePlan(p); err != nil {
 			t.Fatalf("phase-scoped duplicate task id rejected: %v", err)
 		}
 	})
 }
 
-func TestValidatePlan_CapabilityChecks(t *testing.T) {
-	registry := &CapabilityRegistry{
-		Models: []Capability{
-			{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier", Efforts: []string{"low", "medium", "high"}},
-			{Provider: "claude", Model: "claude-sonnet-4-6", Tier: "balanced", Efforts: []string{"low"}},
-		},
-	}
-
-	t.Run("known model and effort accepted", func(t *testing.T) {
-		p := samplePlan(t)
-		p.Phases[0].ExecutorAssignment = &RoleAssignment{Model: "claude-opus-4-7", Effort: "high"}
-		p.Phases[0].BrieferAssignment = &RoleAssignment{Model: "claude-sonnet-4-6"}
-		if err := ValidatePlan(p, registry); err != nil {
-			t.Fatalf("valid assignments rejected: %v", err)
-		}
-	})
-
-	t.Run("unknown model rejected", func(t *testing.T) {
-		p := samplePlan(t)
-		p.Phases[0].ExecutorAssignment = &RoleAssignment{Model: "claude-mystery-9-9"}
-		err := ValidatePlan(p, registry)
-		if err == nil || !strings.Contains(err.Error(), "not in capability registry") {
-			t.Fatalf("expected capability error, got %v", err)
-		}
-	})
-
-	t.Run("unsupported effort rejected", func(t *testing.T) {
-		p := samplePlan(t)
-		p.Phases[0].ReviewerAssignment = &RoleAssignment{Model: "claude-sonnet-4-6", Effort: "max"}
-		err := ValidatePlan(p, registry)
-		if err == nil || !strings.Contains(err.Error(), "not supported by model") {
-			t.Fatalf("expected effort error, got %v", err)
-		}
-	})
-
-	t.Run("effort without model rejected", func(t *testing.T) {
-		p := samplePlan(t)
-		p.Phases[0].BrieferAssignment = &RoleAssignment{Effort: "high"}
-		err := ValidatePlan(p, registry)
-		if err == nil || !strings.Contains(err.Error(), "without model") {
-			t.Fatalf("expected effort-without-model error, got %v", err)
-		}
-	})
-
-	t.Run("nil registry skips capability checks", func(t *testing.T) {
-		p := samplePlan(t)
-		p.Phases[0].ExecutorAssignment = &RoleAssignment{Model: "claude-mystery-9-9", Effort: "max"}
-		if err := ValidatePlan(p, nil); err != nil {
-			t.Fatalf("nil registry should skip capability checks: %v", err)
-		}
-	})
-}
+// Capability-aware validation lives in plan_defaults_test.go's
+// ValidatePlanAgainstMenus tests now that the role menus are the
+// authoritative scope for assignments.
 
 func TestValidatePlan_PreparedBriefing(t *testing.T) {
 	t.Run("valid prepared briefing accepted", func(t *testing.T) {
@@ -256,7 +207,7 @@ func TestValidatePlan_PreparedBriefing(t *testing.T) {
 			SubDAGTaskIDs: []string{"t1"},
 			Instructions:  "rename the field",
 		}
-		if err := ValidatePlan(p, nil); err != nil {
+		if err := ValidatePlan(p); err != nil {
 			t.Fatalf("valid prepared briefing rejected: %v", err)
 		}
 	})
@@ -267,7 +218,7 @@ func TestValidatePlan_PreparedBriefing(t *testing.T) {
 			SubDAGTaskIDs: []string{"ghost-task"},
 			Instructions:  "x",
 		}
-		err := ValidatePlan(p, nil)
+		err := ValidatePlan(p)
 		if err == nil || !strings.Contains(err.Error(), "unknown task") {
 			t.Fatalf("expected unknown-task error, got %v", err)
 		}
@@ -279,7 +230,7 @@ func TestValidatePlan_PreparedBriefing(t *testing.T) {
 			SubDAGTaskIDs: []string{"t1"},
 			Instructions:  "",
 		}
-		err := ValidatePlan(p, nil)
+		err := ValidatePlan(p)
 		if err == nil || !strings.Contains(err.Error(), "empty instructions") {
 			t.Fatalf("expected empty-instructions error, got %v", err)
 		}
@@ -291,7 +242,7 @@ func TestValidatePlan_PreparedBriefing(t *testing.T) {
 			SubDAGTaskIDs: nil,
 			Instructions:  "x",
 		}
-		err := ValidatePlan(p, nil)
+		err := ValidatePlan(p)
 		if err == nil || !strings.Contains(err.Error(), "empty sub_dag_task_ids") {
 			t.Fatalf("expected empty-sub_dag error, got %v", err)
 		}

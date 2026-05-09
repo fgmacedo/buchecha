@@ -62,6 +62,50 @@ export function AgentStreamTab({ agentId, events, agentSpawnId }: AgentStreamTab
     return map
   }, [filtered])
 
+  // Pre-compute consumed set in a single forward pass, then build nodes
+  // forward and reverse before render so newest events appear on top.
+  const nodes = useMemo(() => {
+    const consumed = new Set<number>()
+
+    // First pass: identify all tool_results paired with tool_uses
+    for (const ev of filtered) {
+      if (ev.event.type === 'agent_event' && ev.event.kind === 'tool_use') {
+        const toolUseId = agentEventToolID(ev)
+        const pairedResult = pairedMap.get(toolUseId)
+        if (pairedResult) {
+          consumed.add(pairedResult.seq)
+        }
+      }
+    }
+
+    // Second pass: build nodes forward
+    const nodeList: React.ReactNode[] = []
+    for (const ev of filtered) {
+      if (consumed.has(ev.seq)) continue
+      const { type } = ev.event
+      if (TASK_LINE_KINDS.has(type)) {
+        nodeList.push(<TaskLine key={ev.seq} event={ev} />)
+      } else if (SPAWN_KINDS.has(type)) {
+        nodeList.push(<SpawnMarker key={ev.seq} event={ev} />)
+      } else if (type === 'agent_event') {
+        const kind = typeof ev.event.kind === 'string' ? ev.event.kind : ''
+        let pairedResult: SeqEvent | undefined
+        if (kind === 'tool_use') {
+          const toolUseId = agentEventToolID(ev)
+          pairedResult = pairedMap.get(toolUseId)
+        } else if (kind === 'tool_result') {
+          nodeList.push(<AgentBlock key={ev.seq} event={ev} />)
+          continue
+        }
+        nodeList.push(<AgentBlock key={ev.seq} event={ev} pairedResult={pairedResult} />)
+      }
+    }
+
+    // Reverse so newest appears on top
+    nodeList.reverse()
+    return nodeList
+  }, [filtered, pairedMap])
+
   if (filtered.length === 0) {
     return (
       <div
@@ -78,28 +122,9 @@ export function AgentStreamTab({ agentId, events, agentSpawnId }: AgentStreamTab
     )
   }
 
-  const consumed = new Set<number>()
   return (
     <div style={{ height: '100%', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
-      {filtered.map((ev) => {
-        if (consumed.has(ev.seq)) return null
-        const { type } = ev.event
-        if (TASK_LINE_KINDS.has(type)) return <TaskLine key={ev.seq} event={ev} />
-        if (SPAWN_KINDS.has(type)) return <SpawnMarker key={ev.seq} event={ev} />
-        if (type === 'agent_event') {
-          const kind = typeof ev.event.kind === 'string' ? ev.event.kind : ''
-          let pairedResult: SeqEvent | undefined
-          if (kind === 'tool_use') {
-            const toolUseId = agentEventToolID(ev)
-            pairedResult = pairedMap.get(toolUseId)
-            if (pairedResult) consumed.add(pairedResult.seq)
-          } else if (kind === 'tool_result') {
-            return <AgentBlock key={ev.seq} event={ev} />
-          }
-          return <AgentBlock key={ev.seq} event={ev} pairedResult={pairedResult} />
-        }
-        return null
-      })}
+      {nodes}
     </div>
   )
 }

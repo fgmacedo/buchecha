@@ -38,8 +38,11 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		return l.terminate(events, "fatal", ExitInvalid),
 			errors.New("loop: Director requires Plan, Briefer, Reviewer, Store, NewExecutor, and Handler")
 	}
-	if err := director.ValidatePlan(d.Plan, d.Handler.CapabilityRegistry()); err != nil {
+	if err := director.ValidatePlan(d.Plan); err != nil {
 		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan: %w", err)
+	}
+	if err := director.ValidatePlanAgainstMenus(d.Plan, d.Handler.RoleMenus()); err != nil {
+		return l.terminate(events, "fatal", ExitInvalid), fmt.Errorf("loop: invalid director plan routing: %w", err)
 	}
 	state := d.Handler.State()
 	if state == nil {
@@ -75,6 +78,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 	priorFeedback := ""
 	pendingHint := ""
 	phaseIterations := map[string]int{}
+	capturedBaselines := map[string]string{}
 
 	for state.HasPending() {
 		eligible := state.EligiblePhases()
@@ -93,7 +97,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: phase %q is eligible but has no pending tasks", phaseID)
 		}
-		budget := effectiveRetryBudget(phase, subDAG, l.Config.Director.RetryBudget)
+		budget := effectiveRetryBudget(phase, subDAG, l.Config.Loop.RetryBudget)
 
 		phaseIterations[phaseID]++
 		iteration := phaseIterations[phaseID]
@@ -209,12 +213,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return systemPromptPath, nil
 		}
 
-		brieferModel, brieferEffort := resolveAssignment(phase.AssignmentFor("briefer"),
-			l.Config.Director.Claude.Model, l.Config.Director.Claude.Effort)
-		executorModel, executorEffort := resolveAssignment(phase.AssignmentFor("executor"),
-			l.Config.Agent.Claude.Model, l.Config.Agent.Claude.Effort)
-		reviewerModel, reviewerEffort := resolveAssignment(phase.AssignmentFor("reviewer"),
-			l.Config.Director.Claude.Model, l.Config.Director.Claude.Effort)
+		brieferModel, brieferEffort := resolveAssignment(phase.AssignmentFor("briefer"))
+		executorModel, executorEffort := resolveAssignment(phase.AssignmentFor("executor"))
+		reviewerModel, reviewerEffort := resolveAssignment(phase.AssignmentFor("reviewer"))
 		brieferSkipped := phase.PreparedBriefing != nil
 		reviewSkipped := phase.SkipReview
 		emit(events, PhaseBriefed{
@@ -230,6 +231,17 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			ReviewSkipped:  reviewSkipped,
 			At:             time.Now(),
 		})
+
+		// Capture phase baseline once before any attempt.
+		if _, seen := capturedBaselines[phaseID]; !seen {
+			sha, err := l.Git.HeadSHA(ctx)
+			if err != nil {
+				return l.terminate(events, "fatal", ExitInvalid),
+					fmt.Errorf("director: git head capturing baseline for phase %s: %w", phaseID, err)
+			}
+			capturedBaselines[phaseID] = sha
+			d.Handler.SetPhaseBaseline(phaseID, sha)
+		}
 
 		iterationDone := false
 		for attempt := 1; !iterationDone; attempt++ {
@@ -254,6 +266,11 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			}
 
 			iterStart := time.Now()
+			if l.Director.Store != nil {
+				if err := l.Director.Store.SetIteration(globalIter, l.Config.Loop.MaxIterations, iterStart); err != nil {
+					logger.Warn("director set iteration", "err", err)
+				}
+			}
 			emit(events, IterationStarted{
 				Index: globalIter, MaxIter: l.Config.Loop.MaxIterations,
 				BaselineSHA: headBefore, At: iterStart,
@@ -307,8 +324,6 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			if signal == agentcontract.SignalBlocked {
 				return l.terminate(events, "blocked", ExitBlocked), nil
 			}
-
-			d.Handler.SetBriefingDiffRange(briefing.IterationID, headBefore, headAfter)
 
 			if phase.SkipReview {
 				if err := d.Handler.RecordSyntheticApproval(briefing.IterationID); err != nil {
@@ -569,29 +584,23 @@ func parseSignalString(v string) agentcontract.Signal {
 	}
 }
 
-// resolveAssignment returns the (model, effort) the loop will pass to
-// the spawn for one role: the Planner's per-phase override when set,
-// falling back to the configured defaults. Empty defaults stay empty
-// so the adapter omits the flag entirely.
-func resolveAssignment(a *director.RoleAssignment, defaultModel, defaultEffort string) (string, string) {
-	model := defaultModel
-	effort := defaultEffort
-	if a != nil {
-		if a.Model != "" {
-			model = a.Model
-		}
-		if a.Effort != "" {
-			effort = a.Effort
-		}
+// resolveAssignment unpacks the (model, effort) from a per-phase
+// assignment. With config.Roles menus and FillPlanFromMenus in place,
+// every assignment is non-nil and complete by the time the loop
+// reaches it; nil here returns empty strings so headless renderers
+// have something to print without crashing.
+func resolveAssignment(a *director.RoleAssignment) (string, string) {
+	if a == nil {
+		return "", ""
 	}
-	return model, effort
+	return a.Model, a.Effort
 }
 
 // effectiveRetryBudget resolves the per-iteration retry budget by
 // taking the higher of the sub-DAG's per-task maximum and the run
 // config floor. The floor exists because a Planner that emits
 // retry_budget=1 on every task would otherwise silently shrink the
-// run-wide budget (Config.Director.RetryBudget) the user asked for in
+// run-wide budget (Config.Loop.RetryBudget) the user asked for in
 // .bcc.toml. Per-task overrides may raise the budget above the floor;
 // they cannot drop below it.
 func effectiveRetryBudget(phase *director.Phase, subDAG []string, configFloor int) int {

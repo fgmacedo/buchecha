@@ -300,10 +300,12 @@ func loadArchivedDAG(sessionDir string) (*dag.State, error) {
 // zero so consumers know the run is still in flight.
 func sessionMetaFrom(sess director.Session) SessionMeta {
 	meta := SessionMeta{
-		ID:        sess.ID,
-		SpecPath:  sess.SpecPath,
-		StartedAt: sess.CreatedAt,
-		Status:    string(sess.Status),
+		ID:             sess.ID,
+		SpecPath:       sess.SpecPath,
+		StartedAt:      sess.CreatedAt,
+		Status:         string(sess.Status),
+		IterationIndex: sess.IterationIndex,
+		MaxIter:        sess.MaxIter,
 	}
 	if sess.Status != director.SessionRunning && !sess.UpdatedAt.IsZero() {
 		meta.FinishedAt = sess.UpdatedAt

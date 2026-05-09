@@ -145,6 +145,21 @@ func (s *Store) Touch(status SessionStatus, now time.Time) error {
 	return writeJSON(filepath.Join(s.sessionDir, manifestFile), s.session)
 }
 
+// SetIteration updates the session's IterationIndex and MaxIter and
+// rewrites the manifest. Mirrors the Touch pattern.
+func (s *Store) SetIteration(index, maxIter int, now time.Time) error {
+	if s.session == nil {
+		return errors.New("director: set iteration: nil session")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.session.IterationIndex = index
+	s.session.MaxIter = maxIter
+	s.session.UpdatedAt = now
+	return writeJSON(filepath.Join(s.sessionDir, manifestFile), s.session)
+}
+
 func (s *Store) planPath() string {
 	return filepath.Join(s.sessionDir, planFile)
 }

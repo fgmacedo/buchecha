@@ -20,7 +20,7 @@ const PHASE_PAD_X = 18
 const PHASE_PAD_Y = 14
 // Header stacks the id chip alongside the larger title (18px, up to 2 clamped lines), the intent
 // (13px, 2 lines), then a meta strip with progress / tasks count / cost /
-// plan provider. The deps/parallelizable/priority chips were dropped to
+// plan provider. The deps/parallelizable chips were dropped to
 // match the design handoff (cleaner card, telemetry up front).
 const PHASE_HEADER_H = 148
 const PHASE_FOOTER_H = 0

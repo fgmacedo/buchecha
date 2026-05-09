@@ -84,7 +84,7 @@ graph TD
     EXEC -->|bcc_task_started, bcc_task_completed| MCP
     EXEC -->|bcc_iteration_finished| LOOP
     LOOP --> REV[Reviewer agent]
-    REV -->|bcc_get_briefing, bcc_get_diff, bcc_get_dag_snapshot| MCP
+    REV -->|bcc_get_briefing, bcc_get_baseline, bcc_get_dag_snapshot| MCP
     REV -->|bcc_task_approved, bcc_task_needs_fix| MCP
     REV -->|bcc_review_finished| LOOP
     LOOP --> DONE[ExitDone when DAG empty]
@@ -223,7 +223,7 @@ The handler validates: (1) `phase_id` resolves to an existing phase; (2) the pha
 
 - `bcc_get_briefing(agent_id)`: Returns the Briefing the Reviewer is auditing. The handler associates each spawned Reviewer agent_id with the Executor's briefing it follows.
 - `bcc_get_dag_snapshot(agent_id)`: Returns DAG state scoped to the phase the Reviewer is auditing.
-- `bcc_get_diff(agent_id)`: The unified diff the corresponding Executor produced. The handler computes this from git on demand.
+- `bcc_get_baseline(agent_id)`: The phase-scoped baseline SHA and current HEAD for inspection. The handler returns `{phase_id, phase_baseline_sha, current_head_sha}`; the Reviewer uses Bash (git diff/log/show) to examine the cumulative work of the phase.
 - `bcc_get_journal_delta(agent_id)`: Text appended to the spec's journal section during the audited iteration. The handler computes this from the spec format adapter on demand.
 - `bcc_task_approved(agent_id, id: string, note?: string)`: Marks a task as `done` (post-review). Scope-checked against the audited sub-DAG. May be called multiple times during the review.
 - `bcc_task_needs_fix(agent_id, id: string, feedback: string)`: Returns a task to `needs_fix` with a per-task feedback string. Scope-checked.
@@ -255,7 +255,7 @@ The MCP transport is request-response, not push. bcc cannot interrupt the agent 
 
 Required polling per role:
 
-1. **On entry**: every role calls a context-recovery method. Planner reads the spec via `Read`. Briefer calls `bcc_get_dag_snapshot`. Executor calls `bcc_get_briefing`. Reviewer calls `bcc_get_briefing` and `bcc_get_diff`.
+1. **On entry**: every role calls a context-recovery method. Planner reads the spec via `Read`. Briefer calls `bcc_get_dag_snapshot`. Executor calls `bcc_get_briefing`. Reviewer calls `bcc_get_briefing` and `bcc_get_baseline`.
 2. **At task boundaries**: Executor calls `bcc_task_started` before working on a task and `bcc_task_completed` after. Reviewer calls `bcc_task_approved` or `bcc_task_needs_fix` per task it audits.
 3. **Before retry**: in retries within an iteration, Executor calls `bcc_get_pending_tasks` to see which sub-DAG tasks remain.
 4. **On exit**: Executor calls `bcc_iteration_finished`. Reviewer calls `bcc_review_finished`. Planner calls `bcc_plan_emit`. Briefer calls `bcc_briefing_emit`.
@@ -283,7 +283,7 @@ The loop is DAG-driven. Each iteration targets a sub-DAG drawn from a single eli
 14.            bcc_iteration_finished(executor_id, review)
 15.        reviewer_id = register("reviewer-iter<n>-shard0", briefing=executor_id's)
 16.        run Reviewer with agent_id=reviewer_id:
-17.            bcc_get_briefing(reviewer_id), bcc_get_diff(reviewer_id), bcc_get_dag_snapshot(reviewer_id),
+17.            bcc_get_briefing(reviewer_id), bcc_get_baseline(reviewer_id), bcc_get_dag_snapshot(reviewer_id),
 18.            bcc_task_approved/needs_fix*(reviewer_id, task_id, ...),
 19.            bcc_review_finished(reviewer_id, outcome)
 20.        if every sub-DAG task is done: break (advance iteration)

@@ -50,7 +50,7 @@ func TestPartials_WireProtocol_DescribesMCPMethods(t *testing.T) {
 		"bcc_get_dag_snapshot",
 		"bcc_get_briefing",
 		"bcc_get_pending_tasks",
-		"bcc_get_diff",
+		"bcc_get_baseline",
 		"bcc_get_journal_delta",
 		"bcc_task_started",
 		"bcc_task_completed",

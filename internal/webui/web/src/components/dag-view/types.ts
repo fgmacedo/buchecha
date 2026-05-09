@@ -17,7 +17,6 @@ export interface DAGTask {
   intent?: string
   status: TaskStatus
   depends_on?: string[]
-  priority?: number
   acceptance?: AcceptanceItem[]
   retry_budget: number
 }
@@ -34,7 +33,6 @@ export interface DAGPhase {
   intent?: string
   depends_on?: string[]
   parallelizable?: boolean
-  priority?: number
   scope_in?: string[]
   scope_out?: string[]
   tasks: DAGTask[]

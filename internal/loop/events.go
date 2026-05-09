@@ -236,6 +236,7 @@ type SpawnStarted struct {
 	TaskID      string
 	IterationID string
 	Attempt     int
+	Provider    string
 	Model       string
 	Effort      string
 	PromptPath  string

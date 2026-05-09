@@ -53,7 +53,7 @@ spec → Planner ─► Plano (DAG de fases e tasks)
 1. O Planner lê o spec via Read tool e submete o Plano por `bcc_plan_emit`. bcc valida a estrutura (ids de fase únicos, ids de task únicos por fase, sem ciclos, sem deps cross-phase) e persiste no diretório da sessão.
 2. Enquanto houver task `pending` ou `needs_fix`, o Briefer escolhe uma fase elegível, decide qual subconjunto de suas tasks tentar nesta iteração (a **sub-DAG**) e submete o Briefing por `bcc_briefing_emit`.
 3. O Executor lê o Briefing por `bcc_get_briefing`, executa o trabalho e reporta progresso por task com `bcc_task_started` / `bcc_task_completed`. Fecha com `bcc_iteration_finished(signal, summary)`.
-4. O Reviewer lê o Briefing, o diff (`bcc_get_diff`) e o delta do journal (`bcc_get_journal_delta`); audita cada task; chama `bcc_task_approved` ou `bcc_task_needs_fix(feedback)`; e fecha com `bcc_review_finished(outcome, reasoning)`.
+4. O Reviewer lê o Briefing, a baseline da fase (`bcc_get_baseline`) e o delta do journal (`bcc_get_journal_delta`); usa Bash com git diff/log/show para inspecionar o trabalho cumulativo; audita cada task; chama `bcc_task_approved` ou `bcc_task_needs_fix(feedback)`; e fecha com `bcc_review_finished(outcome, reasoning)`.
 5. O decider percorre o estado da sub-DAG: toda task `done` avança a iteração; qualquer `needs_fix` re-roda o Executor com o feedback por task incorporado no próximo prompt; um `escalate` explícito (ou esgotar o retry budget) pausa o loop e pergunta ao usuário.
 
 `bcc run` retorna `ExitDone` somente quando o DAG não tem mais tasks pendentes.
@@ -111,7 +111,7 @@ Toda mensagem entre bcc e um agente é uma chamada MCP roteada pelo servidor MCP
 | Planner | spec via Read tool | `bcc_plan_emit`, `bcc_task_started/completed("planning")` |
 | Briefer | `bcc_get_dag_snapshot` | `bcc_briefing_emit` |
 | Executor | `bcc_get_briefing`, `bcc_get_pending_tasks` | `bcc_task_started/completed`, `bcc_iteration_finished` |
-| Reviewer | `bcc_get_briefing`, `bcc_get_diff`, `bcc_get_journal_delta`, `bcc_get_dag_snapshot` | `bcc_task_approved`, `bcc_task_needs_fix(feedback)`, `bcc_review_finished` |
+| Reviewer | `bcc_get_briefing`, `bcc_get_baseline`, `bcc_get_journal_delta`, `bcc_get_dag_snapshot` | `bcc_task_approved`, `bcc_task_needs_fix(feedback)`, `bcc_review_finished` |
 
 Toda chamada carrega o `agent_id` que bcc embutiu no prompt do papel. Chamadas sem `agent_id`, com id não registrado ou com papel que não bate com a connection, são rejeitadas com erro estruturado.
 

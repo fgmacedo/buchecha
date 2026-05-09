@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "bcc_get_diff",
-  "description": "Reviewer reads the unified diff produced by the audited Executor invocation. The handler resolves the SHAs from the briefing the Reviewer is registered to.",
+  "title": "bcc_get_baseline",
+  "description": "Reviewer reads the phase baseline SHA (stable across all attempts) and the current HEAD SHA so it can run git diff/log/show via Bash.",
   "type": "object",
   "additionalProperties": false,
   "required": ["agent_id"],

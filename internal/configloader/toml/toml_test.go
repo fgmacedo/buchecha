@@ -5,8 +5,28 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+// withOnlyBinaries sets PATH to a temp directory containing only the
+// named executable stubs. Anything else (including the contributor's
+// real claude/codex installs) becomes invisible to exec.LookPath for
+// the test's duration, so availability assertions are deterministic.
+func withOnlyBinaries(t *testing.T, names ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if runtime.GOOS == "windows" {
+			path += ".exe"
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
@@ -19,6 +39,8 @@ func writeFile(t *testing.T, path, content string) {
 }
 
 func TestLoad_FullExample(t *testing.T) {
+	withOnlyBinaries(t, "claude")
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	writeFile(t, path, `
@@ -28,28 +50,17 @@ language = "pt-BR"
 [journal]
 store = "markdown_inspec"
 
-[agent]
-name = "claude"
-
-[agent.claude]
-binary = "/usr/bin/claude"
+[providers.claude]
 extra_args = ["--verbose"]
+max_budget_usd = 2.5
 
 [loop]
 max_iterations = 10
+retry_budget = 4
 
 [git]
 branch_prefix = "feat"
 require_commit_per_iteration = true
-
-[director]
-retry_budget = 4
-
-[director.claude]
-binary = "/usr/local/bin/claude"
-model = "claude-opus-4-7"
-extra_args = ["--verbose"]
-max_budget_usd = 2.5
 
 [debug]
 capture_subprocess_logs = true
@@ -69,17 +80,18 @@ FOO = "bar"
 	if c.Project.Language != "pt-BR" {
 		t.Errorf("Language = %q", c.Project.Language)
 	}
-	if c.Agent.Name != "claude" {
-		t.Errorf("Agent.Name = %q", c.Agent.Name)
+	claude := c.Providers["claude"]
+	if len(claude.ExtraArgs) != 1 || claude.ExtraArgs[0] != "--verbose" {
+		t.Errorf("Providers[claude].ExtraArgs = %v", claude.ExtraArgs)
 	}
-	if c.Agent.Claude.Binary != "/usr/bin/claude" {
-		t.Errorf("Agent.Claude.Binary = %q", c.Agent.Claude.Binary)
-	}
-	if len(c.Agent.Claude.ExtraArgs) != 1 || c.Agent.Claude.ExtraArgs[0] != "--verbose" {
-		t.Errorf("ExtraArgs = %v", c.Agent.Claude.ExtraArgs)
+	if claude.MaxBudgetUSD != 2.5 {
+		t.Errorf("Providers[claude].MaxBudgetUSD = %v, want 2.5", claude.MaxBudgetUSD)
 	}
 	if c.Loop.MaxIterations != 10 {
 		t.Errorf("MaxIterations = %d", c.Loop.MaxIterations)
+	}
+	if c.Loop.RetryBudget != 4 {
+		t.Errorf("Loop.RetryBudget = %d, want 4", c.Loop.RetryBudget)
 	}
 	if c.Journal.Store != "markdown_inspec" {
 		t.Errorf("Journal.Store = %q", c.Journal.Store)
@@ -90,21 +102,6 @@ FOO = "bar"
 	if !c.Git.RequireCommitPerIteration {
 		t.Errorf("Git.RequireCommitPerIteration = false")
 	}
-	if c.Director.RetryBudget != 4 {
-		t.Errorf("Director.RetryBudget = %d, want 4", c.Director.RetryBudget)
-	}
-	if c.Director.Claude.Binary != "/usr/local/bin/claude" {
-		t.Errorf("Director.Claude.Binary = %q", c.Director.Claude.Binary)
-	}
-	if c.Director.Claude.Model != "claude-opus-4-7" {
-		t.Errorf("Director.Claude.Model = %q", c.Director.Claude.Model)
-	}
-	if len(c.Director.Claude.ExtraArgs) != 1 || c.Director.Claude.ExtraArgs[0] != "--verbose" {
-		t.Errorf("Director.Claude.ExtraArgs = %v", c.Director.Claude.ExtraArgs)
-	}
-	if c.Director.Claude.MaxBudgetUSD != 2.5 {
-		t.Errorf("Director.Claude.MaxBudgetUSD = %v, want 2.5", c.Director.Claude.MaxBudgetUSD)
-	}
 	if !c.Debug.IsCaptureSubprocessLogsEnabled() {
 		t.Errorf("Debug.CaptureSubprocessLogs not honored from TOML")
 	}
@@ -113,7 +110,46 @@ FOO = "bar"
 	}
 }
 
+func TestLoad_RolesPopulatedWithDefaults(t *testing.T) {
+	withOnlyBinaries(t, "claude")
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	writeFile(t, path, `[project]
+language = "en"
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for role, policy := range map[string]int{
+		"planner":  len(c.Roles.Planner.Options),
+		"briefer":  len(c.Roles.Briefer.Options),
+		"executor": len(c.Roles.Executor.Options),
+		"reviewer": len(c.Roles.Reviewer.Options),
+	} {
+		if policy == 0 {
+			t.Errorf("role %s has no options after Load", role)
+		}
+	}
+}
+
+func TestLoad_ProviderNotInPathFiltersOptions(t *testing.T) {
+	// Only codex available, but defaults reference claude. Expect an error
+	// because the planner role ends up with no usable options.
+	withOnlyBinaries(t, "codex")
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	writeFile(t, path, `[project]
+language = "en"
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatalf("expected availability filter error, got nil")
+	}
+}
+
 func TestLoad_WebuiBlock(t *testing.T) {
+	withOnlyBinaries(t, "claude")
 	cases := []struct {
 		name        string
 		toml        string
@@ -164,6 +200,7 @@ enabled = true
 }
 
 func TestLoad_DebugDefaultsOff(t *testing.T) {
+	withOnlyBinaries(t, "claude")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	writeFile(t, path, `[project]
@@ -192,6 +229,7 @@ func TestLoad_NotFound(t *testing.T) {
 }
 
 func TestLoad_InvalidTOML(t *testing.T) {
+	withOnlyBinaries(t, "claude")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	writeFile(t, path, "this is not = valid = toml [")
@@ -202,6 +240,7 @@ func TestLoad_InvalidTOML(t *testing.T) {
 }
 
 func TestDiscover_FoundUpThree(t *testing.T) {
+	withOnlyBinaries(t, "claude")
 	root := t.TempDir()
 	sub := filepath.Join(root, "a", "b", "c")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -223,6 +262,7 @@ func TestDiscover_FoundUpThree(t *testing.T) {
 }
 
 func TestDiscover_PicksClosestAncestor(t *testing.T) {
+	withOnlyBinaries(t, "claude")
 	root := t.TempDir()
 	mid := filepath.Join(root, "mid")
 	leaf := filepath.Join(mid, "leaf")
@@ -246,10 +286,7 @@ func TestDiscover_PicksClosestAncestor(t *testing.T) {
 }
 
 func TestDiscover_NotFoundReturnsDefaults(t *testing.T) {
-	// A test running on a host where /tmp lacks .bcc.toml in any ancestor
-	// of t.TempDir(). We rely on the conventional case; if a stray
-	// .bcc.toml exists somewhere up, the test will surface it as a real
-	// finding rather than an error.
+	withOnlyBinaries(t, "claude")
 	dir := t.TempDir()
 	c, _, err := Discover(dir)
 	if err != nil {

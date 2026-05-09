@@ -112,7 +112,6 @@ func TestComputePlanDiff_ModifiedPhase_TitleAndDeps(t *testing.T) {
 			func() Phase {
 				ph := makePhase("p1", "New title")
 				ph.DependsOn = []string{"p2"}
-				ph.Priority = 5
 				return ph
 			}(),
 			makePhase("p2", "Stable"),
@@ -124,7 +123,7 @@ func TestComputePlanDiff_ModifiedPhase_TitleAndDeps(t *testing.T) {
 	}
 	mod := d.Modified[0]
 	joined := strings.Join(mod.Changes, "|")
-	for _, want := range []string{"title", "depends_on", "priority"} {
+	for _, want := range []string{"title", "depends_on"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("Changes missing %q: %v", want, mod.Changes)
 		}

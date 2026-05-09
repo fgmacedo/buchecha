@@ -24,7 +24,6 @@ var (
 	runOutput          string
 	runVerbosity       string
 	runNoColor         bool
-	runAgentName       string
 	runResume          bool
 	runSessionID       string
 	runDebugLogs       bool
@@ -60,7 +59,6 @@ func init() {
 	runCmd.Flags().StringVar(&runOutput, "output", OutputTUI, "render backend: tui|text|json")
 	runCmd.Flags().StringVar(&runVerbosity, "verbosity", loop.LevelInfo.String(), "event level low-water mark: error|warn|info|debug|trace")
 	runCmd.Flags().BoolVar(&runNoColor, "no-color", false, "disable color output (lipgloss styles render as plain text)")
-	runCmd.Flags().StringVar(&runAgentName, "agent", "", "active agent adapter (overrides [agent].name for this run)")
 	runCmd.Flags().BoolVar(&runResume, "resume", false, "resume the most recent session that targets this spec; replan when the spec hash diverges")
 	runCmd.Flags().StringVar(&runSessionID, "session", "", "resume the named session id (combine with --resume to resolve; without --resume, fails if the session does not exist)")
 	runCmd.Flags().BoolVar(&runDebugLogs, "debug-logs", false, "capture per-spawn stderr of every Director role under .bcc/sessions/<id>/runs/ (overrides [debug].capture_subprocess_logs)")
@@ -128,9 +126,6 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 		return err
 	}
 
-	if runAgentName != "" {
-		cfg.Agent.Name = runAgentName
-	}
 	// --webui-open implies --webui: passing -W alone is sugar for "open
 	// the dashboard right away", which is meaningless without the
 	// dashboard mounted. Promote the flag here so all downstream reads

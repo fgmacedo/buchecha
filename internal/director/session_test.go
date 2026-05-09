@@ -50,6 +50,55 @@ func TestSession_RoundTrip_OmitsEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestSession_RoundTrip_IterationIndexAndMaxIter(t *testing.T) {
+	t.Run("non-zero values round-trip", func(t *testing.T) {
+		in := Session{
+			ID:             "abcdef012345",
+			SpecPath:       "/tmp/spec.md",
+			SpecHash:       "deadbeef",
+			CreatedAt:      time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+			UpdatedAt:      time.Date(2026, 5, 2, 12, 30, 0, 0, time.UTC),
+			Status:         SessionRunning,
+			Prompt:         "hi",
+			IterationIndex: 3,
+			MaxIter:        20,
+		}
+		data, err := json.Marshal(in)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var got Session
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got.IterationIndex != 3 || got.MaxIter != 20 {
+			t.Fatalf("round-trip mismatch: got IterationIndex=%d MaxIter=%d, want 3 and 20", got.IterationIndex, got.MaxIter)
+		}
+	})
+
+	t.Run("zero values are omitted from JSON", func(t *testing.T) {
+		in := Session{
+			ID:        "abcdef012345",
+			SpecPath:  "/tmp/spec.md",
+			SpecHash:  "deadbeef",
+			CreatedAt: time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 5, 2, 12, 30, 0, 0, time.UTC),
+			Status:    SessionRunning,
+			Prompt:    "",
+		}
+		data, err := json.Marshal(in)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(data), "\"iteration_index\"") {
+			t.Fatalf("omitempty failed: JSON contains 'iteration_index' key for zero IterationIndex: %s", data)
+		}
+		if strings.Contains(string(data), "\"max_iter\"") {
+			t.Fatalf("omitempty failed: JSON contains 'max_iter' key for zero MaxIter: %s", data)
+		}
+	})
+}
+
 func TestSessionStatus_RejectsUnknown(t *testing.T) {
 	cases := []struct {
 		name string

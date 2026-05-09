@@ -5,18 +5,18 @@ import (
 	"strings"
 )
 
-// Capability describes one model an adapter can run for a Director or
-// Executor role. Each adapter (executor/<vendor>, director/<vendor>)
-// publishes its own list via CapabilityProvider; the cli aggregates the
-// lists configured for the run and feeds the merged set to the Planner
-// in its prompt so per-phase model and effort assignments can be made
-// from a known-valid set.
+// Capability describes one model bcc can run for a Director or Executor
+// role, in the form rendered to the Planner prompt and consumed by the
+// menu-validation pipeline. The CLI builds the registry from the
+// curated catalog in internal/config/known.go and feeds it into the
+// run-wide handler so per-phase assignments can be looked up by model
+// without re-walking the config.
 type Capability struct {
-	Provider    string   `json:"provider"`
-	Model       string   `json:"model"`
-	Tier        string   `json:"tier"`
-	Efforts     []string `json:"efforts,omitempty"`
-	Description string   `json:"description,omitempty"`
+	Provider string   `json:"provider"`
+	Model    string   `json:"model"`
+	Tier     string   `json:"tier"`
+	Efforts  []string `json:"efforts,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
 }
 
 // EffortsString joins Efforts with ", " for prompt rendering. Returns
@@ -30,15 +30,18 @@ func (c Capability) EffortsString() string {
 }
 
 // CapabilityRegistry is the merged set of models the run knows how to
-// spawn. The Planner reads it once at planning time; the handler reads
-// it on bcc_plan_emit to validate per-phase assignments.
+// reason about (tier, summary, supported efforts). The Planner reads it
+// once at planning time as side metadata; per-phase assignments are
+// validated against the role menus in config.Roles, not against this
+// registry.
 type CapabilityRegistry struct {
 	Models []Capability `json:"models"`
 }
 
 // MergeCapabilityRegistries unions one or more capability lists,
-// deduplicating by Model. The first occurrence wins so the order in
-// which the cli registers adapters is the source of truth for ties.
+// deduplicating by (Provider, Model). The first occurrence wins so the
+// order in which the cli registers entries is the source of truth for
+// ties.
 func MergeCapabilityRegistries(lists ...[]Capability) CapabilityRegistry {
 	seen := make(map[string]bool)
 	merged := make([]Capability, 0)
@@ -47,10 +50,11 @@ func MergeCapabilityRegistries(lists ...[]Capability) CapabilityRegistry {
 			if c.Model == "" {
 				continue
 			}
-			if seen[c.Model] {
+			key := c.Provider + "/" + c.Model
+			if seen[key] {
 				continue
 			}
-			seen[c.Model] = true
+			seen[key] = true
 			merged = append(merged, c)
 		}
 	}
@@ -58,13 +62,28 @@ func MergeCapabilityRegistries(lists ...[]Capability) CapabilityRegistry {
 }
 
 // ByModel returns the Capability for the given model id and whether it
-// is present in the registry.
+// is present in the registry. When multiple providers expose the same
+// model name, the first match wins.
 func (r *CapabilityRegistry) ByModel(model string) (Capability, bool) {
 	if r == nil {
 		return Capability{}, false
 	}
 	for _, c := range r.Models {
 		if c.Model == model {
+			return c, true
+		}
+	}
+	return Capability{}, false
+}
+
+// ByProviderModel returns the Capability for the given (provider,
+// model) pair and whether it is present.
+func (r *CapabilityRegistry) ByProviderModel(provider, model string) (Capability, bool) {
+	if r == nil {
+		return Capability{}, false
+	}
+	for _, c := range r.Models {
+		if c.Provider == provider && c.Model == model {
 			return c, true
 		}
 	}
@@ -80,12 +99,4 @@ func (r *CapabilityRegistry) SupportsEffort(model, effort string) bool {
 		return false
 	}
 	return slices.Contains(cap.Efforts, effort)
-}
-
-// CapabilityProvider is the discovery port adapters implement to
-// publish the models they can spawn. The cli does a type assertion
-// against the configured Executor and Director adapters; absence of the
-// interface means the adapter contributes nothing to the registry.
-type CapabilityProvider interface {
-	Capabilities() []Capability
 }

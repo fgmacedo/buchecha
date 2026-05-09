@@ -3,21 +3,36 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	configloader "github.com/fgmacedo/buchecha/internal/configloader/toml"
 )
 
+// withClaudeOnPath plants a fake claude binary in a temp PATH-only
+// directory so configloader's host-availability filter passes deterministically.
+func withClaudeOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+}
+
 func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
+	withClaudeOnPath(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:        "en",
 		JournalStore:    "markdown_inspec",
-		AgentName:       "claude",
-		Binary:          "/usr/bin/claude",
-		Model:           "claude-opus-4-7",
+		Binary:          "claude",
 		MaxIter:         15,
 		BranchPrefix:    "feat",
 		EnvFiles:        []string{".env", ".env.local"},
@@ -33,17 +48,14 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 	if cfg.Project.Language != "en" {
 		t.Errorf("Language = %q", cfg.Project.Language)
 	}
-	if cfg.Agent.Name != "claude" {
-		t.Errorf("Agent.Name = %q", cfg.Agent.Name)
-	}
-	if cfg.Agent.Claude.Binary != "/usr/bin/claude" {
-		t.Errorf("Binary = %q", cfg.Agent.Claude.Binary)
-	}
-	if cfg.Agent.Claude.Model != "claude-opus-4-7" {
-		t.Errorf("Model = %q", cfg.Agent.Claude.Model)
+	if cfg.Providers["claude"].Binary != "claude" {
+		t.Errorf("Providers[claude].Binary = %q", cfg.Providers["claude"].Binary)
 	}
 	if cfg.Loop.MaxIterations != 15 {
 		t.Errorf("MaxIterations = %d", cfg.Loop.MaxIterations)
+	}
+	if cfg.Loop.RetryBudget != 2 {
+		t.Errorf("Loop.RetryBudget = %d, want 2", cfg.Loop.RetryBudget)
 	}
 	if cfg.Git.BranchPrefix != "feat" {
 		t.Errorf("BranchPrefix = %q", cfg.Git.BranchPrefix)
@@ -51,19 +63,19 @@ func TestWriteConfigTOML_RoundTripEnglish(t *testing.T) {
 	if len(cfg.Env.Files) != 2 || cfg.Env.Files[0] != ".env" || cfg.Env.Files[1] != ".env.local" {
 		t.Errorf("Env.Files = %v", cfg.Env.Files)
 	}
-	if !cfg.Agent.Claude.ShouldSkipPermissions() {
+	if !cfg.Providers["claude"].ShouldSkipPermissions() {
 		t.Errorf("SkipPermissions should be true after round-trip")
 	}
 }
 
 func TestWriteConfigTOML_SkipPermissionsFalseRoundTrips(t *testing.T) {
+	withClaudeOnPath(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:        "en",
 		JournalStore:    "markdown_inspec",
-		AgentName:       "claude",
-		Binary:          "/usr/bin/claude",
+		Binary:          "claude",
 		MaxIter:         5,
 		BranchPrefix:    "feat",
 		EnvFiles:        []string{".env"},
@@ -76,49 +88,20 @@ func TestWriteConfigTOML_SkipPermissionsFalseRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Agent.Claude.ShouldSkipPermissions() {
+	if cfg.Providers["claude"].ShouldSkipPermissions() {
 		t.Errorf("SkipPermissions should be false after explicit opt-out")
 	}
 }
 
-func TestWriteConfigTOML_OmitsModelWhenEmpty(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, ".bcc.toml")
-	in := initInput{
-		Language:     "pt-BR",
-		JournalStore: "markdown_inspec",
-		AgentName:    "claude",
-		Binary:       "/path/to/claude",
-		Model:        "",
-		MaxIter:      20,
-		BranchPrefix: "feat",
-		EnvFiles:     []string{".env"},
-	}
-	if err := WriteConfigTOML(path, in); err != nil {
-		t.Fatalf("WriteConfigTOML: %v", err)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(b), "model = \"\"") {
-		t.Errorf("empty model should be omitted, not written as empty string:\n%s", string(b))
-	}
-
-	if _, err := configloader.Load(path); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-}
-
 func TestWriteConfigTOML_JournalFileWritesPath(t *testing.T) {
+	withClaudeOnPath(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:        "en",
 		JournalStore:    "file",
 		JournalFilePath: ".bcc/journal.ndjson",
-		AgentName:       "claude",
-		Binary:          "/usr/bin/claude",
+		Binary:          "claude",
 		MaxIter:         10,
 		BranchPrefix:    "feat",
 		EnvFiles:        []string{".env"},
@@ -138,16 +121,18 @@ func TestWriteConfigTOML_JournalFileWritesPath(t *testing.T) {
 	}
 }
 
-// TestWriteConfigTOML_WritesDirectorSubtables verifies that `bcc init`
-// emits the [director] and [director.claude] sections.
-func TestWriteConfigTOML_WritesDirectorSubtables(t *testing.T) {
+// TestWriteConfigTOML_WritesProvidersAndLoop verifies that `bcc init`
+// emits the [providers.claude] and [loop] sections with the expected
+// shape, since those are the new authoritative homes for binary,
+// skip_permissions, retry_budget, and max_iterations.
+func TestWriteConfigTOML_WritesProvidersAndLoop(t *testing.T) {
+	withClaudeOnPath(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	in := initInput{
 		Language:        "en",
 		JournalStore:    "markdown_inspec",
-		AgentName:       "claude",
-		Binary:          "/usr/bin/claude",
+		Binary:          "claude",
 		MaxIter:         10,
 		BranchPrefix:    "feat",
 		EnvFiles:        []string{".env"},
@@ -160,7 +145,7 @@ func TestWriteConfigTOML_WritesDirectorSubtables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"[director]", "retry_budget = 2", "[director.claude]", "max_budget_usd = 0"} {
+	for _, want := range []string{"[providers.claude]", "[loop]", "retry_budget = 2", "max_iterations = 10"} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("init output missing %q:\n%s", want, string(b))
 		}
@@ -170,14 +155,11 @@ func TestWriteConfigTOML_WritesDirectorSubtables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Director.RetryBudget != 2 {
-		t.Errorf("Director.RetryBudget = %d, want 2", cfg.Director.RetryBudget)
+	if cfg.Loop.RetryBudget != 2 {
+		t.Errorf("Loop.RetryBudget = %d, want 2", cfg.Loop.RetryBudget)
 	}
-	if cfg.Director.Claude.Binary != "claude" {
-		t.Errorf("Director.Claude.Binary = %q, want claude", cfg.Director.Claude.Binary)
-	}
-	if cfg.Director.Claude.MaxBudgetUSD != 0 {
-		t.Errorf("Director.Claude.MaxBudgetUSD = %v, want 0", cfg.Director.Claude.MaxBudgetUSD)
+	if cfg.Providers["claude"].Binary != "claude" {
+		t.Errorf("Providers[claude].Binary = %q, want claude", cfg.Providers["claude"].Binary)
 	}
 }
 

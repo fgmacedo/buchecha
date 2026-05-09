@@ -97,10 +97,10 @@ func (p *dagSnapshotPersister) WriteDAGSnapshot(s *dag.State) error {
 // directory is resolved; the legacy non-Director path skips this.
 //
 // markdownAdapter, when non-nil, becomes the JournalDeltaProvider used
-// to answer bcc_get_journal_delta; pass the active spec format
-// adapter. git, when non-nil, answers bcc_get_diff. mcpAudit toggles
-// the per-session JSONL audit log.
-func (b *mcpBoot) bindSession(store *director.Store, mcpAudit bool, git dag.GitDiffProvider, journal dag.JournalDeltaProvider) {
+// to answer bcc_get_journal_delta; pass the active spec format adapter.
+// head, when non-nil, answers bcc_get_baseline. mcpAudit toggles the
+// per-session JSONL audit log.
+func (b *mcpBoot) bindSession(store *director.Store, mcpAudit bool, head dag.HeadProvider, journal dag.JournalDeltaProvider) {
 	if b == nil || b.handler == nil || store == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func (b *mcpBoot) bindSession(store *director.Store, mcpAudit bool, git dag.GitD
 	if mcpAudit {
 		b.handler.AttachAudit(dag.NewAuditLog(filepath.Join(store.SessionDir(), "mcp-log.jsonl")))
 	}
-	b.handler.AttachProviders(git, journal)
+	b.handler.AttachProviders(head, journal)
 }
 
 // directorEffectiveHandler picks the run-wide handler, preferring the

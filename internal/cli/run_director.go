@@ -56,6 +56,7 @@ func (e errPlannerSkipped) Error() string {
 // briefing prompt file path, which only exists after the Briefer has
 // produced a Briefing.
 type directorDeps struct {
+	cfg         *config.Config
 	planner     director.Planner
 	briefer     director.Briefer
 	reviewer    director.Reviewer
@@ -222,7 +223,7 @@ func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*dire
 // audit toggle is on, otherwise empty. Matches the path mcpBoot.bindSession
 // uses so the services Audit and the dag handler agree on the destination.
 func directorAuditPath(cfg *config.Config, store *director.Store) string {
-	if cfg == nil || store == nil || !cfg.Director.IsMCPAuditEnabled() {
+	if cfg == nil || store == nil || !cfg.Debug.IsMCPAuditEnabled() {
 		return ""
 	}
 	return filepath.Join(store.SessionDir(), "mcp-log.jsonl")
@@ -309,29 +310,23 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	subprocessStderr := directorSubprocessStderr()
 	// loopEvents is set later in runDirectorWith after session resolution;
 	// the adapter pointer is kept so bindDirectorAdapterSession can patch it.
+	claudeProvider := cfg.Providers["claude"]
 	adapter := directorclaude.New(directorclaude.Config{
-		Binary:       cfg.Director.Claude.Binary,
-		Model:        cfg.Director.Claude.Model,
-		Effort:       cfg.Director.Claude.Effort,
-		ExtraArgs:    cfg.Director.Claude.ExtraArgs,
-		MaxBudgetUSD: cfg.Director.Claude.MaxBudgetUSD,
+		Binary:       claudeProvider.Binary,
+		ExtraArgs:    claudeProvider.ExtraArgs,
+		MaxBudgetUSD: claudeProvider.MaxBudgetUSD,
 		Stderr:       subprocessStderr,
 		MCPURL:       boot.MCPURL(),
 		MCPToken:     boot.token(),
 	})
-	registry := director.MergeCapabilityRegistries(
-		directorclaude.Capabilities(),
-		claude.Capabilities(),
-	)
+	registry := buildCapabilityRegistry()
+	menus := buildRoleMenus(cfg)
 	if boot != nil && boot.handler != nil {
 		boot.handler.SetCapabilityRegistry(&registry)
-		boot.handler.SetPlanDefaults(director.PlanDefaults{
-			Briefer:  director.RoleAssignment{Model: cfg.Director.Claude.Model, Effort: cfg.Director.Claude.Effort},
-			Executor: director.RoleAssignment{Model: cfg.Agent.Claude.Model, Effort: cfg.Agent.Claude.Effort},
-			Reviewer: director.RoleAssignment{Model: cfg.Director.Claude.Model, Effort: cfg.Director.Claude.Effort},
-		})
+		boot.handler.SetRoleMenus(menus)
 	}
 	return directorDeps{
+		cfg:         cfg,
 		planner:     adapter,
 		briefer:     adapter,
 		reviewer:    adapter,
@@ -341,6 +336,81 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 		newExecutor: makeNewExecutor(cfg, boot, subprocessStderr, nil, nil, nil),
 		now:         time.Now,
 	}
+}
+
+// buildCapabilityRegistry merges the curated catalog of every known
+// provider into a single CapabilityRegistry. Used by the run-wide
+// handler for tier and summary lookups when validating bcc_plan_emit
+// payloads and for renders that want a flat catalog (auditing, future
+// API endpoints).
+func buildCapabilityRegistry() director.CapabilityRegistry {
+	known := config.KnownProviderList()
+	lists := make([][]director.Capability, 0, len(known))
+	for _, kp := range known {
+		caps := make([]director.Capability, 0, len(kp.Models))
+		for _, m := range kp.Models {
+			caps = append(caps, director.Capability{
+				Provider: m.Provider,
+				Model:    m.Model,
+				Tier:     m.Tier,
+				Efforts:  append([]string(nil), m.DefaultEfforts...),
+				Summary:  m.Summary,
+			})
+		}
+		lists = append(lists, caps)
+	}
+	return director.MergeCapabilityRegistries(lists...)
+}
+
+// buildRoleMenus converts the user-facing config menus into the
+// director-side RoleMenus, enriching every option with curated tier and
+// summary metadata when bcc has them in its built-in registry. Options
+// with no curated entry render in the Planner prompt without tier or
+// summary, but with the user's free-form note when present.
+func buildRoleMenus(cfg *config.Config) director.RoleMenus {
+	if cfg == nil {
+		return director.RoleMenus{}
+	}
+	convert := func(policy config.RolePolicy) director.RoleMenu {
+		out := make([]director.MenuOption, 0, len(policy.Options))
+		for _, opt := range policy.Options {
+			mo := director.MenuOption{
+				Provider: opt.Provider,
+				Model:    opt.Model,
+				Efforts:  append([]string(nil), opt.Efforts...),
+				Note:     opt.Note,
+			}
+			if cap, ok := config.KnownModelByName(opt.Provider, opt.Model); ok {
+				mo.Tier = cap.Tier
+				mo.Summary = cap.Summary
+			}
+			out = append(out, mo)
+		}
+		return director.RoleMenu{Options: out}
+	}
+	return director.RoleMenus{
+		Planner:  convert(cfg.Roles.Planner),
+		Briefer:  convert(cfg.Roles.Briefer),
+		Executor: convert(cfg.Roles.Executor),
+		Reviewer: convert(cfg.Roles.Reviewer),
+	}
+}
+
+// plannerAssignmentFor returns the (provider, model, effort) the bcc
+// loop will run the Planner under, picked from the Planner's filtered
+// menu. Falls back to a clearly-empty RoleAssignment when no options
+// survived; the adapter then errors out at spawn time with a useful
+// message.
+func plannerAssignmentFor(cfg *config.Config) director.RoleAssignment {
+	if cfg == nil || len(cfg.Roles.Planner.Options) == 0 {
+		return director.RoleAssignment{}
+	}
+	opt := cfg.Roles.Planner.Options[0]
+	a := director.RoleAssignment{Provider: opt.Provider, Model: opt.Model}
+	if len(opt.Efforts) > 0 {
+		a.Effort = opt.Efforts[0]
+	}
+	return a
 }
 
 // executorLogSinks is the cli's per-spawn debug-log allocator. The
@@ -378,16 +448,17 @@ func makeNewExecutor(
 			cleanup()
 			return &failingExecutor{err: fmt.Errorf("render executor system prompt: %w", err)}
 		}
-		model := cfg.Agent.Claude.Model
-		effort := cfg.Agent.Claude.Effort
-		if assignment != nil {
-			if assignment.Model != "" {
-				model = assignment.Model
-			}
-			if assignment.Effort != "" {
-				effort = assignment.Effort
-			}
+		if assignment == nil || assignment.Provider == "" || assignment.Model == "" {
+			cleanup()
+			return &failingExecutor{err: fmt.Errorf("executor spawn requires a complete RoleAssignment (provider, model)")}
 		}
+		if assignment.Provider != "claude" {
+			cleanup()
+			return &failingExecutor{err: fmt.Errorf("executor adapter does not support provider %q", assignment.Provider)}
+		}
+		provider := cfg.Providers[assignment.Provider]
+		model := assignment.Model
+		effort := assignment.Effort
 		var sinks executorLogSinks
 		if logSinks != nil {
 			sinks, err = logSinks(args, mcpCfg.AgentID)
@@ -405,11 +476,11 @@ func makeNewExecutor(
 			}
 		}
 		inner := claude.New(claude.Config{
-			Binary:            cfg.Agent.Claude.Binary,
+			Binary:            provider.Binary,
 			Model:             model,
 			Effort:            effort,
-			ExtraArgs:         cfg.Agent.Claude.ExtraArgs,
-			SkipPermissions:   cfg.Agent.Claude.ShouldSkipPermissions(),
+			ExtraArgs:         provider.ExtraArgs,
+			SkipPermissions:   provider.ShouldSkipPermissions(),
 			SystemPromptFile:  systemPromptFile,
 			Stderr:            stderrWriter,
 			Stdout:            sinks.StdoutSink,
@@ -594,11 +665,11 @@ func runDirectorWith(
 	fmt.Fprintf(dio.stderr, "bcc: session=%s status=%s\n", deps.store.Session().ID, deps.store.Session().Status)
 
 	if deps.boot != nil {
-		var gitProvider dag.GitDiffProvider
-		if g, ok := deps.git.(dag.GitDiffProvider); ok {
-			gitProvider = g
+		var headProvider dag.HeadProvider
+		if g, ok := deps.git.(dag.HeadProvider); ok {
+			headProvider = g
 		}
-		deps.boot.bindSession(deps.store, cfg.Director.IsMCPAuditEnabled(), gitProvider, director.JournalDeltaProvider{})
+		deps.boot.bindSession(deps.store, cfg.Debug.IsMCPAuditEnabled(), headProvider, director.JournalDeltaProvider{})
 	}
 	if deps.store != nil && deps.stats == nil {
 		deps.stats = director.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
@@ -1259,18 +1330,24 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		close(pumpDone)
 	}
 
-	var plannerRegistry director.CapabilityRegistry
+	var (
+		plannerRegistry director.CapabilityRegistry
+		plannerMenus    director.RoleMenus
+	)
 	if h := directorEffectiveHandler(deps); h != nil {
 		if reg := h.CapabilityRegistry(); reg != nil {
 			plannerRegistry = *reg
 		}
+		plannerMenus = h.RoleMenus()
 	}
 	plan, plannerStats, runErr := deps.planner.Plan(ctx, director.PlannerInput{
-		AgentID:  agentID,
-		SpecPath: specPath,
-		SpecHash: hash,
-		Registry: plannerRegistry,
-		Prompt:   deps.prompt,
+		AgentID:    agentID,
+		SpecPath:   specPath,
+		SpecHash:   hash,
+		Registry:   plannerRegistry,
+		Prompt:     deps.prompt,
+		Assignment: plannerAssignmentFor(deps.cfg),
+		Menus:      plannerMenus,
 	}, agentEvents)
 	if agentEvents != nil {
 		close(agentEvents)
@@ -1313,11 +1390,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	if plan.PlannedAt.IsZero() {
 		plan.PlannedAt = deps.now()
 	}
-	var registry *director.CapabilityRegistry
-	if h := directorEffectiveHandler(deps); h != nil {
-		registry = h.CapabilityRegistry()
-	}
-	if err := director.ValidatePlan(plan, registry); err != nil {
+	if err := director.ValidatePlan(plan); err != nil {
 		ExitCode = loop.ExitInvalid
 		return nil, err
 	}

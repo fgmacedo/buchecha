@@ -102,6 +102,226 @@ func validPlanInput(t *testing.T) map[string]any {
 	}
 }
 
+func TestHandlePlanEmit_AcceptsMinimalPlan(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	h := NewHandler(nil, registry)
+	minimal := map[string]any{
+		"goal":             "minimal goal",
+		"success_criteria": []any{"it works"},
+		"phases": []any{
+			map[string]any{
+				"id":     "P1",
+				"title":  "First",
+				"intent": "do work",
+				"tasks": []any{
+					map[string]any{
+						"id":     "t1",
+						"title":  "task one",
+						"intent": "first task",
+						"acceptance": []any{
+							map[string]any{
+								"id":          "a1",
+								"description": "ok",
+								"evidence":    "diff",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	_, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     minimal,
+	})
+	if err != nil {
+		t.Fatalf("plan emit (minimal): %v", err)
+	}
+	state := h.State()
+	if state == nil {
+		t.Fatal("state not initialized after minimal plan emit")
+	}
+	phase := state.Phase("P1")
+	if phase == nil {
+		t.Fatal("phase P1 missing after minimal plan emit")
+	}
+	if phase.Tasks["t1"].Status != director.TaskPending {
+		t.Errorf("task t1 status = %q, want pending", phase.Tasks["t1"].Status)
+	}
+}
+
+// capturingPlanPersister marshals the Plan exactly like the real Store
+// does, so it surfaces TaskStatus.MarshalJSON failures the same way.
+type capturingPlanPersister struct {
+	bytes []byte
+}
+
+func (c *capturingPlanPersister) WritePlan(p *director.Plan) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	c.bytes = b
+	return nil
+}
+
+func TestHandlePlanEmit_PersistsMinimalPlanWithDefaultedStatus(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	persister := &capturingPlanPersister{}
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{PlanStore: persister})
+	minimal := map[string]any{
+		"goal":             "minimal goal",
+		"success_criteria": []any{"it works"},
+		"phases": []any{
+			map[string]any{
+				"id":     "P1",
+				"title":  "First",
+				"intent": "do work",
+				"tasks": []any{
+					map[string]any{
+						"id":     "t1",
+						"title":  "task one",
+						"intent": "first task",
+						"acceptance": []any{
+							map[string]any{
+								"id":          "a1",
+								"description": "ok",
+								"evidence":    "diff",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     minimal,
+	}); err != nil {
+		t.Fatalf("plan emit (minimal, with persister): %v", err)
+	}
+	if len(persister.bytes) == 0 {
+		t.Fatal("persister did not capture marshaled plan")
+	}
+	var got director.Plan
+	if err := json.Unmarshal(persister.bytes, &got); err != nil {
+		t.Fatalf("unmarshal persisted plan: %v", err)
+	}
+	if len(got.Phases) != 1 || len(got.Phases[0].Tasks) != 1 {
+		t.Fatalf("unexpected persisted plan shape: %+v", got)
+	}
+	if status := got.Phases[0].Tasks[0].Status; status != director.TaskPending {
+		t.Errorf("persisted task status = %q, want pending", status)
+	}
+}
+
+func TestHandlePlanEmit_PersistsRoleAssignmentsWithProviderModelEffort(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	persister := &capturingPlanPersister{}
+	cap := director.CapabilityRegistry{
+		Models: []director.Capability{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Tier: "balanced", Efforts: []string{"low", "medium", "high"}},
+		},
+	}
+	menu := director.RoleMenu{Options: []director.MenuOption{
+		{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
+	}}
+	menus := director.RoleMenus{
+		Briefer:  menu,
+		Executor: menu,
+		Reviewer: menu,
+	}
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{
+		PlanStore:          persister,
+		CapabilityRegistry: &cap,
+		RoleMenus:          menus,
+	})
+	minimal := map[string]any{
+		"goal":             "minimal goal",
+		"success_criteria": []any{"it works"},
+		"phases": []any{
+			map[string]any{
+				"id":     "P1",
+				"title":  "First",
+				"intent": "do work",
+				"tasks": []any{
+					map[string]any{
+						"id":     "t1",
+						"title":  "task one",
+						"intent": "first task",
+						"acceptance": []any{
+							map[string]any{
+								"id":          "a1",
+								"description": "ok",
+								"evidence":    "diff",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     minimal,
+	}); err != nil {
+		t.Fatalf("plan emit (with role assignments): %v", err)
+	}
+	if len(persister.bytes) == 0 {
+		t.Fatal("persister did not capture marshaled plan")
+	}
+	var got director.Plan
+	if err := json.Unmarshal(persister.bytes, &got); err != nil {
+		t.Fatalf("unmarshal persisted plan: %v", err)
+	}
+	if len(got.Phases) != 1 {
+		t.Fatalf("unexpected persisted plan shape: %+v", got)
+	}
+	phase := got.Phases[0]
+	if phase.BrieferAssignment == nil {
+		t.Errorf("phase.BrieferAssignment is nil")
+	} else {
+		if phase.BrieferAssignment.Provider != "claude" {
+			t.Errorf("BrieferAssignment.Provider = %q, want claude", phase.BrieferAssignment.Provider)
+		}
+		if phase.BrieferAssignment.Model != "claude-sonnet-4-6" {
+			t.Errorf("BrieferAssignment.Model = %q, want claude-sonnet-4-6", phase.BrieferAssignment.Model)
+		}
+		if phase.BrieferAssignment.Effort != "medium" {
+			t.Errorf("BrieferAssignment.Effort = %q, want medium", phase.BrieferAssignment.Effort)
+		}
+	}
+	if phase.ExecutorAssignment == nil {
+		t.Errorf("phase.ExecutorAssignment is nil")
+	} else {
+		if phase.ExecutorAssignment.Provider != "claude" {
+			t.Errorf("ExecutorAssignment.Provider = %q, want claude", phase.ExecutorAssignment.Provider)
+		}
+		if phase.ExecutorAssignment.Model != "claude-sonnet-4-6" {
+			t.Errorf("ExecutorAssignment.Model = %q, want claude-sonnet-4-6", phase.ExecutorAssignment.Model)
+		}
+		if phase.ExecutorAssignment.Effort != "medium" {
+			t.Errorf("ExecutorAssignment.Effort = %q, want medium", phase.ExecutorAssignment.Effort)
+		}
+	}
+	if phase.ReviewerAssignment == nil {
+		t.Errorf("phase.ReviewerAssignment is nil")
+	} else {
+		if phase.ReviewerAssignment.Provider != "claude" {
+			t.Errorf("ReviewerAssignment.Provider = %q, want claude", phase.ReviewerAssignment.Provider)
+		}
+		if phase.ReviewerAssignment.Model != "claude-sonnet-4-6" {
+			t.Errorf("ReviewerAssignment.Model = %q, want claude-sonnet-4-6", phase.ReviewerAssignment.Model)
+		}
+		if phase.ReviewerAssignment.Effort != "medium" {
+			t.Errorf("ReviewerAssignment.Effort = %q, want medium", phase.ReviewerAssignment.Effort)
+		}
+	}
+}
+
 func TestHandlePlanEmit_AcceptsValidPlan(t *testing.T) {
 	registry := NewAgentRegistry(nil)
 	id, _ := registry.Register(RolePlanner, RegisterArgs{})
@@ -148,28 +368,29 @@ func TestHandlePlanEmit_RejectsCycle(t *testing.T) {
 	}
 }
 
-func TestHandlePlanEmit_RejectsAssignmentOutsideRegistry(t *testing.T) {
+func TestHandlePlanEmit_RejectsAssignmentOutsideMenu(t *testing.T) {
 	registry := NewAgentRegistry(nil)
 	id, _ := registry.Register(RolePlanner, RegisterArgs{})
-	caps := &director.CapabilityRegistry{
-		Models: []director.Capability{
-			{Provider: "claude", Model: "claude-opus-4-7", Tier: "frontier"},
-		},
+	menus := director.RoleMenus{
+		Executor: director.RoleMenu{Options: []director.MenuOption{
+			{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"high"}},
+		}},
 	}
-	h := NewHandlerWithOptions(nil, registry, HandlerOptions{CapabilityRegistry: caps})
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{RoleMenus: menus})
 	plan := validPlanInput(t)
 	plan["phases"].([]any)[0].(map[string]any)["executor_assignment"] = map[string]any{
-		"model": "claude-mystery-9-9",
+		"provider": "claude",
+		"model":    "claude-mystery-9-9",
 	}
 	_, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
 		"agent_id": string(id),
 		"plan":     plan,
 	})
 	if err == nil {
-		t.Fatal("expected rejection on unknown model assignment")
+		t.Fatal("expected rejection on assignment outside menu")
 	}
-	if !strings.Contains(err.Error(), "not in capability registry") {
-		t.Fatalf("error %q missing capability rejection text", err)
+	if !strings.Contains(err.Error(), "not in the role menu") {
+		t.Fatalf("error %q missing menu rejection text", err)
 	}
 }
 
@@ -789,39 +1010,11 @@ func TestHandleReviewFinished_EscalateRequiresReasoning(t *testing.T) {
 	}
 }
 
-// fakeGit and fakeJournal back the diff/journal port tests.
-type fakeGit struct {
-	diff string
-	err  error
-}
-
-func (f *fakeGit) Diff(_ context.Context, _, _ string) (string, error) {
-	return f.diff, f.err
-}
-
+// fakeJournal backs the journal port tests.
 type fakeJournal struct{}
 
 func (fakeJournal) JournalDelta(before, after []byte) string {
 	return string(after) + "-" + string(before)
-}
-
-func TestHandleGetDiff_UsesGitProvider(t *testing.T) {
-	registry := NewAgentRegistry(nil)
-	h := NewHandlerWithOptions(nil, registry, HandlerOptions{Git: &fakeGit{diff: "DIFF"}})
-	emitSamplePlan(t, h)
-	h.SetBriefingDiffRange("P1-1", "BASE", "HEAD")
-	rev, _ := registry.Register(RoleReviewer, RegisterArgs{
-		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
-	})
-	res, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodGetDiff, map[string]any{
-		"agent_id": string(rev),
-	})
-	if err != nil {
-		t.Fatalf("get_diff: %v", err)
-	}
-	if !strings.Contains(res, "DIFF") {
-		t.Errorf("expected DIFF in result, got %s", res)
-	}
 }
 
 func TestHandleGetJournalDelta_UsesProvider(t *testing.T) {
@@ -1142,6 +1335,125 @@ func TestHandler_ResetReviewOutcome(t *testing.T) {
 			t.Errorf("known iteration: LastReviewOutcome = %q, want revise", got)
 		}
 	})
+}
+
+// fakeHead implements HeadProvider for bcc_get_baseline tests.
+type fakeHead struct {
+	sha string
+	err error
+}
+
+func (f *fakeHead) HeadSHA(_ context.Context) (string, error) {
+	return f.sha, f.err
+}
+
+func TestHandleGetBaseline_HappyPath(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{Head: &fakeHead{sha: "def456"}})
+	emitSamplePlan(t, h)
+	h.SetPhaseBaseline("P1", "abc123")
+	rev, _ := registry.Register(RoleReviewer, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
+	})
+	res, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodGetBaseline, map[string]any{
+		"agent_id": string(rev),
+	})
+	if err != nil {
+		t.Fatalf("get_baseline: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(res), &out); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if got := out["phase_id"]; got != "P1" {
+		t.Errorf("phase_id = %v, want P1", got)
+	}
+	if got := out["phase_baseline_sha"]; got != "abc123" {
+		t.Errorf("phase_baseline_sha = %v, want abc123", got)
+	}
+	if got := out["current_head_sha"]; got != "def456" {
+		t.Errorf("current_head_sha = %v, want def456", got)
+	}
+}
+
+// TestHandleGetBaseline_StableAcrossAttempts is a regression test for
+// session f5be4441dbc7: two Reviewer agents successive in the same phase
+// with a single SetPhaseBaseline call; phase_baseline_sha must be
+// identical across both reads even when fakeHead advances current_head_sha.
+func TestHandleGetBaseline_StableAcrossAttempts(t *testing.T) {
+	head := &fakeHead{sha: "head-v1"}
+	registry := NewAgentRegistry(nil)
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{Head: head})
+	emitSamplePlan(t, h)
+
+	// Baseline recorded once before the first attempt.
+	h.SetPhaseBaseline("P1", "abc123")
+
+	// First Reviewer attempt.
+	rev1, _ := registry.Register(RoleReviewer, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1"},
+	})
+	res1, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodGetBaseline, map[string]any{
+		"agent_id": string(rev1),
+	})
+	if err != nil {
+		t.Fatalf("attempt 1 get_baseline: %v", err)
+	}
+	registry.Deregister(rev1)
+
+	// HEAD advances between attempts.
+	head.sha = "head-v2"
+
+	// Second Reviewer attempt on the same phase, fresh agent registration.
+	rev2, _ := registry.Register(RoleReviewer, RegisterArgs{
+		BriefingID: "P1-2", PhaseID: "P1", SubDAG: []string{"t1"},
+	})
+	res2, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodGetBaseline, map[string]any{
+		"agent_id": string(rev2),
+	})
+	if err != nil {
+		t.Fatalf("attempt 2 get_baseline: %v", err)
+	}
+
+	var out1, out2 map[string]any
+	if err := json.Unmarshal([]byte(res1), &out1); err != nil {
+		t.Fatalf("unmarshal attempt 1: %v", err)
+	}
+	if err := json.Unmarshal([]byte(res2), &out2); err != nil {
+		t.Fatalf("unmarshal attempt 2: %v", err)
+	}
+	if out1["phase_baseline_sha"] != out2["phase_baseline_sha"] {
+		t.Errorf("phase_baseline_sha changed across attempts: %v != %v",
+			out1["phase_baseline_sha"], out2["phase_baseline_sha"])
+	}
+	if out1["phase_baseline_sha"] != "abc123" {
+		t.Errorf("phase_baseline_sha = %v, want abc123", out1["phase_baseline_sha"])
+	}
+	if out1["current_head_sha"] == out2["current_head_sha"] {
+		t.Errorf("current_head_sha should differ across attempts (head advanced), got same: %v", out1["current_head_sha"])
+	}
+}
+
+func TestHandleGetBaseline_ErrBaselineNotSet(t *testing.T) {
+	registry := NewAgentRegistry(nil)
+	h := NewHandlerWithOptions(nil, registry, HandlerOptions{Head: &fakeHead{sha: "any"}})
+	emitSamplePlan(t, h)
+	// Register against P2 which has no baseline recorded.
+	rev, _ := registry.Register(RoleReviewer, RegisterArgs{
+		BriefingID: "P2-1", PhaseID: "P2", SubDAG: []string{"t1"},
+	})
+	_, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodGetBaseline, map[string]any{
+		"agent_id": string(rev),
+	})
+	if err == nil {
+		t.Fatal("expected error when baseline not set, got nil")
+	}
+	if !strings.Contains(err.Error(), "baseline") {
+		t.Errorf("error should mention 'baseline', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "P2") {
+		t.Errorf("error should mention phase 'P2', got: %v", err)
+	}
 }
 
 // readFile is a small helper that returns the file contents as a string,

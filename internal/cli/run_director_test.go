@@ -267,16 +267,12 @@ func recordingExecutorFactory(signal agentcontract.Signal, h *dag.Handler) (func
 }
 
 // stubGitProbe is a hand-rolled loop.GitProbe for run_director tests.
-// HeadFn (when non-nil) returns scripted SHAs in call order; DiffFn
-// (when non-nil) is invoked verbatim. heads cycles through the slice;
-// when called more times than heads has entries, it pairs (base, head)
-// in alternation so multi-phase runs do not run out of SHAs.
+// heads cycles through the slice; when called more times than heads
+// has entries, it cycles so multi-phase runs do not run out of SHAs.
 type stubGitProbe struct {
-	mu      sync.Mutex
-	heads   []string
-	idx     int
-	diff    string
-	diffErr error
+	mu    sync.Mutex
+	heads []string
+	idx   int
 }
 
 func (s *stubGitProbe) HeadSHA(_ context.Context) (string, error) {
@@ -292,15 +288,12 @@ func (s *stubGitProbe) HeadSHA(_ context.Context) (string, error) {
 
 func (s *stubGitProbe) CurrentBranch(_ context.Context) (string, error) { return "main", nil }
 func (s *stubGitProbe) IsClean(_ context.Context) (bool, error)         { return true, nil }
-func (s *stubGitProbe) Diff(_ context.Context, _, _ string) (string, error) {
-	return s.diff, s.diffErr
-}
 
 // newAdvancingGit returns a stubGitProbe whose HeadSHA alternates
 // between two SHAs; every iteration sees a head that differs from its
 // baseline, so the decider never trips HEAD-stuck.
 func newAdvancingGit() *stubGitProbe {
-	return &stubGitProbe{heads: []string{"baseSHA", "headSHA"}, diff: "diff body\n"}
+	return &stubGitProbe{heads: []string{"baseSHA", "headSHA"}}
 }
 
 // directorTestConfig returns a Config large enough that the loop runs
@@ -308,7 +301,8 @@ func newAdvancingGit() *stubGitProbe {
 func directorTestConfig() *config.Config {
 	c := &config.Config{}
 	c.Loop.MaxIterations = 50
-	c.Director.RetryBudget = 2
+	c.Loop.RetryBudget = 2
+	config.ApplyDefaults(c)
 	return c
 }
 

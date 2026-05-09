@@ -5,7 +5,7 @@
   "description": "The Director's planning output: goal, criteria, and the two-level DAG of phases and tasks.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["goal", "success_criteria", "phases", "spec_hash", "planned_at"],
+  "required": ["goal", "success_criteria", "phases"],
   "properties": {
     "goal": { "type": "string", "minLength": 1 },
     "success_criteria": {
@@ -17,7 +17,7 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/phase" }
     },
-    "spec_hash": { "type": "string", "minLength": 1 },
+    "spec_hash": { "type": "string" },
     "planned_at": { "type": "string", "format": "date-time" }
   },
   "$defs": {
@@ -34,7 +34,6 @@
           "items": { "type": "string" }
         },
         "parallelizable": { "type": "boolean" },
-        "priority": { "type": "integer" },
         "scope_in": {
           "type": ["array", "null"],
           "items": { "type": "string" }
@@ -78,7 +77,7 @@
     "task": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "title", "intent", "acceptance", "status"],
+      "required": ["id", "title", "intent", "acceptance"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "title": { "type": "string", "minLength": 1 },
@@ -87,7 +86,6 @@
           "type": ["array", "null"],
           "items": { "type": "string" }
         },
-        "priority": { "type": "integer" },
         "acceptance": {
           "type": "array",
           "minItems": 1,
@@ -116,7 +114,9 @@
     "roleAssignment": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["provider", "model"],
       "properties": {
+        "provider": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
         "effort": { "type": "string", "minLength": 1 }
       }

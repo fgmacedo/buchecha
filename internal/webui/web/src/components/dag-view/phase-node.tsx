@@ -70,9 +70,9 @@ export interface PhaseNodeData {
 }
 
 // PhaseNodeComponent renders a phase container group. The header puts the
-// phase title front and center, with the id, dependencies, priority badge,
-// parallelizable indicator, and aggregated status pill arranged as small
-// meta around it; the intent reads as a clamped subtitle. The body hosts
+// phase title front and center, with the id, dependencies, parallelizable
+// indicator, and aggregated status pill arranged as small meta around it;
+// the intent reads as a clamped subtitle. The body hosts
 // xyflow-positioned child task nodes; the footer surfaces done/total,
 // attempt, and cost. Click anywhere on the header invokes
 // select({ kind: "phase", phaseId }).

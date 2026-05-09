@@ -285,3 +285,55 @@ func TestStore_WriteBriefing_CreatesDirs(t *testing.T) {
 		t.Fatalf("expected file: %v", err)
 	}
 }
+
+func TestStore_SetIteration_PersistsAndRoundTrips(t *testing.T) {
+	base := t.TempDir()
+	created := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	store, _, err := CreateSession(base, "/tmp/spec.md", "h1", created)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixedTime := time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC)
+	if err := store.SetIteration(7, 20, fixedTime); err != nil {
+		t.Fatalf("SetIteration: %v", err)
+	}
+
+	reopened, err := OpenSession(base, store.Session().ID)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	if reopened.Session().IterationIndex != 7 {
+		t.Fatalf("IterationIndex = %d, want 7", reopened.Session().IterationIndex)
+	}
+	if reopened.Session().MaxIter != 20 {
+		t.Fatalf("MaxIter = %d, want 20", reopened.Session().MaxIter)
+	}
+	if !reopened.Session().UpdatedAt.Equal(fixedTime) {
+		t.Fatalf("UpdatedAt = %v, want %v", reopened.Session().UpdatedAt, fixedTime)
+	}
+}
+
+func TestStore_SetIteration_Idempotent(t *testing.T) {
+	base := t.TempDir()
+	store, _, err := CreateSession(base, "/tmp/spec.md", "h1", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixedTime := time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC)
+	if err := store.SetIteration(5, 10, fixedTime); err != nil {
+		t.Fatalf("SetIteration (first): %v", err)
+	}
+	if err := store.SetIteration(5, 10, fixedTime); err != nil {
+		t.Fatalf("SetIteration (second, same values): %v", err)
+	}
+
+	reopened, err := OpenSession(base, store.Session().ID)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	if reopened.Session().IterationIndex != 5 || reopened.Session().MaxIter != 10 {
+		t.Fatalf("values mismatch after idempotent call")
+	}
+}

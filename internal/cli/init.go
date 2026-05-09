@@ -19,7 +19,7 @@ var (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize .bcc.toml in the current project (interactive wizard)",
-	Long:  "Walk through an interactive wizard to generate .bcc.toml with project language, agent, journal store, loop settings, and env handling.",
+	Long:  "Walk through an interactive wizard to generate .bcc.toml with project language, journal store, loop settings, and env handling. Provider defaults (claude) are filled in automatically; advanced provider/role tuning lives in the generated file as commented examples.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runInitWizard(os.Stdin, os.Stdout, ".bcc.toml")
 	},
@@ -35,15 +35,13 @@ func init() {
 // WriteConfigTOML so tests can drive it directly without stdin scripting.
 type initInput struct {
 	Language        string
-	JournalStore    string // active [journal].store
-	AgentName       string // active [agent].name
-	Binary          string // active agent's binary
-	Model           string // active agent's model (claude only)
+	JournalStore    string
+	Binary          string
 	MaxIter         int
 	BranchPrefix    string
 	EnvFiles        []string
-	JournalFilePath string // when JournalStore == "file"
-	SkipPermissions bool   // explicit; default true by wizard
+	JournalFilePath string
+	SkipPermissions bool
 }
 
 func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
@@ -57,7 +55,6 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 	in := initInput{
 		Language:        initLanguage,
 		JournalStore:    "markdown_inspec",
-		AgentName:       "claude",
 		MaxIter:         20,
 		BranchPrefix:    "feat",
 		EnvFiles:        []string{".env"},
@@ -71,25 +68,15 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 		return fmt.Errorf("invalid language %q (use en or pt-BR)", in.Language)
 	}
 
-	in.AgentName = ask(r, stdout, "Agent [claude/codex/gemini]", in.AgentName)
-	if in.AgentName != "claude" {
-		fmt.Fprintf(stdout, "  note: only claude has a working adapter today; %q is reserved for future support.\n", in.AgentName)
-	}
-
-	binSuggest := in.AgentName
-	if abs, err := exec.LookPath(in.AgentName); err == nil {
+	binSuggest := "claude"
+	if abs, err := exec.LookPath("claude"); err == nil {
 		binSuggest = abs
 	}
-	in.Binary = ask(r, stdout, "Agent binary path", binSuggest)
-
-	if in.AgentName == "claude" {
-		in.Model = ask(r, stdout, "Model", "claude-opus-4-7")
-	}
+	in.Binary = ask(r, stdout, "claude binary path", binSuggest)
 
 	in.JournalStore = ask(r, stdout, "Journal store [markdown_inspec/file/none]", in.JournalStore)
 	switch in.JournalStore {
 	case "markdown_inspec", "none":
-		// no extra prompts
 	case "file":
 		in.JournalFilePath = ask(r, stdout, "Journal sidecar path", ".bcc/journal.ndjson")
 	default:
@@ -136,9 +123,9 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 }
 
 // WriteConfigTOML writes a .bcc.toml file at path with the provided
-// settings. Exposed for tests; the wizard wraps it. The output emits
-// stub subtables for known-but-inactive adapters so the user can switch
-// `[agent].name` later without re-editing the file.
+// settings. Exposed for tests; the wizard wraps it. The output sticks to
+// the minimum the user actively chose; advanced provider/role tuning
+// comes through code defaults and lives in the file as commented hints.
 func WriteConfigTOML(path string, in initInput) error {
 	var sb strings.Builder
 	sb.WriteString("[project]\n")
@@ -157,74 +144,45 @@ func WriteConfigTOML(path string, in initInput) error {
 		sb.WriteString("# path = \".bcc/journal.ndjson\"\n\n")
 	}
 
-	sb.WriteString("# Active agent. Other [agent.<name>] subtables hold defaults so\n")
-	sb.WriteString("# switching is one key change (also overridable with --agent).\n")
-	sb.WriteString("[agent]\n")
-	sb.WriteString(fmt.Sprintf("name = %q\n\n", in.AgentName))
+	sb.WriteString("# Providers: how to invoke each LLM CLI vendor. Defaults cover the\n")
+	sb.WriteString("# common case; declare overrides only when the binary lives outside\n")
+	sb.WriteString("# PATH or you want token-saving extra_args. Adding [providers.codex]\n")
+	sb.WriteString("# or [providers.gemini] (with the binary on PATH) automatically lets\n")
+	sb.WriteString("# the role menus reach those vendors.\n")
+	sb.WriteString("[providers.claude]\n")
+	sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
+	sb.WriteString("# extra_args = [\"--strict-mcp-config\", \"--exclude-dynamic-system-prompt-sections\"]\n")
+	sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
+	sb.WriteString("# max_budget_usd = 0  # 0 disables; > 0 caps each Director-role spawn\n\n")
 
-	sb.WriteString("[agent.claude]\n")
-	if in.AgentName == "claude" {
-		sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
-		if in.Model != "" {
-			sb.WriteString(fmt.Sprintf("model = %q\n", in.Model))
-		}
-		sb.WriteString("extra_args = []\n")
-		sb.WriteString("# skip_permissions=true tells the adapter to suppress the agent's permission\n")
-		sb.WriteString("# prompts (claude maps this to --dangerously-skip-permissions). Required for\n")
-		sb.WriteString("# the autonomous loop. Set to false for a dry-run; the loop is unlikely to\n")
-		sb.WriteString("# converge in that mode.\n")
-		sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
-	} else {
-		sb.WriteString("binary = \"claude\"\n")
-		sb.WriteString("# model = \"claude-opus-4-7\"\n")
-		sb.WriteString("extra_args = []\n")
-		sb.WriteString("skip_permissions = true\n")
-	}
-	sb.WriteString("\n")
+	sb.WriteString("# [providers.codex]\n")
+	sb.WriteString("# binary = \"codex\"\n\n")
+	sb.WriteString("# [providers.gemini]\n")
+	sb.WriteString("# binary = \"gemini\"\n\n")
 
-	sb.WriteString("[agent.codex]\n")
-	if in.AgentName == "codex" {
-		sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
-		sb.WriteString("extra_args = []\n")
-		sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
-	} else {
-		sb.WriteString("# binary = \"codex\"\n")
-		sb.WriteString("# extra_args = []\n")
-		sb.WriteString("# skip_permissions = true\n")
-	}
-	sb.WriteString("\n")
-
-	sb.WriteString("[agent.gemini]\n")
-	if in.AgentName == "gemini" {
-		sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
-		sb.WriteString("extra_args = []\n")
-		sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
-	} else {
-		sb.WriteString("# binary = \"gemini\"\n")
-		sb.WriteString("# extra_args = []\n")
-		sb.WriteString("# skip_permissions = true\n")
-	}
-	sb.WriteString("\n")
+	sb.WriteString("# Roles: per-role menu of (provider, model, efforts) triples the\n")
+	sb.WriteString("# Planner can pick from. Defaults cover the common case (Planner =\n")
+	sb.WriteString("# claude-opus-4-7 / high, Briefer/Reviewer = claude-sonnet-4-6 /\n")
+	sb.WriteString("# medium, Executor = sonnet preferred, opus available). Declare a\n")
+	sb.WriteString("# role only to restrict, expand, or reorder the menu.\n")
+	sb.WriteString("# [[roles.executor.options]]\n")
+	sb.WriteString("# provider = \"claude\"\n")
+	sb.WriteString("# model = \"claude-opus-4-7\"\n")
+	sb.WriteString("# efforts = [\"high\"]\n")
+	sb.WriteString("# note = \"only for architecturally-loaded phases\"\n\n")
 
 	sb.WriteString("[loop]\n")
-	sb.WriteString(fmt.Sprintf("max_iterations = %d\n\n", in.MaxIter))
+	sb.WriteString(fmt.Sprintf("max_iterations = %d\n", in.MaxIter))
+	sb.WriteString("retry_budget = 2\n\n")
 
 	sb.WriteString("[git]\n")
 	sb.WriteString(fmt.Sprintf("branch_prefix = %q\n", in.BranchPrefix))
 	sb.WriteString("require_commit_per_iteration = true\n\n")
 
-	sb.WriteString("# Director: plan/brief/execute/review pipeline. retry_budget applies\n")
-	sb.WriteString("# per phase; per-task overrides live in the generated plan.\n")
-	sb.WriteString("[director]\n")
-	sb.WriteString("retry_budget = 2\n\n")
-
-	sb.WriteString("# max_budget_usd > 0 caps the cost of each Director call (--max-budget-usd);\n")
-	sb.WriteString("# 0 disables the cap. The Director adapter is fail-closed when exceeded.\n")
-	sb.WriteString("[director.claude]\n")
-	sb.WriteString("binary = \"claude\"\n")
-	sb.WriteString("# model = \"claude-opus-4-7\"\n")
-	sb.WriteString("extra_args = []\n")
-	sb.WriteString("max_budget_usd = 0\n\n")
+	sb.WriteString("[debug]\n")
+	sb.WriteString("# mcp_audit = true  # default true; opt-out for very long runs\n")
+	sb.WriteString("# capture_subprocess_logs = false\n")
+	sb.WriteString("# capture_subprocess_stdout = false\n\n")
 
 	sb.WriteString("[env]\n")
 	sb.WriteString("files = [")

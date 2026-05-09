@@ -39,7 +39,6 @@ type Phase struct {
 	Intent             string            `json:"intent"`
 	DependsOn          []string          `json:"depends_on"`
 	Parallelizable     bool              `json:"parallelizable"`
-	Priority           int               `json:"priority,omitempty"`
 	ScopeIn            []string          `json:"scope_in"`
 	ScopeOut           []string          `json:"scope_out"`
 	Tasks              []Task            `json:"tasks"`
@@ -59,8 +58,8 @@ type Phase struct {
 }
 
 // Task is the atomic unit of progress inside a Phase. Tasks own their
-// acceptance criteria, intra-phase dependencies, priority, status, and
-// retry budget. Task IDs are unique within their owning Phase but not
+// acceptance criteria, intra-phase dependencies, status, and retry
+// budget. Task IDs are unique within their owning Phase but not
 // globally; addressing a task across the wire uses the (phase_id,
 // task_id) pair.
 type Task struct {
@@ -68,7 +67,6 @@ type Task struct {
 	Title       string           `json:"title"`
 	Intent      string           `json:"intent"`
 	DependsOn   []string         `json:"depends_on"`
-	Priority    int              `json:"priority,omitempty"`
 	Acceptance  []AcceptanceItem `json:"acceptance"`
 	Status      TaskStatus       `json:"status"`
 	RetryBudget int              `json:"retry_budget"`
@@ -84,17 +82,14 @@ type AcceptanceItem struct {
 }
 
 // RoleAssignment carries the Planner's per-phase routing for one role
-// (Briefer, Executor, or Reviewer). Model picks a member of the
-// CapabilityRegistry exposed at planning time; Effort, when present,
-// must be supported by that model. Provider names the vendor that owns
-// the model (e.g. "claude") and is derived from the registry at
-// bcc_plan_emit time so the persisted plan and the SPA can render
-// vendor/model/effort without re-resolving the registry. Empty fields
-// fall back to the configured default for the corresponding role; the
-// loop and adapters never invent a value.
+// (Briefer, Executor, or Reviewer). Provider, Model, and Effort must
+// match exactly one entry in the role's menu (config.Roles.<role>) and
+// one of its declared efforts. Empty fields fall back to the
+// menu-default the loop fills via FillPlanFromMenus before persisting
+// the plan; the loop and adapters never invent a value at spawn time.
 type RoleAssignment struct {
-	Provider string `json:"provider,omitempty"`
-	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 	Effort   string `json:"effort,omitempty"`
 }
 
@@ -177,16 +172,14 @@ func (p *Phase) TaskByID(id string) *Task {
 // that PRD 5 defines: phase-id uniqueness, per-phase task-id
 // uniqueness, phase-level deps resolving to existing phases,
 // task-level deps resolving to task ids within the same phase, and
-// acyclic edge sets at both levels. Failures carry the offending ids
-// so the Planner can correct and re-emit.
+// acyclic edge sets at both levels. PreparedBriefings must list at
+// least one task that exists in the owning phase. Failures carry the
+// offending ids so the Planner can correct and re-emit.
 //
-// When registry is non-nil the validator additionally rejects per-phase
-// role assignments whose Model is not in the registry or whose Effort
-// is not among the model's supported levels, and PreparedBriefings
-// referencing tasks not in the owning phase. nil registry skips those
-// checks; tests that drive ValidatePlan without a configured registry
-// rely on this.
-func ValidatePlan(p *Plan, registry *CapabilityRegistry) error {
+// Per-role assignment validation lives in ValidatePlanAgainstMenus,
+// not here, so the Plan structure can be checked independently of the
+// run-time menu that filters available providers.
+func ValidatePlan(p *Plan) error {
 	if p == nil {
 		return errors.New("director: nil plan")
 	}
@@ -237,7 +230,7 @@ func ValidatePlan(p *Plan, registry *CapabilityRegistry) error {
 		if err := detectTaskCycle(ph); err != nil {
 			return err
 		}
-		if err := validatePhaseCapabilityFields(ph, registry); err != nil {
+		if err := validatePreparedBriefing(ph, taskIDs); err != nil {
 			return err
 		}
 	}
@@ -245,59 +238,24 @@ func ValidatePlan(p *Plan, registry *CapabilityRegistry) error {
 	return detectPhaseCycle(p)
 }
 
-// validatePhaseCapabilityFields enforces the capability-aware fields on
-// a Phase: per-role assignments must reference a model in the registry
-// (and an effort that model supports, when set), and a PreparedBriefing
-// must list at least one task and only tasks owned by the phase. A nil
-// registry skips the model/effort checks but still validates the
-// PreparedBriefing structure since it does not depend on the registry.
-func validatePhaseCapabilityFields(ph Phase, registry *CapabilityRegistry) error {
-	taskIDs := make(map[string]struct{}, len(ph.Tasks))
-	for _, t := range ph.Tasks {
-		taskIDs[t.ID] = struct{}{}
+// validatePreparedBriefing enforces the structural invariants of the
+// Phase's optional inline briefing: when present, it must carry
+// instructions and at least one sub-DAG task id, all of which must
+// reference tasks owned by the phase.
+func validatePreparedBriefing(ph Phase, taskIDs map[string]struct{}) error {
+	pb := ph.PreparedBriefing
+	if pb == nil {
+		return nil
 	}
-
-	type roleSlot struct {
-		name       string
-		assignment *RoleAssignment
+	if pb.Instructions == "" {
+		return fmt.Errorf("director: phase %q prepared_briefing has empty instructions", ph.ID)
 	}
-	for _, slot := range []roleSlot{
-		{"briefer", ph.BrieferAssignment},
-		{"executor", ph.ExecutorAssignment},
-		{"reviewer", ph.ReviewerAssignment},
-	} {
-		if slot.assignment == nil {
-			continue
-		}
-		if registry == nil {
-			continue
-		}
-		if slot.assignment.Model != "" {
-			if _, ok := registry.ByModel(slot.assignment.Model); !ok {
-				return fmt.Errorf("director: phase %q %s_assignment model %q not in capability registry",
-					ph.ID, slot.name, slot.assignment.Model)
-			}
-			if slot.assignment.Effort != "" && !registry.SupportsEffort(slot.assignment.Model, slot.assignment.Effort) {
-				return fmt.Errorf("director: phase %q %s_assignment effort %q not supported by model %q",
-					ph.ID, slot.name, slot.assignment.Effort, slot.assignment.Model)
-			}
-		} else if slot.assignment.Effort != "" {
-			return fmt.Errorf("director: phase %q %s_assignment has effort %q without model",
-				ph.ID, slot.name, slot.assignment.Effort)
-		}
+	if len(pb.SubDAGTaskIDs) == 0 {
+		return fmt.Errorf("director: phase %q prepared_briefing has empty sub_dag_task_ids", ph.ID)
 	}
-
-	if pb := ph.PreparedBriefing; pb != nil {
-		if pb.Instructions == "" {
-			return fmt.Errorf("director: phase %q prepared_briefing has empty instructions", ph.ID)
-		}
-		if len(pb.SubDAGTaskIDs) == 0 {
-			return fmt.Errorf("director: phase %q prepared_briefing has empty sub_dag_task_ids", ph.ID)
-		}
-		for _, tid := range pb.SubDAGTaskIDs {
-			if _, ok := taskIDs[tid]; !ok {
-				return fmt.Errorf("director: phase %q prepared_briefing references unknown task %q", ph.ID, tid)
-			}
+	for _, tid := range pb.SubDAGTaskIDs {
+		if _, ok := taskIDs[tid]; !ok {
+			return fmt.Errorf("director: phase %q prepared_briefing references unknown task %q", ph.ID, tid)
 		}
 	}
 	return nil

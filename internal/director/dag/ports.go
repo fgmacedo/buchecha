@@ -6,12 +6,11 @@ import (
 	"github.com/fgmacedo/buchecha/internal/director"
 )
 
-// GitDiffProvider is the read-only git probe the handler consults to
-// answer bcc_get_diff. The loop's GitProbe satisfies it structurally;
-// the handler depends on this narrow port so the dag package needs no
-// import of internal/loop.
-type GitDiffProvider interface {
-	Diff(ctx context.Context, baseSHA, headSHA string) (string, error)
+// HeadProvider is the read-only git probe the handler consults to
+// answer bcc_get_baseline. The loop's GitProbe satisfies it
+// structurally via its HeadSHA method.
+type HeadProvider interface {
+	HeadSHA(ctx context.Context) (string, error)
 }
 
 // JournalDeltaProvider is the port the handler consults to answer

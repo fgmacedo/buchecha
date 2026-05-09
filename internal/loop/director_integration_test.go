@@ -628,7 +628,7 @@ func TestDirectorIntegration_EscalateResumeWithHint(t *testing.T) {
 	}
 
 	cfg := newTestConfig()
-	cfg.Director.RetryBudget = 0
+	cfg.Loop.RetryBudget = 0
 	l := &loop.Loop{
 		SpecPath: specPath,
 		Config:   cfg,
@@ -734,6 +734,88 @@ func TestDirectorIntegration_EscalateForceApprove(t *testing.T) {
 		if got := stats[tid]; got != director.TaskDone {
 			t.Errorf("task %s status = %q, want done", tid, got)
 		}
+	}
+}
+
+// TestDirectorIntegration_SilentReviewerEscalatesImmediately is a
+// regression test for commit 04f6a1b (director: reset review outcome
+// between attempts and escalate on empty). A Reviewer that exits
+// without calling bcc_review_finished leaves the outcome empty; the
+// decider must treat that as DirectorEscalate on the first attempt
+// rather than retrying until the budget is exhausted. With
+// retry_budget=2 the unfixed loop would have spawned 3 reviewers
+// before escalating; the fixed loop spawns exactly 1.
+func TestDirectorIntegration_SilentReviewerEscalatesImmediately(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := directorTestSpec(t, tmp)
+	store := directorTestStore(t, tmp, specPath)
+	plan := directorTestPlan()
+	// retry_budget=2 means the unfixed loop would call the reviewer
+	// 1+2=3 times before escalating; the fixed loop calls it once.
+	plan.Phases[0].Tasks[0].RetryBudget = 2
+	plan.SpecHash = "deadbeef"
+	if err := store.WritePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	h := directorTestHandler(plan)
+
+	// silent: returns without calling any MCP method, in particular
+	// without bcc_review_finished, leaving the iteration outcome empty.
+	silent := &fake.Reviewer{
+		ReviewFn: func(_ context.Context, _ director.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
+			return &director.DirectorCallStats{}, nil
+		},
+	}
+	cr := &countingReviewer{inner: silent}
+
+	cfg := newTestConfig()
+	l := &loop.Loop{
+		SpecPath: specPath,
+		Config:   cfg,
+		Git:      &directorAdvancingGit{},
+		Director: &loop.DirectorPorts{
+			Plan:        plan,
+			Briefer:     briefingEmitter(t, h),
+			Reviewer:    cr,
+			Store:       store,
+			Handler:     h,
+			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, &directorFakeRuns{}),
+		},
+	}
+
+	code, err, evs := runDirectorLoop(t, l)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// No Escalation gate: escalation without a gate aborts with ExitInvalid.
+	if code != loop.ExitInvalid {
+		t.Errorf("exit = %d, want ExitInvalid (escalation without gate)", code)
+	}
+
+	// Exactly 1 reviewer spawn. If the default branch in the decider
+	// returned retry instead of escalate, the loop would call the
+	// reviewer 3 times (budget=2 → 1+2 attempts) before escalating.
+	if got := cr.callCount(); got != 1 {
+		t.Errorf("reviewer called %d times, want exactly 1 (escalate on first silent review)", got)
+	}
+
+	// A DirectorEscalation event must have been emitted for phase-1,
+	// at attempt 1 specifically, proving the loop did not retry.
+	var escalations []loop.DirectorEscalation
+	for _, ev := range evs {
+		if e, ok := ev.(loop.DirectorEscalation); ok {
+			escalations = append(escalations, e)
+		}
+	}
+	if len(escalations) == 0 {
+		t.Fatal("no DirectorEscalation event emitted")
+	}
+	if escalations[0].PhaseID != "phase-1" {
+		t.Errorf("escalation phase = %q, want phase-1", escalations[0].PhaseID)
+	}
+	if escalations[0].Attempt != 1 {
+		t.Errorf("escalation attempt = %d, want 1 (must not retry before escalating)", escalations[0].Attempt)
 	}
 }
 

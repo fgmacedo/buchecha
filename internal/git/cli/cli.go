@@ -65,36 +65,6 @@ func (p *Probe) DirtyFileCount(ctx context.Context) (int, error) {
 	return strings.Count(out, "\n") + 1, nil
 }
 
-// Diff returns the unified diff between baseSHA and headSHA, captured
-// as `git diff <baseSHA>..<headSHA>`. Equal SHAs short-circuit to an
-// empty string so callers can skip review when an iteration produced
-// no commits.
-func (p *Probe) Diff(ctx context.Context, baseSHA, headSHA string) (string, error) {
-	if baseSHA == "" {
-		return "", fmt.Errorf("git diff: empty base sha")
-	}
-	if headSHA == "" {
-		return "", fmt.Errorf("git diff: empty head sha")
-	}
-	if baseSHA == headSHA {
-		return "", nil
-	}
-	cmd := exec.CommandContext(ctx, "git", "diff", baseSHA+".."+headSHA)
-	if p.Dir != "" {
-		cmd.Dir = p.Dir
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return "", fmt.Errorf("git diff %s..%s: %w (stderr: %s)",
-				baseSHA, headSHA, err, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", fmt.Errorf("git diff %s..%s: %w", baseSHA, headSHA, err)
-	}
-	return string(out), nil
-}
-
 // CommitsSince returns the number of commits between sha and HEAD,
 // counted as `git rev-list --count <sha>..HEAD`. The TUI feeds this with
 // the BaselineSHA from the first IterationStarted event so the "if you

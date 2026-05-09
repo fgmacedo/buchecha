@@ -309,6 +309,7 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 				PhaseID:     e.cfg.PhaseID,
 				IterationID: e.cfg.IterationID,
 				Attempt:     e.cfg.Attempt,
+				Provider:    "claude",
 				Model:       e.cfg.Model,
 				Effort:      e.cfg.Effort,
 				PromptPath:  absPath,

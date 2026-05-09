@@ -41,15 +41,43 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 8. Emit via `bcc_plan_emit(agent_id, plan)`. The handler validates the schema and the DAG. On rejection, read the error and re-emit.
 9. `bcc_task_completed(agent_id, "planning", summary)` once the Plan is accepted. `summary` is one short sentence describing the plan's shape (e.g. "5 phases, 18 tasks, P1 establishes the session boundary").
 
-## Available models
+## Available options per role
 
-Each Phase carries optional `briefer_assignment`, `executor_assignment`, `reviewer_assignment` overrides. Omit a field to fall back to the configured default for that role.
+Each Phase carries optional `briefer_assignment`, `executor_assignment`, `reviewer_assignment` overrides. Omit a field to fall back to the first option of the corresponding role's menu below (the user's most-preferred entry).
 
-bcc is vendor-agnostic; the table below is whatever the current run has configured. Different runs may expose different vendors and different model lineups. When you reason about routing, reason in **tier** (`fast` / `mid` / `frontier`, or whatever tiers this run exposes) and **effort**, not in vendor model names. The names in the Model column exist so your assignments can target a specific build; the **Tier** column is what tells you the cognitive ceiling and the cost shape.
+The user has declared the menus below as the cardápio you may attribute to each role. Per phase, attribute one option exactly as it appears: `(provider, model, effort)` must come from a single line, and effort must be one of the listed efforts for that line. Reason in **tier** (`fast` / `balanced` / `frontier`) and **effort** when picking, not in vendor model names. Order is the user's preference, best to cheapest. Lines without a tier/summary are user-declared options bcc has no curated metadata for; trust the user's `note` (when present) over your own priors about the model name.
 
-| Model | Tier | Efforts | Notes |
-|---|---|---|---|
-{{range .Registry.Models}}| `{{.Model}}` | {{.Tier}} | {{.EffortsString}} | {{.Description}} |
+### Briefer
+{{range .Menus.Briefer}}
+- `{{.Provider}}` / `{{.Model}}` / efforts: {{.EffortsString}}
+{{- if .Tier}}
+   tier: {{.Tier}}{{if .Summary}} — {{.Summary}}{{end}}
+{{- end -}}
+{{- if .Note}}
+   note: {{.Note}}
+{{- end}}
+{{end}}
+
+### Executor
+{{range .Menus.Executor}}
+- `{{.Provider}}` / `{{.Model}}` / efforts: {{.EffortsString}}
+{{- if .Tier}}
+   tier: {{.Tier}}{{if .Summary}} — {{.Summary}}{{end}}
+{{- end -}}
+{{- if .Note}}
+   note: {{.Note}}
+{{- end}}
+{{end}}
+
+### Reviewer
+{{range .Menus.Reviewer}}
+- `{{.Provider}}` / `{{.Model}}` / efforts: {{.EffortsString}}
+{{- if .Tier}}
+   tier: {{.Tier}}{{if .Summary}} — {{.Summary}}{{end}}
+{{- end -}}
+{{- if .Note}}
+   note: {{.Note}}
+{{- end}}
 {{end}}
 
 ## Designing each phase: cost vs reasoning
@@ -99,8 +127,6 @@ Skipping or downscoping review trades a quality gate for speed; that trade is yo
 Plan
 ├── goal: string                          one sentence describing what the spec asks bcc to deliver
 ├── success_criteria: []string            spec-level criteria from the Done section, restated tersely
-├── spec_hash: string                     echo input spec_hash unchanged
-├── planned_at: RFC3339 string            "now" from your runtime
 └── phases: []Phase                       ordered phase list
 
 Phase
@@ -108,7 +134,6 @@ Phase
 ├── title: string                         short human-readable label
 ├── intent: string                        one-sentence statement of why this phase exists
 ├── depends_on: []phase_id                phase-level DAG edges
-├── priority: int                         relative priority within the plan
 ├── scope_in: []string                    paths or directories the phase may touch
 ├── scope_out: []string                   paths the phase must not touch
 ├── tasks: []Task                         atomic units of work
@@ -119,8 +144,9 @@ Phase
 └── skip_review?: bool                    when true, the loop skips the Reviewer agent and approves the iteration synthetically
 
 RoleAssignment
-├── model: string                         must be a model listed in "Available models" above
-└── effort?: string                       must be an effort the chosen model supports; omit when not needed
+├── provider: string                      must be the provider on the option line you chose
+├── model: string                         must be the model on the option line you chose
+└── effort?: string                       must be one of the efforts listed on that line; omit when not needed
 
 PreparedBriefing
 ├── sub_dag_task_ids: []task_id           tasks within this phase the first iteration covers
@@ -131,9 +157,7 @@ Task
 ├── title: string                         short human-readable label
 ├── intent: string                        one-sentence purpose of this task
 ├── depends_on: []task_id                 intra-phase DAG edges only
-├── priority: int                         relative priority within the phase
 ├── acceptance: []AcceptanceItem          checkable criteria for this task
-├── status: "pending"                     emit every task as pending
 └── retry_budget: int                     >= 0; the run config sets a floor, per-task may raise it for tasks you expect to be brittle
 
 AcceptanceItem
@@ -141,6 +165,8 @@ AcceptanceItem
 ├── description: string                   imperative criterion
 └── evidence: "diff" | "test" | "build" | "manual"
 ```
+
+bcc populates `spec_hash` and `planned_at` from the run state after the Plan is accepted; do not emit them. Tasks default to `pending`; do not emit `status`.
 
 ## Constraints
 

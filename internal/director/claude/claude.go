@@ -95,19 +95,14 @@ var ErrBudgetExceeded = errors.New("director/claude: per-call budget exceeded")
 // pass the assigned id back in.
 var ErrMissingAgentID = errors.New("director/claude: missing agent_id on input")
 
-// Config configures the Director Claude adapter.
+// Config configures the Director Claude adapter. Model and Effort are
+// not part of the config: every Plan/Brief/Review call carries its own
+// (provider, model, effort) triple via the Input's Assignment field, so
+// the adapter never invents one and per-phase routing flows verbatim
+// to the spawned process.
 type Config struct {
 	// Binary is the path or PATH name of the claude binary.
 	Binary string
-
-	// Model is passed via --model. Empty omits the flag. Per-phase
-	// role assignments (briefer_assignment, reviewer_assignment) override
-	// this on individual Brief/Review calls.
-	Model string
-
-	// Effort is the default effort level passed via --effort when no
-	// per-call assignment overrides it. Empty omits the flag.
-	Effort string
 
 	// ExtraArgs are appended to the command line after the protocol
 	// flags and --max-budget-usd, before the prompt positional argument.
@@ -234,7 +229,27 @@ type planView struct {
 	AgentID  string
 	SpecPath string
 	Registry director.CapabilityRegistry
+	Menus    menusView
 	Prompt   string
+}
+
+// menusView and roleMenuRow describe the per-role cardápio rendered into
+// the Planner prompt: only the roles whose assignments the Planner is
+// expected to attribute (briefer, executor, reviewer). The Planner's own
+// role is omitted because it cannot reroute itself.
+type menusView struct {
+	Briefer  []roleMenuRow
+	Executor []roleMenuRow
+	Reviewer []roleMenuRow
+}
+
+type roleMenuRow struct {
+	Provider string
+	Model    string
+	Efforts  []string
+	Note     string
+	Tier     string
+	Summary  string
 }
 
 type briefView struct {
@@ -268,20 +283,21 @@ func (a *Adapter) Plan(ctx context.Context, in director.PlannerInput, events cha
 		AgentID:  in.AgentID,
 		SpecPath: in.SpecPath,
 		Registry: in.Registry,
+		Menus:    renderMenus(in.Menus),
 		Prompt:   in.Prompt,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("director/claude: compose plan prompt: %w", err)
 	}
-	stats, err := a.runRole(ctx, dag.RolePlanner, in.AgentID, "", "", 0, prompt, events, "", "")
+	stats, err := a.runRole(ctx, dag.RolePlanner, in.AgentID, "", "", 0, prompt, events, in.Assignment.Provider, in.Assignment.Model, in.Assignment.Effort)
 	return nil, stats, err
 }
 
 // Brief implements director.Briefer. Same shape as Plan: render, run,
 // return. The Briefing lands in the dag handler via bcc_briefing_emit.
-// in.Assignment, when non-nil, overrides the configured Model and
-// Effort on this call so per-phase capability routing flows through to
-// the spawned claude process.
+// in.Assignment carries the per-phase (provider, model, effort) the
+// Planner attributed; the loop fills it from the role menu when the
+// Plan left it empty.
 func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
 	if in.AgentID == "" {
 		return nil, ErrMissingAgentID
@@ -296,15 +312,18 @@ func (a *Adapter) Brief(ctx context.Context, in director.BrieferInput, events ch
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose brief prompt: %w", err)
 	}
-	model, effort := assignmentOverride(in.Assignment)
-	return a.runRole(ctx, dag.RoleBriefer, in.AgentID, in.IterationID, in.PhaseID, in.Attempt, prompt, events, model, effort)
+	provider, model, effort, err := requireAssignment("brief", in.Assignment)
+	if err != nil {
+		return nil, err
+	}
+	return a.runRole(ctx, dag.RoleBriefer, in.AgentID, in.IterationID, in.PhaseID, in.Attempt, prompt, events, provider, model, effort)
 }
 
 // Review implements director.Reviewer. The Reviewer's work is recorded
 // as DAG mutations (bcc_task_approved / bcc_task_needs_fix) plus a
 // final bcc_review_finished outcome; the handler is the source of
-// truth for the resulting state. in.Assignment, when non-nil, overrides
-// the configured Model and Effort on this call.
+// truth for the resulting state. in.Assignment carries the per-phase
+// (provider, model, effort) the Planner attributed.
 func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events chan<- agentcontract.AgentEvent) (*director.DirectorCallStats, error) {
 	if in.AgentID == "" {
 		return nil, ErrMissingAgentID
@@ -316,18 +335,60 @@ func (a *Adapter) Review(ctx context.Context, in director.ReviewerInput, events 
 	if err != nil {
 		return nil, fmt.Errorf("director/claude: compose review prompt: %w", err)
 	}
-	model, effort := assignmentOverride(in.Assignment)
-	return a.runRole(ctx, dag.RoleReviewer, in.AgentID, in.IterationID, in.PhaseID, in.Attempt, prompt, events, model, effort)
+	provider, model, effort, err := requireAssignment("review", in.Assignment)
+	if err != nil {
+		return nil, err
+	}
+	return a.runRole(ctx, dag.RoleReviewer, in.AgentID, in.IterationID, in.PhaseID, in.Attempt, prompt, events, provider, model, effort)
 }
 
-// assignmentOverride extracts the per-call (model, effort) pair from a
-// RoleAssignment. nil or empty fields produce empty strings, which
-// runRole reads as "use the configured default".
-func assignmentOverride(a *director.RoleAssignment) (string, string) {
+// requireAssignment unpacks the RoleAssignment for a Brief/Review call.
+// Returns an error when the assignment is nil or missing provider/model;
+// the loop guarantees a non-nil assignment via FillPlanFromMenus, so a
+// missing one is a programmer error.
+func requireAssignment(call string, a *director.RoleAssignment) (string, string, string, error) {
 	if a == nil {
-		return "", ""
+		return "", "", "", fmt.Errorf("director/claude: %s requires assignment", call)
 	}
-	return a.Model, a.Effort
+	if a.Provider == "" || a.Model == "" {
+		return "", "", "", fmt.Errorf("director/claude: %s assignment missing provider or model", call)
+	}
+	return a.Provider, a.Model, a.Effort, nil
+}
+
+// renderMenus converts the loop-side RoleMenus into the per-role view
+// the Planner prompt template iterates over. Producer-side rendering
+// keeps the template syntax small and avoids leaking config types into
+// the prompt context.
+func renderMenus(menus director.RoleMenus) menusView {
+	return menusView{
+		Briefer:  renderRoleMenu(menus.Briefer),
+		Executor: renderRoleMenu(menus.Executor),
+		Reviewer: renderRoleMenu(menus.Reviewer),
+	}
+}
+
+func renderRoleMenu(menu director.RoleMenu) []roleMenuRow {
+	rows := make([]roleMenuRow, 0, len(menu.Options))
+	for _, opt := range menu.Options {
+		rows = append(rows, roleMenuRow{
+			Provider: opt.Provider,
+			Model:    opt.Model,
+			Efforts:  append([]string(nil), opt.Efforts...),
+			Note:     opt.Note,
+			Tier:     opt.Tier,
+			Summary:  opt.Summary,
+		})
+	}
+	return rows
+}
+
+// EffortsString joins efforts with ", " for prompt rendering.
+func (r roleMenuRow) EffortsString() string {
+	if len(r.Efforts) == 0 {
+		return "n/a"
+	}
+	return strings.Join(r.Efforts, ", ")
 }
 
 // composePrompt expands a role's prompt template with the agentcontract
@@ -350,13 +411,24 @@ func composePrompt(promptTpl string, view any) (string, error) {
 // forwards them to events when non-nil, and derives DirectorCallStats
 // from the terminal KindResultSummary so the cost panel and budget
 // check share a single source of truth.
-// runRole spawns claude for one role invocation. modelOverride and
-// effortOverride, when non-empty, replace the adapter's configured
-// values for this single spawn so per-phase capability assignments
-// flow into the CLI flags. Empty strings preserve the configured
-// defaults. phaseID and attempt are forwarded into SpawnStarted;
-// both are empty/zero for the Planner which runs outside any iteration.
-func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iterationID, phaseID string, attempt int, prompt string, events chan<- agentcontract.AgentEvent, modelOverride, effortOverride string) (*director.DirectorCallStats, error) {
+//
+// provider, model, and effort are the resolved per-spawn values the
+// caller pulled off the input's Assignment. provider must be "claude"
+// for this adapter; passing any other value returns an error so the
+// loop fails fast on a routing mistake. model is required; effort is
+// optional. phaseID and attempt are forwarded into SpawnStarted; both
+// are empty/zero for the Planner which runs outside any iteration.
+func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iterationID, phaseID string, attempt int, prompt string, events chan<- agentcontract.AgentEvent, provider, model, effort string) (*director.DirectorCallStats, error) {
+	if provider != "" && provider != "claude" {
+		return nil, fmt.Errorf("director/claude: cannot spawn provider %q (this adapter only handles claude)", provider)
+	}
+	if provider == "" {
+		provider = "claude"
+	}
+	if model == "" {
+		return nil, fmt.Errorf("director/claude: %s spawn requires a model", role)
+	}
+
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -374,17 +446,7 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 		args = append(args, "--mcp-config", path, "--strict-mcp-config")
 	}
 
-	model := a.cfg.Model
-	if modelOverride != "" {
-		model = modelOverride
-	}
-	effort := a.cfg.Effort
-	if effortOverride != "" {
-		effort = effortOverride
-	}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
+	args = append(args, "--model", model)
 	if effort != "" {
 		args = append(args, "--effort", effort)
 	}
@@ -453,14 +515,6 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 		if absErr != nil {
 			absPath = promptPath
 		}
-		resolvedModel := a.cfg.Model
-		if modelOverride != "" {
-			resolvedModel = modelOverride
-		}
-		resolvedEffort := a.cfg.Effort
-		if effortOverride != "" {
-			resolvedEffort = effortOverride
-		}
 		if a.cfg.Events != nil {
 			select {
 			case a.cfg.Events <- loop.SpawnStarted{
@@ -469,8 +523,9 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 				PhaseID:     phaseID,
 				IterationID: iterationID,
 				Attempt:     attempt,
-				Model:       resolvedModel,
-				Effort:      resolvedEffort,
+				Provider:    provider,
+				Model:       model,
+				Effort:      effort,
 				PromptPath:  absPath,
 				At:          a.timeNow().UTC(),
 			}:

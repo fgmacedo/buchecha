@@ -210,6 +210,9 @@ func jsonPayload(ev Event) map[string]any {
 		if e.Attempt != 0 {
 			out["attempt"] = e.Attempt
 		}
+		if e.Provider != "" {
+			out["provider"] = e.Provider
+		}
 		if e.Model != "" {
 			out["model"] = e.Model
 		}

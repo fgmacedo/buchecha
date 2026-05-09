@@ -63,6 +63,16 @@ type PlannerInput struct {
 	// lens over the spec; when only Prompt is set, it is the source of
 	// truth for what to plan. Empty when the user supplied no --prompt.
 	Prompt string
+	// Assignment is the (provider, model, effort) triple the Planner
+	// itself runs under, resolved by the loop from the user-configured
+	// Planner menu (config.Roles.Planner.Options[0] after host filter).
+	// Required: the adapter never invents a model.
+	Assignment RoleAssignment
+	// Menus is the per-role cardápio rendered into the Planner prompt
+	// so the agent picks per-phase assignments only from declared,
+	// host-available options. The Planner's own role is not in here
+	// (it cannot reroute itself).
+	Menus RoleMenus
 }
 
 // BrieferInput is the request payload for Briefer.Brief. IterationID
@@ -97,7 +107,7 @@ type BrieferInput struct {
 
 // ReviewerInput is the request payload for Reviewer.Review. The
 // Reviewer reads the briefing, per-task ids, and the diff/journal
-// snapshots through MCP queries (bcc_get_briefing, bcc_get_diff,
+// snapshots through MCP queries (bcc_get_briefing, bcc_get_baseline,
 // bcc_get_journal_delta) once the loop has captured them on the
 // handler; bcc no longer pre-collects acceptance evidence on the wire.
 // IterationID identifies the briefing the Reviewer audits; AgentID is

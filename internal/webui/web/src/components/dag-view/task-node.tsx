@@ -44,7 +44,7 @@ export interface TaskNodeData {
 
 // TaskNodeComponent renders a task card with the title as the headline, the
 // intent clamped to two lines underneath, and small meta in the corners
-// (id, status pill, priority badge, retry-budget dots). A hover tooltip
+// (id, status pill, retry-budget dots). A hover tooltip
 // surfaces dependencies, full intent, and timestamps.
 // Clicking the card invokes select({ kind: "task", phaseId, taskId }).
 // Selected state outlines the card: --accent-warn for needs_fix, otherwise
@@ -200,9 +200,6 @@ export function TaskNodeComponent({ data }: NodeProps) {
         >
           {task.id}
         </span>
-        {typeof task.priority === 'number' && (
-          <PriorityBadge priority={task.priority} />
-        )}
         {task.retry_budget > 0 && <RetryDots budget={task.retry_budget} />}
         <span
           style={{
@@ -296,31 +293,6 @@ export function TaskNodeComponent({ data }: NodeProps) {
   )
 }
 
-// PriorityBadge renders the priority as a compact numeric chip. Higher
-// numbers carry more accent saturation so the eye picks them up faster.
-function PriorityBadge({ priority }: { priority: number }) {
-  return (
-    <span
-      title={`priority ${priority}`}
-      style={{
-        fontFamily: 'var(--font-mono)',
-        fontSize: 9,
-        fontWeight: 700,
-        color: 'var(--color-accent)',
-        backgroundColor:
-          'color-mix(in srgb, var(--color-accent) 18%, transparent)',
-        border: '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)',
-        borderRadius: 3,
-        padding: '0 4px',
-        lineHeight: 1.5,
-        flexShrink: 0,
-      }}
-    >
-      P{priority}
-    </span>
-  )
-}
-
 // RetryDots renders the retry budget as small filled dots (remaining budget).
 // Capped at 8 dots to avoid overflow on very large budgets.
 function RetryDots({ budget }: { budget: number }) {
@@ -393,9 +365,6 @@ function TaskTooltip({
           value={deps.length > 0 ? deps.join(', ') : 'none'}
           mono
         />
-        {typeof task.priority === 'number' && (
-          <TooltipRow label="Priority" value={String(task.priority)} mono />
-        )}
         {startedAt && <TooltipRow label="Started" value={startedAt} mono />}
         {endedAt && <TooltipRow label="Ended" value={endedAt} mono />}
       </div>

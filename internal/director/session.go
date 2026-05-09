@@ -19,13 +19,15 @@ import (
 // global .bcc/ layout and let two runs against different specs coexist
 // without overwriting each other.
 type Session struct {
-	ID        string        `json:"id"`
-	SpecPath  string        `json:"spec_path"`
-	SpecHash  string        `json:"spec_hash"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
-	Status    SessionStatus `json:"status"`
-	Prompt    string        `json:"prompt,omitempty"`
+	ID             string        `json:"id"`
+	SpecPath       string        `json:"spec_path"`
+	SpecHash       string        `json:"spec_hash"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	Status         SessionStatus `json:"status"`
+	Prompt         string        `json:"prompt,omitempty"`
+	IterationIndex int           `json:"iteration_index,omitempty"`
+	MaxIter        int           `json:"max_iter,omitempty"`
 }
 
 // SessionStatus tracks the lifecycle of a Session. The closed set is

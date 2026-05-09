@@ -7,21 +7,29 @@
 // the format-specific decoder.
 package config
 
-// Config mirrors the shape of .bcc.toml. The hierarchical layout matches
-// the spec-format and agent adapter pattern: a global selector plus
-// per-adapter subtables. Adapters with no Go counterpart yet (openspec,
-// kiro, codex, gemini) may exist in the TOML as stubs; they decode into
-// nothing and are written by `bcc init` for forward-compat.
+// Config mirrors the shape of .bcc.toml. The hierarchical layout splits
+// the two orthogonal dimensions of the run:
+//
+//   - [providers.<name>] is a vendor adapter: how to invoke the CLI of one
+//     LLM provider (binary, flags, auth, budget cap). One section per
+//     provider; each section is shared across every role that uses it.
+//   - [roles.<name>] is a per-role menu of options the Planner picks from.
+//     Roles are planner / briefer / executor / reviewer.
+//
+// Defaults filled by ApplyDefaults cover the common case so an empty
+// .bcc.toml still produces a working configuration. Per-provider entries
+// for known vendors (today: claude) are auto-populated even when absent
+// from the TOML; user declarations only override.
 type Config struct {
-	Project  Project        `toml:"project"`
-	Journal  Journal        `toml:"journal"`
-	Agent    Agent          `toml:"agent"`
-	Loop     Loop           `toml:"loop"`
-	Git      Git            `toml:"git"`
-	Env      Env            `toml:"env"`
-	Director DirectorConfig `toml:"director"`
-	Debug    DebugConfig    `toml:"debug"`
-	Webui    Webui          `toml:"webui"`
+	Project   Project             `toml:"project"`
+	Journal   Journal             `toml:"journal"`
+	Providers map[string]Provider `toml:"providers"`
+	Roles     Roles               `toml:"roles"`
+	Loop      Loop                `toml:"loop"`
+	Git       Git                 `toml:"git"`
+	Env       Env                 `toml:"env"`
+	Debug     DebugConfig         `toml:"debug"`
+	Webui     Webui               `toml:"webui"`
 }
 
 // Project holds top-level project settings.
@@ -41,52 +49,87 @@ type JournalFile struct {
 	Path string `toml:"path"`
 }
 
-// Agent selects the active executor adapter and carries per-adapter
-// options.
-type Agent struct {
-	Name   string      `toml:"name"`
-	Claude AgentClaude `toml:"claude"`
-}
-
-// AgentClaude configures the claude executor adapter.
-type AgentClaude struct {
+// Provider configures one LLM CLI vendor adapter (claude, codex,
+// gemini). The same Provider entry is shared by every role that picks
+// this vendor in its options list, so binary, extra args, permission
+// model, and budget cap live here once instead of being duplicated per
+// role.
+type Provider struct {
+	// Binary is the path or PATH name of the vendor's CLI.
 	Binary string `toml:"binary"`
-	Model  string `toml:"model"`
-	// Effort is the default --effort level claude uses when the
-	// Planner does not attribute one on the Phase via
-	// executor_assignment. Empty omits the flag. Allowed values depend
-	// on the model (low|medium|high|xhigh|max); the loop validates
-	// per-phase overrides against the capability registry, so an
-	// invalid default here is only caught at spawn time by the CLI.
-	Effort    string   `toml:"effort"`
+
+	// ExtraArgs are appended verbatim to every spawn this provider
+	// runs, regardless of role. Useful for vendor-wide flags
+	// (--strict-mcp-config, token-saving knobs).
 	ExtraArgs []string `toml:"extra_args"`
 
-	// SkipPermissions, when true (the default), instructs the adapter to
-	// suppress the agent's interactive permission prompts so the loop
-	// can run end to end without human intervention. claude maps this
-	// to --dangerously-skip-permissions.
+	// SkipPermissions, when true (the default), instructs the adapter
+	// to suppress the agent's interactive permission prompts so the
+	// loop can run end to end without human intervention. Vendor
+	// adapters map this to their own flag (claude:
+	// --dangerously-skip-permissions).
 	//
-	// This is a tristate via pointer: nil means "absent in TOML, use
-	// default"; the default is true. Setting `skip_permissions = false`
-	// in .bcc.toml is an explicit opt-out and the user accepts that
-	// the loop will stall on prompts.
-	//
-	// Use ShouldSkipPermissions() to read; never dereference directly.
+	// Tristate via pointer: nil means "absent in TOML, use default";
+	// the default is true. Setting `skip_permissions = false` is an
+	// explicit opt-out.
 	SkipPermissions *bool `toml:"skip_permissions"`
+
+	// MaxBudgetUSD, when > 0, caps the cost of each Director-role
+	// spawn this provider runs (mapped to the binary's
+	// --max-budget-usd flag and enforced bcc-side as a fail-closed
+	// check). Zero (the default) disables both behaviors.
+	MaxBudgetUSD float64 `toml:"max_budget_usd"`
 }
 
 // ShouldSkipPermissions returns the effective value of the
 // SkipPermissions tristate, applying the default (true) when absent.
-func (a AgentClaude) ShouldSkipPermissions() bool {
-	if a.SkipPermissions == nil {
+func (p Provider) ShouldSkipPermissions() bool {
+	if p.SkipPermissions == nil {
 		return true
 	}
-	return *a.SkipPermissions
+	return *p.SkipPermissions
+}
+
+// Roles carries the per-role option menu. Each role is independent; the
+// Planner picks from each role's filtered menu when it emits a Plan
+// (briefer/executor/reviewer) or is itself driven by options[0] (planner).
+type Roles struct {
+	Planner  RolePolicy `toml:"planner"`
+	Briefer  RolePolicy `toml:"briefer"`
+	Executor RolePolicy `toml:"executor"`
+	Reviewer RolePolicy `toml:"reviewer"`
+}
+
+// RolePolicy is a role's ordered list of options. Order is the user's
+// preference: best to cheapest. The runtime filters out options whose
+// provider is not available (binary not in PATH); for the Planner the
+// first surviving entry runs, for other roles the surviving entries
+// form the menu the Planner picks from per phase.
+type RolePolicy struct {
+	Options []RoleOption `toml:"options"`
+}
+
+// RoleOption is one row in a role's menu: a (provider, model, efforts)
+// triple. efforts lists the effort levels the Planner is allowed to
+// pair with this model on this role; the Planner picks one effort per
+// phase from this list. note is free-form user guidance rendered in the
+// Planner prompt (e.g. "only for schema migrations on this project").
+type RoleOption struct {
+	Provider string   `toml:"provider"`
+	Model    string   `toml:"model"`
+	Efforts  []string `toml:"efforts"`
+	Note     string   `toml:"note,omitempty"`
 }
 
 // Loop configures the iteration loop.
 type Loop struct {
+	// MaxIterations bounds the per-phase iteration count.
 	MaxIterations int `toml:"max_iterations"`
+
+	// RetryBudget is the floor the Director honors when no per-task
+	// override is set on the Plan. The Planner may raise it per task
+	// for work it expects to be brittle.
+	RetryBudget int `toml:"retry_budget"`
 }
 
 // Git holds git-related settings.
@@ -101,39 +144,17 @@ type Env struct {
 	Vars  map[string]string `toml:"vars"`
 }
 
-// DirectorConfig carries the global retry budget plus per-adapter
-// subtables for the Director-driven loop.
-//
-// The wiring follows the same shape as Agent: the top-level knobs
-// (RetryBudget) live here; per-adapter knobs sit in their own subtable.
-// There is no adapter selector yet because only the Claude adapter is
-// wired; future adapters add a sibling subtable and the runtime branches
-// on which one is non-zero.
-type DirectorConfig struct {
-	RetryBudget int            `toml:"retry_budget"`
-	Claude      DirectorClaude `toml:"claude"`
-
+// DebugConfig toggles diagnostic captures. Off by default to keep the
+// happy-path session footprint small. The CLI may override individual
+// fields via flags; see internal/cli/run.go.
+type DebugConfig struct {
 	// MCPAudit toggles the per-session mcp-log.jsonl handler audit
 	// trail. Tristate via pointer: nil means "absent in TOML, use
 	// default" (default: true). Setting `mcp_audit = false` is an
 	// explicit opt-out, useful for very long runs where the JSONL
 	// becomes inconveniently large.
 	MCPAudit *bool `toml:"mcp_audit"`
-}
 
-// IsMCPAuditEnabled returns the effective value of the MCPAudit
-// tristate, applying the default (true) when absent.
-func (d DirectorConfig) IsMCPAuditEnabled() bool {
-	if d.MCPAudit == nil {
-		return true
-	}
-	return *d.MCPAudit
-}
-
-// DebugConfig toggles diagnostic captures. Off by default to keep the
-// happy-path session footprint small. The CLI may override individual
-// fields via flags; see internal/cli/run.go.
-type DebugConfig struct {
 	// CaptureSubprocessLogs persists the full stderr of every Director
 	// role spawn (planner, briefer, executor, reviewer) under
 	// .bcc/sessions/<id>/runs/. Tristate via pointer; default false.
@@ -157,6 +178,15 @@ type DebugConfig struct {
 	// disk pressure outweighs the diagnostic value, e.g. on long
 	// runs.
 	PersistEventsLog *bool `toml:"persist_events_log"`
+}
+
+// IsMCPAuditEnabled returns the effective value of the MCPAudit
+// tristate, applying the default (true) when absent.
+func (d DebugConfig) IsMCPAuditEnabled() bool {
+	if d.MCPAudit == nil {
+		return true
+	}
+	return *d.MCPAudit
 }
 
 // IsCaptureSubprocessLogsEnabled returns the effective value of the
@@ -205,20 +235,4 @@ type Webui struct {
 	// platform default browser at the dashboard URL after the listener
 	// is up. Implies Enabled (the CLI promotes runWebUI when -W is set).
 	Open bool `toml:"open"`
-}
-
-// DirectorClaude configures the Director's Claude adapter (P3+).
-//
-// MaxBudgetUSD == 0 disables the cost cap; > 0 maps to the binary's
-// --max-budget-usd flag and the call fails fail-closed if exceeded.
-type DirectorClaude struct {
-	Binary string `toml:"binary"`
-	Model  string `toml:"model"`
-	// Effort is the default --effort level for Director roles
-	// (Planner, Briefer, Reviewer) when the Planner did not attribute
-	// one on the Phase via briefer_assignment / reviewer_assignment.
-	// Empty omits the flag. Same allowed values as AgentClaude.Effort.
-	Effort       string   `toml:"effort"`
-	ExtraArgs    []string `toml:"extra_args"`
-	MaxBudgetUSD float64  `toml:"max_budget_usd"`
 }

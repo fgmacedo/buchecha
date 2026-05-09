@@ -37,7 +37,7 @@ The methods bcc exposes depend on the role bcc spawned you in (Planner, Briefer,
 |---|---|
 | `bcc_get_briefing(agent_id)` | Re-read the Briefing the Executor was given. |
 | `bcc_get_dag_snapshot(agent_id)` | Read your phase's task statuses. |
-| `bcc_get_diff(agent_id)` | Get the unified diff between the Executor's baseline and head SHAs. |
+| `bcc_get_baseline(agent_id)` | Get the phase-scoped baseline SHA and current HEAD; the Reviewer uses Bash (git diff/log/show) to inspect the cumulative work of the phase. |
 | `bcc_get_journal_delta(agent_id)` | Get the spec-journal delta (added entries) the Executor produced. |
 | `bcc_task_approved(agent_id, task_id)` | Mark a sub-DAG task `done`. |
 | `bcc_task_needs_fix(agent_id, task_id, feedback)` | Return a sub-DAG task to `needs_fix`. `feedback` is the per-task correction the next attempt receives. |

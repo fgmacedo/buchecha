@@ -147,9 +147,6 @@ func diffPhase(a, b Phase) []string {
 	if !equalStringSlices(a.ScopeOut, b.ScopeOut) {
 		out = append(out, "scope_out changed")
 	}
-	if a.Priority != b.Priority {
-		out = append(out, fmt.Sprintf("priority: %d → %d", a.Priority, b.Priority))
-	}
 	if !reflect.DeepEqual(a.Tasks, b.Tasks) {
 		out = append(out, fmt.Sprintf("tasks: %d → %d", len(a.Tasks), len(b.Tasks)))
 	}

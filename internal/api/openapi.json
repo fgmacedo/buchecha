@@ -178,10 +178,6 @@
           "prepared_briefing": {
             "$ref": "#/components/schemas/PreparedBriefing"
           },
-          "priority": {
-            "format": "int64",
-            "type": "integer"
-          },
           "reviewer_assignment": {
             "$ref": "#/components/schemas/RoleAssignment"
           },
@@ -337,6 +333,10 @@
             "type": "string"
           }
         },
+        "required": [
+          "provider",
+          "model"
+        ],
         "type": "object"
       },
       "RootCatalog": {
@@ -509,10 +509,6 @@
           },
           "intent": {
             "type": "string"
-          },
-          "priority": {
-            "format": "int64",
-            "type": "integer"
           },
           "retry_budget": {
             "format": "int64",

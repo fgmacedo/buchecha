@@ -433,6 +433,7 @@ func TestMarshalJSONEvent_SpawnStartedFull(t *testing.T) {
 		TaskID:      "T1.1",
 		IterationID: "P1-iter1",
 		Attempt:     1,
+		Provider:    "claude",
 		Model:       "claude-opus-4-7",
 		Effort:      "high",
 		PromptPath:  "/tmp/spawns/01arya0000000000000001.md",
@@ -442,7 +443,7 @@ func TestMarshalJSONEvent_SpawnStartedFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-05-05T12:00:00Z","attempt":1,"effort":"high","iteration_id":"P1-iter1","level":"info","model":"claude-opus-4-7","phase_id":"P1","prompt_path":"/tmp/spawns/01arya0000000000000001.md","role":"executor","spawn_id":"01arya0000000000000001","task_id":"T1.1","type":"spawn_started"}`
+	want := `{"at":"2026-05-05T12:00:00Z","attempt":1,"effort":"high","iteration_id":"P1-iter1","level":"info","model":"claude-opus-4-7","phase_id":"P1","prompt_path":"/tmp/spawns/01arya0000000000000001.md","provider":"claude","role":"executor","spawn_id":"01arya0000000000000001","task_id":"T1.1","type":"spawn_started"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
@@ -451,15 +452,16 @@ func TestMarshalJSONEvent_SpawnStartedFull(t *testing.T) {
 func TestMarshalJSONEvent_SpawnStartedMinimal(t *testing.T) {
 	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	ev := loop.SpawnStarted{
-		SpawnID: "01arya0000000000000002",
-		Role:    "planner",
-		At:      at,
+		SpawnID:  "01arya0000000000000002",
+		Role:     "planner",
+		Provider: "claude",
+		At:       at,
 	}
 	got, err := loop.MarshalJSONEvent(ev)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-05-05T12:00:00Z","level":"info","role":"planner","spawn_id":"01arya0000000000000002","type":"spawn_started"}`
+	want := `{"at":"2026-05-05T12:00:00Z","level":"info","provider":"claude","role":"planner","spawn_id":"01arya0000000000000002","type":"spawn_started"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
