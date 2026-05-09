@@ -1,4 +1,8 @@
-package services
+// Package events isolates the EventService ring buffer, fan-out, sequence
+// numbering, and replay logic from the broader services layer. The parent
+// package (internal/services) embeds *EventService in its aggregator so
+// protocol adapters access it through the same Services handle.
+package events
 
 import (
 	"bufio"
@@ -19,23 +23,155 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
-// SeqEvent is the value type subscribers receive: a monotonic
-// sequence number (starting at 1) plus the loop event the EventService
-// captured. Adapters render Seq as the SSE id so reconnects can
-// resume from the last delivered seq.
+// LiveSessionAlias is the reserved session id callers pass when they want
+// the EventService to resolve the currently bound live session. The SPA
+// defaults to this alias on first load, before it has a real session id.
+const LiveSessionAlias = "live"
+
+// Error is the events-package error type. It mirrors the services.Error
+// shape (code, message, details) so the services layer can translate it
+// into a *services.Error via AsEventError without importing a shared
+// base type. The codeString() method lets services.Error.Is() match
+// across the package boundary through a private interface.
+type Error struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+// Error implements the error interface.
+func (e *Error) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message == "" {
+		return e.Code
+	}
+	return e.Code + ": " + e.Message
+}
+
+// Is implements cross-package code matching. errors.Is traverses err's
+// chain calling err.Is(target). When target is *Error (same package),
+// codes are compared directly. When target satisfies the exported coder
+// interface (e.g. *services.Error, which implements CodeString()), the
+// match is still code-based so errors.Is(eventsErr, services.ErrSeqGone)
+// returns true when both carry the same code string. CodeString() must be
+// exported for the interface satisfaction to work across package boundaries.
+func (e *Error) Is(target error) bool {
+	if e == nil {
+		return target == nil
+	}
+	if t, ok := target.(*Error); ok {
+		return e.Code == t.Code
+	}
+	type coder interface{ CodeString() string }
+	if c, ok := target.(coder); ok {
+		return e.Code == c.CodeString()
+	}
+	return false
+}
+
+// CodeString returns the string representation of the error code.
+// It satisfies the cross-package coder interface used by services.Error.Is()
+// so that errors.Is(servicesErr, events.ErrSeqGone) also works when both
+// sides carry the same code string.
+func (e *Error) CodeString() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+
+// WithDetails returns a copy of the receiver with details merged in.
+// The receiver is never mutated so sentinel vars remain stable.
+func (e *Error) WithDetails(details map[string]any) *Error {
+	if e == nil {
+		return nil
+	}
+	out := &Error{Code: e.Code, Message: e.Message}
+	if len(details) == 0 {
+		return out
+	}
+	out.Details = make(map[string]any, len(details))
+	for k, v := range details {
+		out.Details[k] = v
+	}
+	return out
+}
+
+// WithMessage returns a copy of the receiver with the message replaced.
+func (e *Error) WithMessage(msg string) *Error {
+	if e == nil {
+		return nil
+	}
+	out := *e
+	out.Message = msg
+	if e.Details != nil {
+		out.Details = make(map[string]any, len(e.Details))
+		for k, v := range e.Details {
+			out.Details[k] = v
+		}
+	}
+	return &out
+}
+
+func newError(code, message string) *Error {
+	return &Error{Code: code, Message: message}
+}
+
+// Sentinel errors returned by EventService methods.
+var (
+	ErrSeqGone         = newError("seq_gone", "sequence number predates the ring buffer")
+	ErrSessionNotFound = newError("session_not_found", "session not found")
+	ErrInvalidRequest  = newError("invalid_request", "invalid request")
+)
+
+// Deps is the seam between the parent services layer and the EventService.
+// It carries only the handles EventService actually reads; the parent
+// services.Deps owns the rest (DAGHandler, AuditPath, etc.).
+type Deps struct {
+	// LoopEvents is the loop-wide event channel the fan-out drains.
+	LoopEvents <-chan loop.Event
+
+	// SessionStore is the live session's persistence facade. EventService
+	// uses it to answer isLiveSession and to find the live session directory
+	// for Replay against a running session.
+	SessionStore *session.Store
+
+	// SessionsBaseDir is the parent directory for all sessions
+	// (.bcc/sessions/<id>/). Used to resolve archived session dirs by id.
+	SessionsBaseDir string
+
+	// EventsLogPath, when non-empty, is the absolute path the fan-out
+	// appends each post-enrichment SeqEvent to (events.ndjson). Empty
+	// disables persistence; the live fan-out continues in memory.
+	EventsLogPath string
+
+	// LiveAliasArchivedID, when non-empty, makes LiveSessionAlias resolve
+	// to this archived session id when no SessionStore is bound (bcc dev).
+	LiveAliasArchivedID string
+
+	// ReplayInterEventDelay throttles Replay so each emitted event is
+	// followed by this pause before the next one. Zero emits at full speed.
+	ReplayInterEventDelay time.Duration
+}
+
+// SeqEvent is the value type subscribers receive: a monotonic sequence
+// number (starting at 1) plus the loop event the EventService captured.
+// Adapters render Seq as the SSE id so reconnects can resume from the
+// last delivered seq.
 type SeqEvent struct {
 	Seq   int64      `json:"seq"`
 	Event loop.Event `json:"event"`
 }
 
-// MarshalEvent returns the canonical JSON form of the SeqEvent's
-// Event field plus the wire-level kind discriminator. Protocol
-// adapters above services consume SeqEvent (it is part of the V1
-// service contract) but the loop package owns the closed Event
-// family and the matching wire schema, so adapters reach back here
-// instead of importing loop directly. The kind is the same string
-// the schemas/event.schema.json enum lists for the embedded "type"
-// field, suitable as the SSE event-kind.
+// MarshalEvent returns the canonical JSON form of the SeqEvent's Event
+// field plus the wire-level kind discriminator. Protocol adapters above
+// services consume SeqEvent (it is part of the V1 service contract) but
+// the loop package owns the closed Event family and the matching wire
+// schema, so adapters reach here instead of importing loop directly.
+// The kind is the same string the schemas/event.schema.json enum lists
+// for the embedded "type" field, suitable as the SSE event-kind.
 func MarshalEvent(se SeqEvent) ([]byte, string, error) {
 	body, err := loop.MarshalJSONEvent(se.Event)
 	if err != nil {
@@ -50,31 +186,31 @@ func MarshalEvent(se SeqEvent) ([]byte, string, error) {
 	return body, head.Type, nil
 }
 
-// IsFinalEvent reports whether se is the terminal LoopFinished
-// event, the signal SSE handlers use to flush and close the
-// response. Adapters cannot type-assert against loop.LoopFinished
-// directly because they sit above services in the layer graph.
+// IsFinalEvent reports whether se is the terminal LoopFinished event,
+// the signal SSE handlers use to flush and close the response. Adapters
+// cannot type-assert against loop.LoopFinished directly because they sit
+// above services in the layer graph.
 func IsFinalEvent(se SeqEvent) bool {
 	_, ok := se.Event.(loop.LoopFinished)
 	return ok
 }
 
 // ringSize is the in-memory ring buffer capacity per live session.
-// Subscribers requesting a seq older than the oldest still in the
-// ring receive ErrSeqGone and are expected to refresh state via
-// Snapshot before reconnecting at the live tail.
+// Subscribers requesting a seq older than the oldest still in the ring
+// receive ErrSeqGone and are expected to refresh state via Snapshot
+// before reconnecting at the live tail.
 const ringSize = 1024
 
-// EventService multiplexes the loop event channel to N subscribers
-// with monotonic Seq numbering and an in-memory ring buffer. Only
-// one live session runs per bcc run; the service keys Subscribe off
-// the SessionStore's bound session id.
+// EventService multiplexes the loop event channel to N subscribers with
+// monotonic Seq numbering and an in-memory ring buffer. Only one live
+// session runs per bcc run; the service keys Subscribe off the
+// SessionStore's bound session id.
 //
 // Replay reads the persisted .bcc/sessions/<id>/events.ndjson for
-// archived sessions and emits the events back through the same
-// SeqEvent envelope, then closes. Subscribe and Replay share the
-// SeqEvent shape so a protocol adapter can pick the right method
-// from the session status without changing the consumer code.
+// archived sessions and emits the events back through the same SeqEvent
+// envelope, then closes. Subscribe and Replay share the SeqEvent shape so
+// a protocol adapter can pick the right method from the session status
+// without changing the consumer code.
 type EventService struct {
 	deps Deps
 
@@ -87,28 +223,26 @@ type EventService struct {
 	fanoutOnce sync.Once
 }
 
-// subscriber is one in-flight Subscribe call. inbox carries live
-// events from the fan-out; out is the consumer-facing channel; the
-// relay goroutine merges the snapshot replay then forwards inbox to
-// out. minSeq is the smallest seq the fan-out is allowed to deliver
-// to inbox so events covered by the snapshot replay are not
-// double-delivered.
+// subscriber is one in-flight Subscribe call. inbox carries live events
+// from the fan-out; out is the consumer-facing channel; the relay
+// goroutine merges the snapshot replay then forwards inbox to out.
+// minSeq is the smallest seq the fan-out is allowed to deliver to inbox
+// so events covered by the snapshot replay are not double-delivered.
 type subscriber struct {
 	inbox  chan SeqEvent
 	out    chan SeqEvent
 	minSeq int64
 }
 
-func newEventService(deps Deps) *EventService {
+// New constructs an EventService from Deps. The fan-out goroutine starts
+// lazily on the first Subscribe, or eagerly when EventsLogPath is set so
+// events are persisted even without an SSE client.
+func New(deps Deps) *EventService {
 	s := &EventService{
 		deps:    deps,
 		nextSeq: 1,
 		subs:    make(map[*subscriber]struct{}),
 	}
-	// Persistence to events.ndjson lives inside the fanout goroutine,
-	// which Subscribe lazily starts. Without an SSE client (headless run,
-	// TUI-only mode) the file would never be written, defeating bcc dev
-	// replay. Start the fanout eagerly when persistence is configured.
 	if deps.EventsLogPath != "" && deps.LoopEvents != nil {
 		s.ensureFanout()
 	}
@@ -116,11 +250,11 @@ func newEventService(deps Deps) *EventService {
 }
 
 // Subscribe registers a live subscriber for sessionID and returns a
-// channel that emits buffered events with seq >= fromSeq followed by
-// live events. fromSeq < 1 is normalised to 1. When fromSeq predates
-// the oldest entry still in the ring, the call returns ErrSeqGone
-// and no subscription is created. The returned channel closes on
-// LoopFinished or when ctx is cancelled.
+// channel that emits buffered events with seq >= fromSeq followed by live
+// events. fromSeq < 1 is normalised to 1. When fromSeq predates the
+// oldest entry still in the ring, the call returns ErrSeqGone and no
+// subscription is created. The returned channel closes on LoopFinished
+// or when ctx is cancelled.
 func (s *EventService) Subscribe(ctx context.Context, sessionID string, fromSeq int64) (<-chan SeqEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -172,9 +306,9 @@ func (s *EventService) Subscribe(ctx context.Context, sessionID string, fromSeq 
 
 // Replay reads .bcc/sessions/<id>/events.ndjson and emits each line's
 // SeqEvent in order, skipping lines whose seq is less than fromSeq.
-// The channel closes once the file is exhausted (or immediately
-// when the file is absent so a session whose loop did not persist
-// events is still queryable).
+// The channel closes once the file is exhausted (or immediately when the
+// file is absent so a session whose loop did not persist events is still
+// queryable).
 func (s *EventService) Replay(ctx context.Context, sessionID string, fromSeq int64) (<-chan SeqEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -191,11 +325,8 @@ func (s *EventService) Replay(ctx context.Context, sessionID string, fromSeq int
 	return out, nil
 }
 
-// isLiveSession reports whether sessionID matches the SessionStore's
-// bound session id, also accepting the reserved LiveSessionAlias so the
-// SPA can subscribe before discovering the live session's real id. The
-// fan-out is bound to a single live session; any other id routes
-// through Replay.
+// isLiveSession reports whether sessionID matches the SessionStore's bound
+// session id, also accepting the reserved LiveSessionAlias.
 func (s *EventService) isLiveSession(sessionID string) bool {
 	if s.deps.SessionStore == nil {
 		return false
@@ -211,11 +342,11 @@ func (s *EventService) isLiveSession(sessionID string) bool {
 }
 
 // archivedSessionDir resolves sessionID to its directory. The live
-// session is acceptable here too: Replay against the live session
-// reads its on-disk event log even while the loop is still running,
-// which is how a freshly opened SPA tab can backfill before
-// switching to Subscribe at the live tail. LiveSessionAlias resolves
-// to whichever session is bound as live.
+// session is acceptable here too: Replay against the live session reads
+// its on-disk event log even while the loop is still running, which is
+// how a freshly opened SPA tab can backfill before switching to Subscribe
+// at the live tail. LiveSessionAlias resolves to whichever session is
+// bound as live.
 func (s *EventService) archivedSessionDir(sessionID string) (string, error) {
 	if s.deps.SessionStore != nil {
 		if live := s.deps.SessionStore.Session(); live != nil {
@@ -240,9 +371,7 @@ func (s *EventService) archivedSessionDir(sessionID string) (string, error) {
 	return store.SessionDir(), nil
 }
 
-// ensureFanout starts the single fan-out goroutine on the first
-// Subscribe. The goroutine drains LoopEvents, assigns Seq, fills the
-// ring, and broadcasts to live subscribers until the channel closes.
+// ensureFanout starts the single fan-out goroutine on the first Subscribe.
 // Re-invocations are no-ops thanks to fanoutOnce.
 func (s *EventService) ensureFanout() {
 	s.fanoutOnce.Do(func() {
@@ -253,23 +382,17 @@ func (s *EventService) ensureFanout() {
 	})
 }
 
-// fanout consumes LoopEvents, stamps each event with the next seq,
-// appends to the ring, and pushes to each live subscriber's inbox.
-// On LoopFinished (or LoopEvents close) every subscriber inbox is
-// closed and the relay goroutines drain.
+// fanout consumes LoopEvents, stamps each event with the next seq, appends
+// to the ring, and pushes to each live subscriber's inbox. On LoopFinished
+// (or LoopEvents close) every subscriber inbox is closed and the relay
+// goroutines drain.
 //
-// Before stamping seq the fan-out enriches AgentEventReceived events
-// with the active task id of the agent that produced them. The active
-// task is tracked locally via TaskStarted / TaskCompleted /
-// TaskApproved / TaskNeedsFix events that pass through the same
-// channel, all of which now carry an AgentID. The map lives in the
-// goroutine's stack so no lock is needed.
-//
-// Window-of-race: TaskStarted (handler-side) and the subsequent
-// AgentEventReceived (adapter-side) are produced by different
-// publishers; under unlikely interleavings an event may arrive before
-// its TaskStarted and miss attribution. Best-effort by design; if it
-// becomes a problem we can buffer-and-reorder by timestamp here.
+// Before stamping seq the fan-out enriches AgentEventReceived events with
+// the active task id of the agent that produced them. The active task is
+// tracked locally via TaskStarted / TaskCompleted / TaskApproved /
+// TaskNeedsFix events that pass through the same channel, all of which now
+// carry an AgentID. The map lives in the goroutine's stack so no lock is
+// needed.
 func (s *EventService) fanout() {
 	activeTaskByAgent := make(map[string]string)
 	var logFile *os.File
@@ -357,9 +480,9 @@ func (s *EventService) fanout() {
 	s.shutdownSubscribers()
 }
 
-// shutdownSubscribers closes every live subscriber's inbox and marks
-// the service closed so Subscribe calls after the loop has finished
-// observe the terminal state instead of blocking on the fan-out.
+// shutdownSubscribers closes every live subscriber's inbox and marks the
+// service closed so Subscribe calls after the loop has finished observe
+// the terminal state instead of blocking on the fan-out.
 func (s *EventService) shutdownSubscribers() {
 	s.mu.Lock()
 	for sub := range s.subs {
@@ -370,10 +493,10 @@ func (s *EventService) shutdownSubscribers() {
 	s.mu.Unlock()
 }
 
-// relay merges the snapshot replay with live events from sub.inbox
-// and forwards them to sub.out. It owns sub.out: closing the channel
-// is the relay's responsibility, never the fan-out's. ctx cancel
-// returns immediately and unregisters the subscriber.
+// relay merges the snapshot replay with live events from sub.inbox and
+// forwards them to sub.out. It owns sub.out: closing the channel is the
+// relay's responsibility, never the fan-out's. ctx cancel returns
+// immediately and unregisters the subscriber.
 func (s *EventService) relay(ctx context.Context, sub *subscriber, snap []SeqEvent) {
 	defer close(sub.out)
 	defer s.removeSubscriber(sub)
@@ -409,8 +532,8 @@ func (s *EventService) removeSubscriber(sub *subscriber) {
 	s.mu.Unlock()
 }
 
-// appendRingLocked appends se to the ring, evicting the oldest entry
-// once ringSize is exceeded. mu must be held.
+// appendRingLocked appends se to the ring, evicting the oldest entry once
+// ringSize is exceeded. mu must be held.
 func (s *EventService) appendRingLocked(se SeqEvent) {
 	if len(s.ring) < ringSize {
 		s.ring = append(s.ring, se)
@@ -422,10 +545,9 @@ func (s *EventService) appendRingLocked(se SeqEvent) {
 
 func (s *EventService) ringSizeLocked() int { return len(s.ring) }
 
-// replayLoop is the goroutine body for Replay. It opens the
-// per-session events.ndjson, decodes one envelope per line, and
-// emits SeqEvent values in order. ctx cancel and end-of-file both
-// close the channel cleanly.
+// replayLoop is the goroutine body for Replay. It opens the per-session
+// events.ndjson, decodes one envelope per line, and emits SeqEvent values
+// in order. ctx cancel and end-of-file both close the channel cleanly.
 func (s *EventService) replayLoop(ctx context.Context, sessionDir string, fromSeq int64, out chan<- SeqEvent) {
 	defer close(out)
 	path := filepath.Join(sessionDir, "events.ndjson")
@@ -476,19 +598,13 @@ func (s *EventService) replayLoop(ctx context.Context, sessionDir string, fromSe
 }
 
 // replayEnvelope is the on-disk wire shape of one persisted event.
-// Seq is the monotonic counter assigned by the live fan-out; Event
-// is the same map shape loop.MarshalJSONEvent emits so the JSON
-// payload round-trips through the existing serializer.
 type replayEnvelope struct {
 	Seq   int64           `json:"seq"`
 	Event json.RawMessage `json:"event"`
 }
 
-// writeEventLine serializes one SeqEvent as the canonical NDJSON
-// envelope: {"seq": N, "event": <loop.MarshalJSONEvent body>}\n. The
-// envelope shape mirrors replayEnvelope so the decoder round-trips
-// what the writer emits. Errors propagate to the fanout caller for
-// logging; a single write failure does not abort the run.
+// writeEventLine serializes one SeqEvent as the canonical NDJSON envelope:
+// {"seq": N, "event": <loop.MarshalJSONEvent body>}\n.
 func writeEventLine(w io.Writer, se SeqEvent) error {
 	body, err := loop.MarshalJSONEvent(se.Event)
 	if err != nil {
@@ -512,9 +628,8 @@ func writeEventLine(w io.Writer, se SeqEvent) error {
 	return nil
 }
 
-// decodeReplayLine parses one JSON line into a SeqEvent. Lines whose
-// event type is not yet handled by the V1 decoder are skipped so a
-// log written by a newer bcc binary does not abort the replay.
+// decodeReplayLine parses one JSON line into a SeqEvent. Lines whose event
+// type is not yet handled by the V1 decoder are skipped.
 func decodeReplayLine(line []byte) (SeqEvent, bool) {
 	var env replayEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
@@ -531,11 +646,9 @@ func decodeReplayLine(line []byte) (SeqEvent, bool) {
 	return SeqEvent{Seq: env.Seq, Event: ev}, true
 }
 
-// decodeEvent reverses loop.MarshalJSONEvent for the subset of types
-// the V1 service replays. Unknown types return false so the replay
-// loop can skip them. This keeps the decoder additive: new event
-// types added to internal/loop need an entry here before they ride
-// through Replay; until then they are skipped without crashing.
+// decodeEvent reverses loop.MarshalJSONEvent for the subset of types the
+// V1 service replays. Unknown types return false so the replay loop can
+// skip them.
 func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 	var head struct {
 		Type string `json:"type"`
@@ -699,8 +812,8 @@ func decodeEvent(raw json.RawMessage) (loop.Event, bool) {
 // decodeAgentEvent inverts the loop.MarshalJSONEvent shape for an
 // AgentEventReceived envelope so Replay can rehydrate a recorded
 // agent_event line back into the typed value the SSE handler expects.
-// Mirrors agentEventJSON in internal/loop/eventjson.go; keep the two in
-// sync when adding new AgentEvent kinds.
+// Mirrors agentEventJSON in internal/loop/eventjson.go; keep in sync
+// when adding new AgentEvent kinds.
 func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEvent, bool) {
 	var body struct {
 		Kind        string `json:"kind"`

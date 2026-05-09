@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/services/events"
 )
 
 // SSEWriter renders the canonical event-stream framing onto an
@@ -70,12 +70,12 @@ func (s *SSEWriter) WriteEvent(seq int64, kind string, data []byte) error {
 	return nil
 }
 
-// WriteSeqEvent renders one services.SeqEvent through the canonical
+// WriteSeqEvent renders one events.SeqEvent through the canonical
 // framing, sourcing both the JSON body and the kind from the
-// service-side helper. Errors at the marshal stage propagate to the
+// events-package helper. Errors at the marshal stage propagate to the
 // caller, which usually closes the stream.
-func (s *SSEWriter) WriteSeqEvent(se services.SeqEvent) error {
-	data, kind, err := services.MarshalEvent(se)
+func (s *SSEWriter) WriteSeqEvent(se events.SeqEvent) error {
+	data, kind, err := events.MarshalEvent(se)
 	if err != nil {
 		return fmt.Errorf("api/sse: marshal event: %w", err)
 	}

@@ -1,4 +1,4 @@
-package services
+package events
 
 import (
 	"context"
@@ -15,10 +15,26 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
+// writeManifest writes an archived session manifest under
+// baseDir/sessions/<id>/manifest.json. Mirrors what session.CreateSession
+// + session.Touch would produce in production.
+func writeManifest(t *testing.T, baseDir string, sess session.Session) {
+	t.Helper()
+	dir := filepath.Join(baseDir, "sessions", sess.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), body, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
+
 // liveDeps builds a Deps wired with a freshly created live session,
-// the loop events channel, and the sessions base dir. The test owns
-// the loop events channel and sends events into it so the fan-out
-// drains predictably.
+// the loop events channel, and the sessions base dir.
 func liveDeps(t *testing.T, sessionID string) (Deps, chan loop.Event) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -49,7 +65,7 @@ func liveDeps(t *testing.T, sessionID string) (Deps, chan loop.Event) {
 func TestEventService_Subscribe_LiveOrderingAndSeq(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc101")
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -87,13 +103,11 @@ func TestEventService_Subscribe_LiveOrderingAndSeq(t *testing.T) {
 // active-task attribution: when a TaskStarted event opens a task for
 // AgentID X, every AgentEventReceived bearing AgentID X that follows
 // (until TaskCompleted/Approved/NeedsFix) inherits the task id on its
-// embedded AgentEvent. Concurrent agents work because the index is
-// keyed by AgentID. The task id is only inherited when the adapter
-// left it empty; explicit values from upstream are preserved.
+// embedded AgentEvent.
 func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "e1234500aaaa")
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -102,7 +116,6 @@ func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
-	// Two concurrent agents each working on different tasks.
 	ch <- loop.TaskStarted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
 	ch <- loop.TaskStarted{AgentID: "exec-B", PhaseID: "P2", TaskID: "T2.1"}
 	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
@@ -115,12 +128,10 @@ func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
 		AgentID: "exec-B",
 		Role:    agentcontract.RoleExecutor,
 	}}
-	// AgentEvent without AgentID stays empty.
 	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
 		Kind: agentcontract.KindThinking,
 	}}
 	ch <- loop.TaskCompleted{AgentID: "exec-A", PhaseID: "P1", TaskID: "T1.1"}
-	// After TaskCompleted, exec-A's task is cleared.
 	ch <- loop.AgentEventReceived{Event: agentcontract.AgentEvent{
 		Kind:    agentcontract.KindToolUse,
 		AgentID: "exec-A",
@@ -135,29 +146,24 @@ func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
 		t.Fatalf("got %d events, want 7", len(got))
 	}
 
-	// got[2]: AgentEventReceived for exec-A with TaskID "T1.1".
 	if are, ok := got[2].Event.(loop.AgentEventReceived); !ok {
 		t.Fatalf("got[2] type = %T", got[2].Event)
 	} else if are.Event.TaskID != "T1.1" {
 		t.Fatalf("got[2].TaskID = %q, want %q", are.Event.TaskID, "T1.1")
 	}
 
-	// got[3]: AgentEventReceived for exec-B with TaskID "T2.1".
 	if are, ok := got[3].Event.(loop.AgentEventReceived); !ok {
 		t.Fatalf("got[3] type = %T", got[3].Event)
 	} else if are.Event.TaskID != "T2.1" {
 		t.Fatalf("got[3].TaskID = %q, want %q", are.Event.TaskID, "T2.1")
 	}
 
-	// got[4]: AgentEventReceived without AgentID stays unattributed.
 	if are, ok := got[4].Event.(loop.AgentEventReceived); !ok {
 		t.Fatalf("got[4] type = %T", got[4].Event)
 	} else if are.Event.TaskID != "" {
 		t.Fatalf("got[4].TaskID = %q, want empty", are.Event.TaskID)
 	}
 
-	// got[6]: AgentEventReceived for exec-A after TaskCompleted; index
-	// was cleared, so no attribution.
 	if are, ok := got[6].Event.(loop.AgentEventReceived); !ok {
 		t.Fatalf("got[6] type = %T", got[6].Event)
 	} else if are.Event.TaskID != "" {
@@ -167,15 +173,13 @@ func TestEventService_Fanout_EnrichesAgentEventWithActiveTask(t *testing.T) {
 
 // TestEventService_Fanout_PersistsEventsLog verifies that when
 // EventsLogPath is set, fanout writes one envelope per SeqEvent so the
-// file round-trips through Replay. The persistence layer is the basis
-// for bcc dev's replay-driven UI development: each live run leaves a
-// fixture on disk that another bcc invocation can subscribe to.
+// file round-trips through Replay.
 func TestEventService_Fanout_PersistsEventsLog(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "e2222200aaaa")
 	logPath := filepath.Join(deps.SessionStore.SessionDir(), "events.ndjson")
 	deps.EventsLogPath = logPath
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -212,8 +216,6 @@ func TestEventService_Fanout_PersistsEventsLog(t *testing.T) {
 		t.Fatalf("events.ndjson has %d lines, want 4: %s", lines, string(data))
 	}
 
-	// Round-trip: Replay must read back the persisted events with the
-	// same Seq order and types.
 	replayCtx, replayCancel := context.WithCancel(context.Background())
 	defer replayCancel()
 	replay, err := svc.Replay(replayCtx, "e2222200aaaa", 0)
@@ -233,18 +235,17 @@ func TestEventService_Fanout_PersistsEventsLog(t *testing.T) {
 	if are, ok := got[2].Event.(loop.AgentEventReceived); !ok {
 		t.Fatalf("got[2] type = %T", got[2].Event)
 	} else if are.Event.TaskID != "T1.1" {
-		t.Fatalf("got[2] task_id = %q, want T1.1 (set by enrichment, persisted post-enrichment)", are.Event.TaskID)
+		t.Fatalf("got[2] task_id = %q, want T1.1", are.Event.TaskID)
 	}
 }
 
 // TestEventService_Subscribe_LiveAlias covers the SPA's bootstrap path:
 // the dashboard opens an EventSource at /api/v1/sessions/live/events
-// before it has a real session id. Subscribe must accept the alias and
-// route it to the bound live session's fan-out.
+// before it has a real session id.
 func TestEventService_Subscribe_LiveAlias(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc104")
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -277,7 +278,7 @@ func TestEventService_Subscribe_LiveAlias(t *testing.T) {
 func TestEventService_Subscribe_LoopFinishedClosesSubscriber(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc102")
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -313,11 +314,9 @@ func TestEventService_Subscribe_LoopFinishedClosesSubscriber(t *testing.T) {
 func TestEventService_Subscribe_RingOverflowReturnsSeqGone(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc103")
-	svc := newEventService(deps)
+	svc := New(deps)
 	svc.ensureFanout()
 
-	// Fill the ring beyond capacity. Use a synchronous emitter so we
-	// know fan-out has consumed every event before we Subscribe.
 	const overflow = ringSize + 50
 	done := make(chan struct{})
 	go func() {
@@ -327,9 +326,6 @@ func TestEventService_Subscribe_RingOverflowReturnsSeqGone(t *testing.T) {
 		close(done)
 	}()
 	<-done
-	// Drain: wait until ring is at capacity AND nextSeq advanced past
-	// overflow. This is best-effort; the fan-out runs on its own
-	// goroutine.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		svc.mu.Lock()
@@ -357,7 +353,7 @@ func TestEventService_Subscribe_RingOverflowReturnsSeqGone(t *testing.T) {
 func TestEventService_Subscribe_CtxCancelClosesSubscriber(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc104")
-	svc := newEventService(deps)
+	svc := New(deps)
 	defer close(ch)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -383,7 +379,7 @@ func TestEventService_Subscribe_CtxCancelClosesSubscriber(t *testing.T) {
 func TestEventService_Subscribe_MultipleSubscribersSeeIdenticalSeqs(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc105")
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -430,12 +426,9 @@ func TestEventService_Subscribe_MultipleSubscribersSeeIdenticalSeqs(t *testing.T
 func TestEventService_Subscribe_BufferedReplayThenLive(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc106")
-	svc := newEventService(deps)
+	svc := New(deps)
 	svc.ensureFanout()
 
-	// Push a few events first, then Subscribe(fromSeq=2). The
-	// subscriber should see seq 2 and 3 from the ring, then seq 4
-	// live.
 	ch <- loop.IterationStarted{Index: 1}
 	ch <- loop.IterationStarted{Index: 2}
 	ch <- loop.IterationStarted{Index: 3}
@@ -486,7 +479,7 @@ func TestEventService_Subscribe_UnknownSession(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc107")
 	defer close(ch)
-	svc := newEventService(deps)
+	svc := New(deps)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err := svc.Subscribe(ctx, "doesntmatch01", 0)
@@ -519,7 +512,7 @@ func TestEventService_Replay_OrderedThenCloses(t *testing.T) {
 		{Seq: 3, Event: encodeEventJSON(t, "loop_finished", map[string]any{"reason": "done", "exit_code": 0})},
 	})
 
-	svc := newEventService(Deps{SessionsBaseDir: baseDir})
+	svc := New(Deps{SessionsBaseDir: baseDir})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out, err := svc.Replay(ctx, sess.ID, 1)
@@ -559,7 +552,7 @@ func TestEventService_Replay_FromSeqSkipsLowerSeqs(t *testing.T) {
 		{Seq: 3, Event: encodeEventJSON(t, "iter_started", map[string]any{"index": 3, "max_iter": 5})},
 	})
 
-	svc := newEventService(Deps{SessionsBaseDir: baseDir})
+	svc := New(Deps{SessionsBaseDir: baseDir})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out, err := svc.Replay(ctx, sess.ID, 2)
@@ -590,7 +583,7 @@ func TestEventService_Replay_MissingFileClosesCleanly(t *testing.T) {
 	}
 	writeManifest(t, baseDir, sess)
 
-	svc := newEventService(Deps{SessionsBaseDir: baseDir})
+	svc := New(Deps{SessionsBaseDir: baseDir})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	out, err := svc.Replay(ctx, sess.ID, 0)
@@ -605,7 +598,7 @@ func TestEventService_Replay_MissingFileClosesCleanly(t *testing.T) {
 func TestEventService_Replay_UnknownSession(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
-	svc := newEventService(Deps{SessionsBaseDir: filepath.Join(tmp, ".bcc")})
+	svc := New(Deps{SessionsBaseDir: filepath.Join(tmp, ".bcc")})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err := svc.Replay(ctx, "000000000000", 0)

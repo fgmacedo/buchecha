@@ -3,6 +3,8 @@ package services
 import (
 	"encoding/json"
 	"errors"
+
+	evts "github.com/fgmacedo/buchecha/internal/services/events"
 )
 
 // ErrorCode is the closed enum every protocol adapter maps to its own
@@ -59,18 +61,35 @@ func (e *Error) Error() string {
 	return string(e.Code) + ": " + e.Message
 }
 
+// CodeString returns the string representation of the error code.
+// It satisfies the cross-package coder interface used by events.Error.Is()
+// so that errors.Is(eventsErr, services.ErrSeqGone) returns true when
+// both sides carry the same code string, without either package importing
+// the other's error type.
+func (e *Error) CodeString() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Code)
+}
+
 // Is reports whether target carries the same code as e. errors.Is
 // walks the wrap chain via Unwrap, so a wrapped *Error compares equal
-// to a sentinel with matching code.
+// to a sentinel with matching code. It also matches against types that
+// expose a CodeString() method (e.g. *events.Error) so that cross-package
+// errors.Is comparisons remain code-based without importing a shared type.
 func (e *Error) Is(target error) bool {
 	if e == nil {
 		return target == nil
 	}
-	t, ok := target.(*Error)
-	if !ok {
-		return false
+	if t, ok := target.(*Error); ok {
+		return e.Code == t.Code
 	}
-	return e.Code == t.Code
+	type coder interface{ CodeString() string }
+	if c, ok := target.(coder); ok {
+		return string(e.Code) == c.CodeString()
+	}
+	return false
 }
 
 // MarshalJSON serializes the error with stable field ordering so the
@@ -150,10 +169,23 @@ var (
 // AsServiceError extracts the *Error from err's wrap chain. Returns
 // nil and false when no *Error is present. Adapters use it to render
 // the wire envelope without case-matching every sentinel.
+//
+// It also translates *events.Error values from the events subpackage so
+// that API handlers calling WriteError always receive a *services.Error
+// with the correct HTTP status code, regardless of which layer produced
+// the error.
 func AsServiceError(err error) (*Error, bool) {
 	var svc *Error
 	if errors.As(err, &svc) {
 		return svc, true
+	}
+	var evtErr *evts.Error
+	if errors.As(err, &evtErr) {
+		return &Error{
+			Code:    ErrorCode(evtErr.Code),
+			Message: evtErr.Message,
+			Details: evtErr.Details,
+		}, true
 	}
 	return nil, false
 }

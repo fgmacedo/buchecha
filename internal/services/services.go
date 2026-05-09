@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/services/events"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
@@ -89,7 +90,7 @@ type Deps struct {
 // itself does not own behavior.
 type Services struct {
 	Sessions  *SessionService
-	Events    *EventService
+	Events    *events.EventService
 	Briefings *BriefingService
 	Prompts   *PromptService
 	Audit     *Audit
@@ -103,8 +104,15 @@ type Services struct {
 // missing.
 func New(deps Deps) *Services {
 	return &Services{
-		Sessions:  newSessionService(deps),
-		Events:    newEventService(deps),
+		Sessions: newSessionService(deps),
+		Events: events.New(events.Deps{
+			LoopEvents:            deps.LoopEvents,
+			SessionStore:          deps.SessionStore,
+			SessionsBaseDir:       deps.SessionsBaseDir,
+			EventsLogPath:         deps.EventsLogPath,
+			LiveAliasArchivedID:   deps.LiveAliasArchivedID,
+			ReplayInterEventDelay: deps.ReplayInterEventDelay,
+		}),
 		Briefings: newBriefingService(deps),
 		Prompts:   newPromptService(deps),
 		Audit:     newAudit(deps),

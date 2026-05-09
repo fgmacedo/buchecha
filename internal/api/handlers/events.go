@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/fgmacedo/buchecha/internal/services"
+	"github.com/fgmacedo/buchecha/internal/services/events"
 )
 
 // defaultHeartbeatInterval is the cadence at which the SSE handler
@@ -28,7 +29,7 @@ const reconnectMS = 5000
 type SSEEmitter interface {
 	WriteRetry(ms int) error
 	WriteEvent(seq int64, kind string, data []byte) error
-	WriteSeqEvent(se services.SeqEvent) error
+	WriteSeqEvent(se events.SeqEvent) error
 	WriteHeartbeat() error
 }
 
@@ -85,7 +86,7 @@ func eventsHandler(svc *services.Services, deps Deps) http.HandlerFunc {
 // firing heartbeat comments on the configured interval. It returns
 // when ctx is cancelled, when the source channel closes, or when a
 // LoopFinished envelope flushes the response.
-func streamLoop(ctx context.Context, emitter SSEEmitter, stream <-chan services.SeqEvent, replay bool, heartbeat time.Duration) {
+func streamLoop(ctx context.Context, emitter SSEEmitter, stream <-chan events.SeqEvent, replay bool, heartbeat time.Duration) {
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
 	for {
@@ -103,7 +104,7 @@ func streamLoop(ctx context.Context, emitter SSEEmitter, stream <-chan services.
 			if err := emitter.WriteSeqEvent(se); err != nil {
 				return
 			}
-			if !replay && services.IsFinalEvent(se) {
+			if !replay && events.IsFinalEvent(se) {
 				return
 			}
 		}
@@ -118,7 +119,7 @@ func streamLoop(ctx context.Context, emitter SSEEmitter, stream <-chan services.
 // Returns the event channel, a flag that is true for replay (so the
 // streamer skips the LoopFinished short-circuit), and any error
 // from the underlying service that should surface to the client.
-func pickEventSource(ctx context.Context, svc *services.Services, id string, fromSeq int64) (<-chan services.SeqEvent, bool, error) {
+func pickEventSource(ctx context.Context, svc *services.Services, id string, fromSeq int64) (<-chan events.SeqEvent, bool, error) {
 	stream, err := svc.Events.Subscribe(ctx, id, fromSeq)
 	if err == nil {
 		return stream, false, nil
