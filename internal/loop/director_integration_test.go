@@ -17,6 +17,8 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/supervision/fake"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
+	"github.com/fgmacedo/buchecha/internal/supervision/stats"
 )
 
 // directorTestPlan returns a small but representative two-phase Plan
@@ -260,9 +262,9 @@ func directorTestSpec(t *testing.T, dir string) string {
 	return specPath
 }
 
-func directorTestStore(t *testing.T, tmp, specPath string) *supervision.Store {
+func directorTestStore(t *testing.T, tmp, specPath string) *session.Store {
 	t.Helper()
-	store, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	store, _, err := session.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "deadbeef", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -492,8 +494,8 @@ func TestDirectorIntegration_SessionLifecycle_RunningAtStart(t *testing.T) {
 	tmp := t.TempDir()
 	specPath := directorTestSpec(t, tmp)
 	store := directorTestStore(t, tmp, specPath)
-	if got := store.Session().Status; got != supervision.SessionRunning {
-		t.Errorf("freshly created session status = %q, want %q", got, supervision.SessionRunning)
+	if got := store.Session().Status; got != session.SessionRunning {
+		t.Errorf("freshly created session status = %q, want %q", got, session.SessionRunning)
 	}
 }
 
@@ -515,13 +517,13 @@ func TestDirectorIntegration_SessionLifecycle_EscalationMarksPending(t *testing.
 	runsCounter := &directorFakeRuns{}
 
 	gate := make(chan loop.EscalationReply, 1)
-	observed := make(chan supervision.SessionStatus, 1)
+	observed := make(chan session.SessionStatus, 1)
 	probeDone := make(chan struct{})
 	go func() {
 		defer close(probeDone)
 		for {
-			reopened, err := supervision.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
-			if err == nil && reopened.Session().Status == supervision.SessionEscalatedPending {
+			reopened, err := session.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+			if err == nil && reopened.Session().Status == session.SessionEscalatedPending {
 				observed <- reopened.Session().Status
 				gate <- loop.EscalationReply{Kind: loop.EscalationAbort}
 				return
@@ -556,8 +558,8 @@ func TestDirectorIntegration_SessionLifecycle_EscalationMarksPending(t *testing.
 	}
 	select {
 	case got := <-observed:
-		if got != supervision.SessionEscalatedPending {
-			t.Fatalf("observed status = %q, want %q", got, supervision.SessionEscalatedPending)
+		if got != session.SessionEscalatedPending {
+			t.Fatalf("observed status = %q, want %q", got, session.SessionEscalatedPending)
 		}
 	default:
 		t.Fatal("session status was never observed as escalated_pending")
@@ -1008,7 +1010,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 
 	h := directorTestHandler(plan)
 	statsPath := filepath.Join(t.TempDir(), "stats.jsonl")
-	statsLog := supervision.NewStatsLog(statsPath)
+	statsLog := stats.NewStatsLog(statsPath)
 
 	statsBriefer := &fake.Briefer{
 		BriefFn: func(ctx context.Context, in supervision.BrieferInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
@@ -1092,7 +1094,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		var e supervision.StatsEntry
+		var e stats.StatsEntry
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			t.Fatalf("unmarshal stats line %q: %v", line, err)
 		}

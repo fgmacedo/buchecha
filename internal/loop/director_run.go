@@ -16,6 +16,8 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/supervision/menu"
 	"github.com/fgmacedo/buchecha/internal/supervision/render"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
+	"github.com/fgmacedo/buchecha/internal/supervision/stats"
 )
 
 // runDirector drives the DAG-driven Director state machine:
@@ -59,9 +61,9 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		if d.Store == nil || d.Store.Session() == nil {
 			return
 		}
-		status := supervision.SessionAborted
+		status := session.SessionAborted
 		if code == ExitDone {
-			status = supervision.SessionDone
+			status = session.SessionDone
 		}
 		_ = d.Store.Touch(status, time.Now())
 	}()
@@ -145,7 +147,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			})
 			registry.Deregister(brieferID)
 			if brieferStats != nil {
-				if err := d.Stats.Append(supervision.StatsEntry{
+				if err := d.Stats.Append(stats.StatsEntry{
 					At:           time.Now(),
 					Role:         string(dag.RoleBriefer),
 					PhaseID:      phaseID,
@@ -289,7 +291,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				return l.terminate(events, "fatal", ExitInvalid), execErr
 			}
 			if execStats != nil {
-				if err := d.Stats.Append(supervision.StatsEntry{
+				if err := d.Stats.Append(stats.StatsEntry{
 					At:           time.Now(),
 					Role:         string(dag.RoleExecutor),
 					PhaseID:      phaseID,
@@ -362,7 +364,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 						fmt.Errorf("director: review phase %s attempt %d: %w", phaseID, attempt, rerr)
 				}
 				if reviewerStats != nil {
-					if err := d.Stats.Append(supervision.StatsEntry{
+					if err := d.Stats.Append(stats.StatsEntry{
 						At:           time.Now(),
 						Role:         string(dag.RoleReviewer),
 						PhaseID:      phaseID,
@@ -409,7 +411,7 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				continue
 			case DirectorEscalate:
 				if d.Store != nil && d.Store.Session() != nil {
-					_ = d.Store.Touch(supervision.SessionEscalatedPending, time.Now())
+					_ = d.Store.Touch(session.SessionEscalatedPending, time.Now())
 				}
 				emit(events, DirectorEscalation{
 					PhaseID: phaseID, Attempt: attempt,
@@ -422,14 +424,14 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				switch reply.Kind {
 				case EscalationResume:
 					if d.Store != nil && d.Store.Session() != nil {
-						_ = d.Store.Touch(supervision.SessionRunning, time.Now())
+						_ = d.Store.Touch(session.SessionRunning, time.Now())
 					}
 					priorFeedback = reasoning
 					pendingHint = reply.Hint
 					iterationDone = true
 				case EscalationForceApprove:
 					if d.Store != nil && d.Store.Session() != nil {
-						_ = d.Store.Touch(supervision.SessionRunning, time.Now())
+						_ = d.Store.Touch(session.SessionRunning, time.Now())
 					}
 					if err := d.Handler.ForceApprovePending(briefing.IterationID, reply.Hint); err != nil {
 						return l.terminate(events, "fatal", ExitInvalid),

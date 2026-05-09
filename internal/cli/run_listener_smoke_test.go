@@ -18,8 +18,8 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/mcp"
 	"github.com/fgmacedo/buchecha/internal/services"
-	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // TestRunListener_E2ESmoke boots the run-wide HTTP surface end to end:
@@ -38,13 +38,13 @@ func TestRunListener_E2ESmoke(t *testing.T) {
 	// Seed a single archived session so /api/v1/sessions has a row to
 	// return. The smoke test does not exercise the live DAG view; the
 	// archived path is enough to validate the schema + auth wiring.
-	archived := supervision.Session{
+	archived := session.Session{
 		ID:        "smoke0001smoke",
 		SpecPath:  filepath.Join(tmp, "spec.md"),
 		SpecHash:  "h",
 		CreatedAt: now.Add(-time.Hour),
 		UpdatedAt: now,
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeSmokeManifest(t, baseDir, archived)
 
@@ -166,7 +166,7 @@ func TestRunListener_E2ESmoke(t *testing.T) {
 // directory so SessionService.List can enumerate it. Mirrors the
 // helper in internal/api/integration_test.go without taking a
 // dependency on test code from another package.
-func writeSmokeManifest(t *testing.T, baseDir string, sess supervision.Session) {
+func writeSmokeManifest(t *testing.T, baseDir string, sess session.Session) {
 	t.Helper()
 	dir := filepath.Join(baseDir, "sessions", sess.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/services"
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // trivialPlan returns a one-phase one-task plan, the smallest valid
@@ -44,26 +45,26 @@ func trivialPlan() *supervision.Plan {
 // httptest server backed by services.New + api.New. The live session
 // has a non-nil DAG handler; the archived one persists its dag.json
 // under <sessionDir>/dag.json.
-func snapshotServer(t *testing.T) (srv *httptest.Server, archived, live supervision.Session) {
+func snapshotServer(t *testing.T) (srv *httptest.Server, archived, live session.Session) {
 	t.Helper()
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	archived = supervision.Session{
+	archived = session.Session{
 		ID:        "abcdef0001ab",
 		SpecPath:  "/spec/a.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-2 * time.Hour),
 		UpdatedAt: now.Add(-1 * time.Hour),
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
-	live = supervision.Session{
+	live = session.Session{
 		ID:        "abcdef0002ab",
 		SpecPath:  "/spec/b.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-30 * time.Minute),
 		UpdatedAt: now.Add(-20 * time.Minute),
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, archived)
 	writeManifest(t, baseDir, live)
@@ -78,7 +79,7 @@ func snapshotServer(t *testing.T) (srv *httptest.Server, archived, live supervis
 		t.Fatalf("SaveStateFile: %v", err)
 	}
 
-	store, err := supervision.OpenSession(baseDir, live.ID)
+	store, err := session.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}

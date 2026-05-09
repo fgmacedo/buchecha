@@ -1,4 +1,4 @@
-package supervision
+package stats
 
 import (
 	"encoding/json"

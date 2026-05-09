@@ -20,6 +20,8 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
+	"github.com/fgmacedo/buchecha/internal/supervision/stats"
 )
 
 // Executor runs the configured agent against a prompt and emits a stream
@@ -117,7 +119,7 @@ type DirectorPorts struct {
 
 	// Store persists per-session artifacts under .bcc/sessions/<id>/.
 	// Required.
-	Store *supervision.Store
+	Store *session.Store
 
 	// NewExecutor builds a fresh Executor for one (phase, attempt). The
 	// factory registers the Executor against the run-wide registry so it
@@ -147,5 +149,5 @@ type DirectorPorts struct {
 	// (Briefer, Executor, Reviewer; the Planner is recorded by the
 	// caller before constructing the loop). nil disables persistence;
 	// the loop continues normally.
-	Stats *supervision.StatsLog
+	Stats *stats.StatsLog
 }

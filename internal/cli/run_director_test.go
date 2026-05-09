@@ -20,6 +20,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/supervision/fake"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // scriptedPlan returns a Plan with two phases that pass ValidatePlan,
@@ -86,13 +87,13 @@ func writeTestSpec(t *testing.T, dir string) string {
 // tmp/.bcc/sessions/<id>/ for the supplied spec path. Tests use it
 // instead of poking at directory paths so the production session
 // lifecycle is what is exercised.
-func mkSessionStore(t *testing.T, tmp, specPath string) *supervision.Store {
+func mkSessionStore(t *testing.T, tmp, specPath string) *session.Store {
 	t.Helper()
 	hash := "deadbeef"
 	if data, err := os.ReadFile(specPath); err == nil {
 		hash = supervision.SpecHash(data)
 	}
-	store, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, hash, time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	store, _, err := session.CreateSession(filepath.Join(tmp, ".bcc"), specPath, hash, time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -410,12 +411,12 @@ func TestRunDirectorWith_HappyPath_TwoPhasesApprove(t *testing.T) {
 	}
 
 	// Session lifecycle: a clean run lands in status=done.
-	reopened, err := supervision.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+	reopened, err := session.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
 	if err != nil {
 		t.Fatalf("OpenSession after run: %v", err)
 	}
-	if reopened.Session().Status != supervision.SessionDone {
-		t.Errorf("session status = %q, want %q", reopened.Session().Status, supervision.SessionDone)
+	if reopened.Session().Status != session.SessionDone {
+		t.Errorf("session status = %q, want %q", reopened.Session().Status, session.SessionDone)
 	}
 }
 
@@ -527,12 +528,12 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(store.SessionDir(), "plan.json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Errorf("plan persisted despite skip: %v", statErr)
 	}
-	reopened, err := supervision.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
+	reopened, err := session.OpenSession(filepath.Join(tmp, ".bcc"), store.Session().ID)
 	if err != nil {
 		t.Fatalf("OpenSession after skip: %v", err)
 	}
-	if reopened.Session().Status != supervision.SessionDone {
-		t.Errorf("Session status = %q, want %q", reopened.Session().Status, supervision.SessionDone)
+	if reopened.Session().Status != session.SessionDone {
+		t.Errorf("Session status = %q, want %q", reopened.Session().Status, session.SessionDone)
 	}
 }
 
@@ -1010,7 +1011,7 @@ func TestRunDirectorWith_AutoResolvesSession_OnFreshRun(t *testing.T) {
 		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
 	}
 
-	sessions, err := supervision.ListSessions(filepath.Join(tmp, ".bcc"))
+	sessions, err := session.ListSessions(filepath.Join(tmp, ".bcc"))
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -1020,8 +1021,8 @@ func TestRunDirectorWith_AutoResolvesSession_OnFreshRun(t *testing.T) {
 	if sessions[0].SpecPath != specPath {
 		t.Errorf("session.SpecPath = %q, want %q", sessions[0].SpecPath, specPath)
 	}
-	if sessions[0].Status != supervision.SessionDone {
-		t.Errorf("session.Status = %q, want %q", sessions[0].Status, supervision.SessionDone)
+	if sessions[0].Status != session.SessionDone {
+		t.Errorf("session.Status = %q, want %q", sessions[0].Status, session.SessionDone)
 	}
 }
 
@@ -1078,7 +1079,7 @@ func TestRunDirectorWith_SessionFlag_OpensSpecificSession(t *testing.T) {
 		t.Errorf("ExitCode = %d, want ExitDone", ExitCode)
 	}
 
-	sessions, err := supervision.ListSessions(filepath.Join(tmp, ".bcc"))
+	sessions, err := session.ListSessions(filepath.Join(tmp, ".bcc"))
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -1129,7 +1130,7 @@ func TestRunDirectorWith_SessionFlag_RejectsUnknownID(t *testing.T) {
 	defer cancel()
 
 	err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if !errors.Is(err, supervision.ErrSessionNotFound) {
+	if !errors.Is(err, session.ErrSessionNotFound) {
 		t.Fatalf("err = %v, want ErrSessionNotFound", err)
 	}
 	if ExitCode != loop.ExitInvalid {
@@ -1176,7 +1177,7 @@ func TestRunDirectorWith_SessionFlag_RejectsSpecMismatch(t *testing.T) {
 	defer cancel()
 
 	err := runDirectorWith(ctx, cancel, otherSpec, cfg, deps, dio)
-	if !errors.Is(err, supervision.ErrSessionSpecMismatch) {
+	if !errors.Is(err, session.ErrSessionSpecMismatch) {
 		t.Fatalf("err = %v, want ErrSessionSpecMismatch", err)
 	}
 	if ExitCode != loop.ExitInvalid {
@@ -1193,11 +1194,11 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 
 	tmp := t.TempDir()
 	specPath := writeTestSpec(t, tmp)
-	a, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h1", time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC))
+	a, _, err := session.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h1", time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := supervision.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h2", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	b, _, err := session.CreateSession(filepath.Join(tmp, ".bcc"), specPath, "h2", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1226,7 +1227,7 @@ func TestRunDirectorWith_ResumeAmbiguous_ListsCandidates(t *testing.T) {
 	defer cancel()
 
 	err = runDirectorWith(ctx, cancel, specPath, cfg, deps, dio)
-	if !errors.Is(err, supervision.ErrSessionAmbiguous) {
+	if !errors.Is(err, session.ErrSessionAmbiguous) {
 		t.Fatalf("err = %v, want ErrSessionAmbiguous", err)
 	}
 	if !strings.Contains(err.Error(), a.Session().ID) || !strings.Contains(err.Error(), b.Session().ID) {

@@ -1,8 +1,6 @@
 package supervision
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
@@ -83,43 +81,5 @@ func TestValidSpawnID_Boundaries(t *testing.T) {
 		if got := ValidSpawnID(tc.id); got != tc.want {
 			t.Errorf("ValidSpawnID(%q) = %v, want %v", tc.id, got, tc.want)
 		}
-	}
-}
-
-func TestStore_SpawnsDir_ReturnsCorrectPath(t *testing.T) {
-	s, _, _ := newTestStore(t)
-	want := filepath.Join(s.SessionDir(), "spawns")
-	if got := s.SpawnsDir(); got != want {
-		t.Errorf("SpawnsDir() = %q, want %q", got, want)
-	}
-}
-
-func TestStore_SpawnsDir_DoesNotCreateDirectory(t *testing.T) {
-	s, _, _ := newTestStore(t)
-	dir := s.SpawnsDir()
-	if _, err := os.Stat(dir); err == nil {
-		t.Errorf("SpawnsDir() must not create the directory; it exists at %q", dir)
-	}
-}
-
-func TestStore_SpawnsDir_WriterCreatesParentWithMkdirAll(t *testing.T) {
-	s, _, _ := newTestStore(t)
-	dir := s.SpawnsDir()
-
-	// Simulate the first writer using MkdirAll before writing.
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-	spawnFile := filepath.Join(dir, "spawn.md")
-	const content = "# prompt body"
-	if err := os.WriteFile(spawnFile, []byte(content), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	got, err := os.ReadFile(spawnFile)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if string(got) != content {
-		t.Errorf("content = %q, want %q", string(got), content)
 	}
 }

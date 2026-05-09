@@ -10,6 +10,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // SessionMeta is the per-session metadata every adapter renders into
@@ -85,7 +86,7 @@ func (s *SessionService) List(ctx context.Context) ([]SessionMeta, error) {
 	if s.deps.SessionsBaseDir == "" {
 		return nil, ErrInternal.WithMessage("session service: no sessions base dir configured")
 	}
-	stored, err := supervision.ListSessions(s.deps.SessionsBaseDir)
+	stored, err := session.ListSessions(s.deps.SessionsBaseDir)
 	if err != nil {
 		return nil, fmt.Errorf("services: list sessions: %w", err)
 	}
@@ -141,9 +142,9 @@ func (s *SessionService) Get(ctx context.Context, id string) (SessionMeta, error
 	if s.deps.SessionsBaseDir == "" {
 		return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
-	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, id)
+	store, err := session.OpenSession(s.deps.SessionsBaseDir, id)
 	if err != nil {
-		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 		}
 		return SessionMeta{}, fmt.Errorf("services: get session %q: %w", id, err)
@@ -180,9 +181,9 @@ func (s *SessionService) Snapshot(ctx context.Context, id string) (Snapshot, err
 	if s.deps.SessionsBaseDir == "" {
 		return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
-	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, id)
+	store, err := session.OpenSession(s.deps.SessionsBaseDir, id)
 	if err != nil {
-		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return Snapshot{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 		}
 		return Snapshot{}, fmt.Errorf("services: snapshot session %q: %w", id, err)
@@ -232,9 +233,9 @@ func (s *SessionService) Plan(ctx context.Context, id string) (*supervision.Plan
 	if s.deps.SessionsBaseDir == "" {
 		return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 	}
-	store, err := supervision.OpenSession(s.deps.SessionsBaseDir, id)
+	store, err := session.OpenSession(s.deps.SessionsBaseDir, id)
 	if err != nil {
-		if errors.Is(err, supervision.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, session.ErrSessionNotFound) || errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
 		}
 		return nil, fmt.Errorf("services: plan session %q: %w", id, err)
@@ -253,14 +254,14 @@ func resolvePlanReadError(plan *supervision.Plan, err error, id string) (*superv
 	return nil, fmt.Errorf("services: read plan %q: %w", id, err)
 }
 
-func (s *SessionService) liveSession() *supervision.Session {
+func (s *SessionService) liveSession() *session.Session {
 	if s.deps.SessionStore == nil {
 		return nil
 	}
 	return s.deps.SessionStore.Session()
 }
 
-func (s *SessionService) liveSnapshot(live supervision.Session) (Snapshot, error) {
+func (s *SessionService) liveSnapshot(live session.Session) (Snapshot, error) {
 	if s.deps.DAGHandler == nil {
 		return Snapshot{
 			Session: sessionMetaFrom(live),
@@ -293,12 +294,12 @@ func loadArchivedDAG(sessionDir string) (*dag.State, error) {
 	return state, nil
 }
 
-// sessionMetaFrom projects supervision.Session to SessionMeta, mapping
+// sessionMetaFrom projects session.Session to SessionMeta, mapping
 // the lifecycle status to the wire form (a plain string) and using
 // CreatedAt as StartedAt. FinishedAt is non-zero only when the
 // session reached a terminal status; otherwise the field is left
 // zero so consumers know the run is still in flight.
-func sessionMetaFrom(sess supervision.Session) SessionMeta {
+func sessionMetaFrom(sess session.Session) SessionMeta {
 	meta := SessionMeta{
 		ID:             sess.ID,
 		SpecPath:       sess.SpecPath,
@@ -307,7 +308,7 @@ func sessionMetaFrom(sess supervision.Session) SessionMeta {
 		IterationIndex: sess.IterationIndex,
 		MaxIter:        sess.MaxIter,
 	}
-	if sess.Status != supervision.SessionRunning && !sess.UpdatedAt.IsZero() {
+	if sess.Status != session.SessionRunning && !sess.UpdatedAt.IsZero() {
 		meta.FinishedAt = sess.UpdatedAt
 	}
 	return meta

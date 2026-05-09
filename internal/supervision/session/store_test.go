@@ -1,4 +1,4 @@
-package supervision
+package session
 
 import (
 	"errors"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // newTestStore returns a Store rooted at a fresh session under
@@ -22,6 +24,26 @@ func newTestStore(t *testing.T) (*Store, *Session, string) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	return store, sess, base
+}
+
+func samplePlan(t *testing.T) *supervision.Plan {
+	t.Helper()
+	return &supervision.Plan{
+		Goal: "build the thing",
+		Phases: []supervision.Phase{
+			{
+				ID:    "p1",
+				Title: "phase one",
+				Tasks: []supervision.Task{
+					{
+						ID:     "t1",
+						Title:  "task one",
+						Status: supervision.TaskPending,
+					},
+				},
+			},
+		},
+	}
 }
 
 func TestStore_RunLogPath(t *testing.T) {
@@ -116,7 +138,7 @@ func TestStore_ReadPlan_Corrupted(t *testing.T) {
 
 func TestStore_BriefingRoundTrip(t *testing.T) {
 	s, _, _ := newTestStore(t)
-	b := &Briefing{
+	b := &supervision.Briefing{
 		IterationID:   "abc123-1",
 		PhaseID:       "abc123",
 		SubDAGTaskIDs: []string{"t1", "t2"},
@@ -160,10 +182,10 @@ func TestStore_WriteBriefing_RejectsBadInput(t *testing.T) {
 	if err := s.WriteBriefing(nil); err == nil {
 		t.Fatal("expected error on nil briefing")
 	}
-	if err := s.WriteBriefing(&Briefing{IterationID: "p-1"}); err == nil {
+	if err := s.WriteBriefing(&supervision.Briefing{IterationID: "p-1"}); err == nil {
 		t.Fatal("expected error on empty phase_id")
 	}
-	if err := s.WriteBriefing(&Briefing{PhaseID: "x"}); err == nil {
+	if err := s.WriteBriefing(&supervision.Briefing{PhaseID: "x"}); err == nil {
 		t.Fatal("expected error on empty iteration_id")
 	}
 }
@@ -277,7 +299,7 @@ func TestStore_Touch_RejectsInvalidStatus(t *testing.T) {
 // briefing is written, even when nothing has been persisted yet.
 func TestStore_WriteBriefing_CreatesDirs(t *testing.T) {
 	s, _, _ := newTestStore(t)
-	b := &Briefing{IterationID: "x-1", PhaseID: "x", Instructions: "y"}
+	b := &supervision.Briefing{IterationID: "x-1", PhaseID: "x", Instructions: "y"}
 	if err := s.WriteBriefing(b); err != nil {
 		t.Fatalf("WriteBriefing: %v", err)
 	}
@@ -335,5 +357,43 @@ func TestStore_SetIteration_Idempotent(t *testing.T) {
 	}
 	if reopened.Session().IterationIndex != 5 || reopened.Session().MaxIter != 10 {
 		t.Fatalf("values mismatch after idempotent call")
+	}
+}
+
+func TestStore_SpawnsDir_ReturnsCorrectPath(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	want := filepath.Join(s.SessionDir(), "spawns")
+	if got := s.SpawnsDir(); got != want {
+		t.Errorf("SpawnsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestStore_SpawnsDir_DoesNotCreateDirectory(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	dir := s.SpawnsDir()
+	if _, err := os.Stat(dir); err == nil {
+		t.Errorf("SpawnsDir() must not create the directory; it exists at %q", dir)
+	}
+}
+
+func TestStore_SpawnsDir_WriterCreatesParentWithMkdirAll(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	dir := s.SpawnsDir()
+
+	// Simulate the first writer using MkdirAll before writing.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	spawnFile := filepath.Join(dir, "spawn.md")
+	const content = "# prompt body"
+	if err := os.WriteFile(spawnFile, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, err := os.ReadFile(spawnFile)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != content {
+		t.Errorf("content = %q, want %q", string(got), content)
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/api"
 	"github.com/fgmacedo/buchecha/internal/services"
-	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
 
@@ -79,7 +79,7 @@ func runDev(ctx context.Context, sessionID string) error {
 		}
 	}
 	baseDir := ".bcc"
-	store, err := supervision.OpenSession(baseDir, sessionID)
+	store, err := session.OpenSession(baseDir, sessionID)
 	if err != nil {
 		ExitCode = 1
 		return fmt.Errorf("dev: open session %q: %w", sessionID, err)

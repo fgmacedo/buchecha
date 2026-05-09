@@ -12,7 +12,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
-	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // liveDeps builds a Deps wired with a freshly created live session,
@@ -24,16 +24,16 @@ func liveDeps(t *testing.T, sessionID string) (Deps, chan loop.Event) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        sessionID,
 		SpecPath:  "/spec/x.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
-	store, err := supervision.OpenSession(baseDir, sess.ID)
+	store, err := session.OpenSession(baseDir, sess.ID)
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
@@ -500,13 +500,13 @@ func TestEventService_Replay_OrderedThenCloses(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcabcabc108",
 		SpecPath:  "/spec/r.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeManifest(t, baseDir, sess)
 	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)
@@ -540,13 +540,13 @@ func TestEventService_Replay_FromSeqSkipsLowerSeqs(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcabcabc109",
 		SpecPath:  "/spec/q.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeManifest(t, baseDir, sess)
 	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)
@@ -580,13 +580,13 @@ func TestEventService_Replay_MissingFileClosesCleanly(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcabcabc110",
 		SpecPath:  "/spec/n.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeManifest(t, baseDir, sess)
 

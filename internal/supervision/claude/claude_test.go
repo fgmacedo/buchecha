@@ -12,6 +12,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -459,12 +460,12 @@ func TestRingBuffer_FillsThenWrapsAcrossWrites(t *testing.T) {
 	}
 }
 
-// newTestStore creates a fresh supervision.Store in t.TempDir() for adapter
+// newTestStore creates a fresh session.Store in t.TempDir() for adapter
 // tests that need per-spawn prompt persistence.
-func newTestStore(t *testing.T) *supervision.Store {
+func newTestStore(t *testing.T) *session.Store {
 	t.Helper()
 	base := t.TempDir()
-	store, _, err := supervision.CreateSession(base, "/tmp/spec.md", "deadbeef",
+	store, _, err := session.CreateSession(base, "/tmp/spec.md", "deadbeef",
 		time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

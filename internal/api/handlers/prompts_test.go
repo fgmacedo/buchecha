@@ -12,7 +12,7 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/api"
 	"github.com/fgmacedo/buchecha/internal/services"
-	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // seedPrompt writes <sessionDir>/prompts/<role>.md with the supplied
@@ -29,18 +29,18 @@ func seedPrompt(t *testing.T, sessionDir, role, body string) {
 	}
 }
 
-func promptsServer(t *testing.T) (*httptest.Server, supervision.Session) {
+func promptsServer(t *testing.T) (*httptest.Server, session.Session) {
 	t.Helper()
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcdef022222",
 		SpecPath:  "/spec/q.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
 	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)
@@ -151,13 +151,13 @@ func TestPrompts_RoleFileMissingReturnsRoleNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcdef033333",
 		SpecPath:  "/spec/r.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
 	// No prompts seeded.
@@ -204,13 +204,13 @@ func TestSpawnPrompts_HappyPath(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcdef044444",
 		SpecPath:  "/spec/s.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
 	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)

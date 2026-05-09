@@ -39,6 +39,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/services"
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // integrationFixture aggregates the moving parts a full V1 sweep
@@ -50,8 +51,8 @@ import (
 // case starts from a clean temp dir.
 type integrationFixture struct {
 	srv      *httptest.Server
-	live     supervision.Session
-	archived supervision.Session
+	live     session.Session
+	archived session.Session
 	events   chan loop.Event
 	svc      *services.Services
 	schemas  map[string]*jsonschema.Schema
@@ -71,21 +72,21 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
 
-	archived := supervision.Session{
+	archived := session.Session{
 		ID:        "abcdef0010ab",
 		SpecPath:  "/spec/archived.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-2 * time.Hour),
 		UpdatedAt: now.Add(-1 * time.Hour),
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
-	live := supervision.Session{
+	live := session.Session{
 		ID:        "abcdef0011ab",
 		SpecPath:  "/spec/live.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-30 * time.Minute),
 		UpdatedAt: now.Add(-20 * time.Minute),
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, archived)
 	writeManifest(t, baseDir, live)
@@ -115,7 +116,7 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 
 	// Live session: open a real supervision.Store and bind a Handler so
 	// the live snapshot path returns a populated DAG.
-	store, err := supervision.OpenSession(baseDir, live.ID)
+	store, err := session.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}
@@ -236,7 +237,7 @@ func validateBytes(t *testing.T, fixt *integrationFixture, name string, body []b
 // writeManifest mirrors the helper in internal/api/handlers/sessions_test.go.
 // Copied verbatim so the integration suite stays inside its own
 // package without depending on test code in another module.
-func writeManifest(t *testing.T, baseDir string, sess supervision.Session) {
+func writeManifest(t *testing.T, baseDir string, sess session.Session) {
 	t.Helper()
 	dir := filepath.Join(baseDir, "sessions", sess.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

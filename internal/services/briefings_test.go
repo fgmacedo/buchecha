@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // seedBriefing writes both <sessionDir>/briefings/<iter>.json and
@@ -42,13 +42,13 @@ func TestBriefingService_Get(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "abcdef000001",
 		SpecPath:  "/spec/p.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
 	sessionDir := filepath.Join(baseDir, "sessions", sess.ID)
@@ -162,16 +162,16 @@ func TestBriefingService_Get_LiveStorePreferred(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:        "010203040506",
 		SpecPath:  "/spec/live.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, sess)
-	store, err := supervision.OpenSession(baseDir, sess.ID)
+	store, err := session.OpenSession(baseDir, sess.ID)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

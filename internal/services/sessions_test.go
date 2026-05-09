@@ -11,12 +11,13 @@ import (
 
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // writeManifest writes an archived session manifest under
 // baseDir/.bcc/sessions/<id>/manifest.json. The shape mirrors what
-// supervision.CreateSession + supervision.Touch would produce in production.
-func writeManifest(t *testing.T, baseDir string, sess supervision.Session) {
+// session.CreateSession + session.Touch would produce in production.
+func writeManifest(t *testing.T, baseDir string, sess session.Session) {
 	t.Helper()
 	dir := filepath.Join(baseDir, "sessions", sess.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -73,26 +74,26 @@ func TestSessionService_List(t *testing.T) {
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
 
-	archivedOnly := supervision.Session{
+	archivedOnly := session.Session{
 		ID:        "111111111111",
 		SpecPath:  "/spec/a.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-2 * time.Hour),
 		UpdatedAt: now.Add(-1 * time.Hour),
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
-	liveOnDisk := supervision.Session{
+	liveOnDisk := session.Session{
 		ID:        "222222222222",
 		SpecPath:  "/spec/b.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-30 * time.Minute),
 		UpdatedAt: now.Add(-20 * time.Minute),
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, archivedOnly)
 	writeManifest(t, baseDir, liveOnDisk)
 
-	store, err := supervision.OpenSession(baseDir, liveOnDisk.ID)
+	store, err := session.OpenSession(baseDir, liveOnDisk.ID)
 	if err != nil {
 		t.Fatalf("open live store: %v", err)
 	}
@@ -143,26 +144,26 @@ func TestSessionService_Get(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
-	archived := supervision.Session{
+	archived := session.Session{
 		ID:        "abcdefabcdef",
 		SpecPath:  "/spec/x.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeManifest(t, baseDir, archived)
 
-	live := supervision.Session{
+	live := session.Session{
 		ID:        "ffffffffffff",
 		SpecPath:  "/spec/y.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, live)
-	liveStore, err := supervision.OpenSession(baseDir, live.ID)
+	liveStore, err := session.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestSessionService_Get(t *testing.T) {
 				if m.ID != live.ID {
 					t.Fatalf("ID = %q", m.ID)
 				}
-				if m.Status != string(supervision.SessionRunning) {
+				if m.Status != string(session.SessionRunning) {
 					t.Fatalf("Status = %q", m.Status)
 				}
 			},
@@ -195,7 +196,7 @@ func TestSessionService_Get(t *testing.T) {
 				if m.ID != archived.ID {
 					t.Fatalf("ID = %q", m.ID)
 				}
-				if m.Status != string(supervision.SessionDone) {
+				if m.Status != string(session.SessionDone) {
 					t.Fatalf("Status = %q", m.Status)
 				}
 				if m.FinishedAt.IsZero() {
@@ -247,16 +248,16 @@ func TestSessionService_Snapshot_LivePath(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
-	live := supervision.Session{
+	live := session.Session{
 		ID:        "abc123abc123",
 		SpecPath:  "/spec/live.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, live)
-	store, err := supervision.OpenSession(baseDir, live.ID)
+	store, err := session.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}
@@ -298,13 +299,13 @@ func TestSessionService_Snapshot_ArchivedPath(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
-	archived := supervision.Session{
+	archived := session.Session{
 		ID:        "deadbeef0001",
 		SpecPath:  "/spec/arch.md",
 		SpecHash:  "h",
 		CreatedAt: now.Add(-1 * time.Hour),
 		UpdatedAt: now.Add(-30 * time.Minute),
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeManifest(t, baseDir, archived)
 	state := dag.NewStateFromPlan(trivialPlan())
@@ -355,16 +356,16 @@ func TestSessionService_LiveAlias(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
-	live := supervision.Session{
+	live := session.Session{
 		ID:        "a1b2c3d4e5f6",
 		SpecPath:  "/spec/live.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionRunning,
+		Status:    session.SessionRunning,
 	}
 	writeManifest(t, baseDir, live)
-	store, err := supervision.OpenSession(baseDir, live.ID)
+	store, err := session.OpenSession(baseDir, live.ID)
 	if err != nil {
 		t.Fatalf("open live: %v", err)
 	}
@@ -427,13 +428,13 @@ func TestSessionService_Snapshot_ArchivedWithoutDAGFile(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	tmp := t.TempDir()
 	baseDir := filepath.Join(tmp, ".bcc")
-	archived := supervision.Session{
+	archived := session.Session{
 		ID:        "abcabcabc123",
 		SpecPath:  "/spec/p.md",
 		SpecHash:  "h",
 		CreatedAt: now,
 		UpdatedAt: now,
-		Status:    supervision.SessionDone,
+		Status:    session.SessionDone,
 	}
 	writeManifest(t, baseDir, archived)
 
@@ -452,13 +453,13 @@ func TestSessionService_Snapshot_ArchivedWithoutDAGFile(t *testing.T) {
 
 func TestSessionMetaFrom_ProjectsIterationFields(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	sess := supervision.Session{
+	sess := session.Session{
 		ID:             "abc123def456",
 		SpecPath:       "/spec/test.md",
 		SpecHash:       "h",
 		CreatedAt:      now,
 		UpdatedAt:      now,
-		Status:         supervision.SessionRunning,
+		Status:         session.SessionRunning,
 		IterationIndex: 3,
 		MaxIter:        20,
 	}

@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
-	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // Deps is the seam between the domain core and the application
@@ -47,7 +47,7 @@ type Deps struct {
 	// SessionStore is the live session's persistence facade. It
 	// describes where the session directory lives on disk and
 	// exposes the manifest the live SessionService surfaces.
-	SessionStore *supervision.Store
+	SessionStore *session.Store
 
 	// SessionsBaseDir is the parent directory under which every
 	// session lives (.bcc/sessions/<id>/). The SessionService uses

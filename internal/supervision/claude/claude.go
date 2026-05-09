@@ -42,6 +42,7 @@ import (
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 // stderrCaptureBytes caps how much of claude's stderr the adapter
@@ -160,7 +161,7 @@ type Config struct {
 	// SessionStore, when non-nil, is used to derive the spawns directory
 	// for per-spawn prompt persistence. When nil, prompt persistence and
 	// SpawnStarted emission are skipped.
-	SessionStore *supervision.Store
+	SessionStore *session.Store
 
 	// Events, when non-nil, receives loop-level events emitted by the
 	// adapter (SpawnStarted). The adapter never closes this channel; the
@@ -204,7 +205,7 @@ func (a *Adapter) SetStderrFactory(fn func(role, iterationID, agentID string) (i
 // spawns directory for prompt persistence. Called by the cli after
 // session resolution so the adapter is not coupled to the session
 // lifecycle at construction time. nil disables prompt persistence.
-func (a *Adapter) SetSessionStore(store *supervision.Store) {
+func (a *Adapter) SetSessionStore(store *session.Store) {
 	a.cfg.SessionStore = store
 }
 

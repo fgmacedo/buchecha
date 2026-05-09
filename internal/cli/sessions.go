@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/fgmacedo/buchecha/internal/supervision"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
 )
 
 const sessionsBaseDir = ".bcc"
@@ -51,7 +51,7 @@ func init() {
 }
 
 func runSessionsList(w io.Writer, output string) error {
-	sessions, err := supervision.ListSessions(sessionsBaseDir)
+	sessions, err := session.ListSessions(sessionsBaseDir)
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
 	}
@@ -60,7 +60,7 @@ func runSessionsList(w io.Writer, output string) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		if sessions == nil {
-			sessions = []supervision.Session{}
+			sessions = []session.Session{}
 		}
 		return enc.Encode(sessions)
 	case "text", "":
@@ -84,7 +84,7 @@ func runSessionsList(w io.Writer, output string) error {
 }
 
 func runSessionsShow(w io.Writer, output, id string) error {
-	store, err := supervision.OpenSession(sessionsBaseDir, id)
+	store, err := session.OpenSession(sessionsBaseDir, id)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			ExitCode = 1
@@ -121,7 +121,7 @@ func runSessionsShow(w io.Writer, output, id string) error {
 // `show` command can return a non-zero ExitCode if the manifest
 // disappeared between OpenSession returning and the print phase (e.g.
 // concurrent removal by a script).
-func sessionExists(store *supervision.Store) bool {
+func sessionExists(store *session.Store) bool {
 	_, err := os.Stat(store.SessionDir())
 	return err == nil
 }

@@ -1,4 +1,4 @@
-package supervision
+package session
 
 import (
 	"crypto/rand"
@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
 // Store persists the Director's per-run artifacts (manifest, plan,
@@ -169,7 +171,7 @@ func (s *Store) briefingPath(iterationID string) string {
 }
 
 // WritePlan serializes the Plan to <sessionDir>/plan.json.
-func (s *Store) WritePlan(p *Plan) error {
+func (s *Store) WritePlan(p *supervision.Plan) error {
 	if p == nil {
 		return errors.New("director: nil plan")
 	}
@@ -178,8 +180,8 @@ func (s *Store) WritePlan(p *Plan) error {
 
 // ReadPlan reads <sessionDir>/plan.json. Returns an error wrapping
 // fs.ErrNotExist when no plan has been written.
-func (s *Store) ReadPlan() (*Plan, error) {
-	var p Plan
+func (s *Store) ReadPlan() (*supervision.Plan, error) {
+	var p supervision.Plan
 	if err := readJSON(s.planPath(), &p); err != nil {
 		return nil, err
 	}
@@ -189,7 +191,7 @@ func (s *Store) ReadPlan() (*Plan, error) {
 // WriteBriefing serializes the Briefing under <sessionDir>/briefings/.
 // IterationID and PhaseID on the Briefing must be set; the file name
 // is derived from IterationID.
-func (s *Store) WriteBriefing(b *Briefing) error {
+func (s *Store) WriteBriefing(b *supervision.Briefing) error {
 	if b == nil {
 		return errors.New("director: nil briefing")
 	}
@@ -228,8 +230,8 @@ func (s *Store) RunLogPath(bucket, agentID, kind string) (string, error) {
 
 // ReadBriefing reads the briefing for an iteration id. Returns an
 // error wrapping fs.ErrNotExist when missing.
-func (s *Store) ReadBriefing(iterationID string) (*Briefing, error) {
-	var b Briefing
+func (s *Store) ReadBriefing(iterationID string) (*supervision.Briefing, error) {
+	var b supervision.Briefing
 	if err := readJSON(s.briefingPath(iterationID), &b); err != nil {
 		return nil, err
 	}

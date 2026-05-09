@@ -28,7 +28,10 @@ import (
 	"github.com/fgmacedo/buchecha/internal/supervision"
 	directorclaude "github.com/fgmacedo/buchecha/internal/supervision/claude"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
+	"github.com/fgmacedo/buchecha/internal/supervision/journal"
 	"github.com/fgmacedo/buchecha/internal/supervision/menu"
+	"github.com/fgmacedo/buchecha/internal/supervision/session"
+	"github.com/fgmacedo/buchecha/internal/supervision/stats"
 	"github.com/fgmacedo/buchecha/internal/tui"
 	"github.com/fgmacedo/buchecha/internal/webui"
 )
@@ -63,7 +66,7 @@ type directorDeps struct {
 	reviewer    supervision.Reviewer
 	registerFn  func(role dag.Role) (string, func(), error)
 	baseDir     string
-	store       *supervision.Store
+	store       *session.Store
 	git         loop.GitProbe
 	newExecutor func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *supervision.RoleAssignment) loop.Executor
 	now         func() time.Time
@@ -80,7 +83,7 @@ type directorDeps struct {
 	// stats, when non-nil, persists per-role spawn telemetry to
 	// stats.jsonl in the session directory. Bound after session
 	// resolution; tests typically leave nil to opt out.
-	stats *supervision.StatsLog
+	stats *stats.StatsLog
 	// serviceEvents, when non-nil, is the long-lived loop.Event channel
 	// the services aggregator consumes. Per-run tees forward every loop
 	// event onto it (non-blocking) so /api/v1/sessions/{id}/events
@@ -202,7 +205,7 @@ func runDirector(ctx context.Context, cancel context.CancelFunc, specPath, promp
 // Pre-resolving the session means the services aggregator passed to api.New
 // has a live SessionStore from t=0. When specPath is empty (prompt-only run),
 // os.ReadFile is skipped and the hash is derived from the prompt alone.
-func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*supervision.Store, error) {
+func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*session.Store, error) {
 	var content []byte
 	if specPath != "" {
 		var err error
@@ -223,7 +226,7 @@ func resolveDirectorSessionEarly(specPath, prompt string, dio directorIO) (*supe
 // directorAuditPath returns the per-session MCP audit log path when the
 // audit toggle is on, otherwise empty. Matches the path mcpBoot.bindSession
 // uses so the services Audit and the dag handler agree on the destination.
-func directorAuditPath(cfg *config.Config, store *supervision.Store) string {
+func directorAuditPath(cfg *config.Config, store *session.Store) string {
 	if cfg == nil || store == nil || !cfg.Debug.IsMCPAuditEnabled() {
 		return ""
 	}
@@ -234,7 +237,7 @@ func directorAuditPath(cfg *config.Config, store *supervision.Store) string {
 // the persist_events_log toggle is on, otherwise empty. The same file
 // is later read back by EventService.Replay for archived sessions and
 // by bcc dev for replay-driven UI development.
-func directorEventsLogPath(cfg *config.Config, store *supervision.Store) string {
+func directorEventsLogPath(cfg *config.Config, store *session.Store) string {
 	if cfg == nil || store == nil || !cfg.Debug.IsPersistEventsLogEnabled() {
 		return ""
 	}
@@ -436,7 +439,7 @@ func makeNewExecutor(
 	boot *mcpBoot,
 	subprocessStderr io.Writer,
 	logSinks func(args dag.RegisterArgs, agentID string) (executorLogSinks, error),
-	store *supervision.Store,
+	store *session.Store,
 	loopEvents chan<- loop.Event,
 ) func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 	return func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *supervision.RoleAssignment) loop.Executor {
@@ -536,7 +539,7 @@ func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
 	}
 	bucketFor := func(role, iter string) string {
 		if role == string(dag.RolePlanner) {
-			return supervision.PlannerRunsBucket
+			return session.PlannerRunsBucket
 		}
 		return iter
 	}
@@ -670,10 +673,10 @@ func runDirectorWith(
 		if g, ok := deps.git.(dag.HeadProvider); ok {
 			headProvider = g
 		}
-		deps.boot.bindSession(deps.store, cfg.Debug.IsMCPAuditEnabled(), headProvider, supervision.JournalDeltaProvider{})
+		deps.boot.bindSession(deps.store, cfg.Debug.IsMCPAuditEnabled(), headProvider, journal.JournalDeltaProvider{})
 	}
 	if deps.store != nil && deps.stats == nil {
-		deps.stats = supervision.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
+		deps.stats = stats.NewStatsLog(filepath.Join(deps.store.SessionDir(), "stats.jsonl"))
 	}
 
 	enableDebugLogCapture(cfg, &deps)
@@ -693,7 +696,7 @@ func runDirectorWith(
 		if errors.As(err, &skipped) {
 			return finishHeadlessNothingToDo(deps, dio, skipped.reason)
 		}
-		_ = deps.store.Touch(supervision.SessionAborted, deps.now())
+		_ = deps.store.Touch(session.SessionAborted, deps.now())
 		return err
 	}
 
@@ -718,7 +721,7 @@ func runDirectorWith(
 	events, drained, derr := dispatchEvents(runOutput, loop.LevelInfo)
 	if derr != nil {
 		ExitCode = loop.ExitInvalid
-		_ = deps.store.Touch(supervision.SessionAborted, deps.now())
+		_ = deps.store.Touch(session.SessionAborted, deps.now())
 		return derr
 	}
 
@@ -744,7 +747,7 @@ func runDirectorWith(
 //  3. --session <id> only (no --resume): require the session to exist;
 //     do not silently overwrite by creating a fresh one.
 //  4. neither: create a new session.
-func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash string) (*supervision.Store, error) {
+func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash string) (*session.Store, error) {
 	now := deps.now
 	if now == nil {
 		now = time.Now
@@ -760,7 +763,7 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 
 	// persistPrompt stamps the prompt onto a freshly created session
 	// manifest so bcc sessions show reflects the user's directive.
-	persistPrompt := func(store *supervision.Store) *supervision.Store {
+	persistPrompt := func(store *session.Store) *session.Store {
 		if deps.prompt == "" || store == nil {
 			return store
 		}
@@ -768,36 +771,36 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 		if now == nil {
 			now = time.Now
 		}
-		_ = store.Touch(supervision.SessionRunning, now())
+		_ = store.Touch(session.SessionRunning, now())
 		return store
 	}
 
 	switch {
 	case dio.session != "":
-		sess, err := supervision.ResolveSession(deps.baseDir, dio.session, specPath)
+		sess, err := session.ResolveSession(deps.baseDir, dio.session, specPath)
 		if err != nil {
 			return nil, fmt.Errorf("director: resolve session: %w", err)
 		}
-		store, err := supervision.OpenSession(deps.baseDir, sess.ID)
+		store, err := session.OpenSession(deps.baseDir, sess.ID)
 		if err != nil {
 			return nil, fmt.Errorf("director: open session %s: %w", sess.ID, err)
 		}
 		return store, nil
 	case dio.resume:
-		matches, err := supervision.FindSessionsForSpec(deps.baseDir, sessionSpecPath)
+		matches, err := session.FindSessionsForSpec(deps.baseDir, sessionSpecPath)
 		if err != nil {
 			return nil, fmt.Errorf("director: list sessions: %w", err)
 		}
 		switch len(matches) {
 		case 0:
 			fmt.Fprintln(dio.stderr, "bcc: --resume requested but no session for this spec; creating a fresh one")
-			store, _, cerr := supervision.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
+			store, _, cerr := session.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
 			if cerr != nil {
 				return nil, fmt.Errorf("director: create session: %w", cerr)
 			}
 			return persistPrompt(store), nil
 		case 1:
-			store, err := supervision.OpenSession(deps.baseDir, matches[0].ID)
+			store, err := session.OpenSession(deps.baseDir, matches[0].ID)
 			if err != nil {
 				return nil, fmt.Errorf("director: open session %s: %w", matches[0].ID, err)
 			}
@@ -808,10 +811,10 @@ func resolveDirectorSession(deps directorDeps, dio directorIO, specPath, hash st
 				ids = append(ids, m.ID)
 			}
 			return nil, fmt.Errorf("%w: candidates: %s",
-				supervision.ErrSessionAmbiguous, strings.Join(ids, ", "))
+				session.ErrSessionAmbiguous, strings.Join(ids, ", "))
 		}
 	default:
-		store, _, err := supervision.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
+		store, _, err := session.CreateSession(deps.baseDir, sessionSpecPath, hash, now())
 		if err != nil {
 			return nil, fmt.Errorf("director: create session: %w", err)
 		}
@@ -1067,14 +1070,14 @@ func runDirectorTUI(ctx context.Context, cancel context.CancelFunc, specPath, ha
 		if perr != nil {
 			var skipped errPlannerSkipped
 			if errors.As(perr, &skipped) {
-				_ = deps.store.Touch(supervision.SessionDone, deps.now())
+				_ = deps.store.Touch(session.SessionDone, deps.now())
 				model.SignalPlanSkipped(skipped.reason)
 				setLatest(runResult{code: loop.ExitDone, err: nil})
 				emitLoopFinished(raw, LoopFinishedReasonNothingToDo, loop.ExitDone)
 				close(raw)
 				return
 			}
-			_ = deps.store.Touch(supervision.SessionAborted, deps.now())
+			_ = deps.store.Touch(session.SessionAborted, deps.now())
 			// Planner crashed without producing a terminal MCP call
 			// (e.g. claude exited 1 because the account ran out of
 			// credits). Keep the TUI alive in session mode so the
@@ -1153,7 +1156,7 @@ func finishHeadlessNothingToDo(deps directorDeps, dio directorIO, reason string)
 	if now == nil {
 		now = time.Now
 	}
-	_ = deps.store.Touch(supervision.SessionDone, now())
+	_ = deps.store.Touch(session.SessionDone, now())
 
 	events, drained, derr := dispatchEvents(runOutput, loop.LevelInfo)
 	if derr != nil {
@@ -1355,7 +1358,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	}
 	<-pumpDone
 	if plannerStats != nil && deps.stats != nil {
-		if err := deps.stats.Append(supervision.StatsEntry{
+		if err := deps.stats.Append(stats.StatsEntry{
 			At:           deps.now(),
 			Role:         string(dag.RolePlanner),
 			DurationMS:   plannerStats.DurationMS,

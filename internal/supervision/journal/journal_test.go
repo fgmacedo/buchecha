@@ -1,4 +1,4 @@
-package supervision
+package journal
 
 import (
 	"context"
