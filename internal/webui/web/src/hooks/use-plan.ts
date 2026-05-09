@@ -4,7 +4,7 @@ import { ApiError } from './use-snapshot'
 
 // Plan is the response body for GET /api/v1/sessions/{id}/plan,
 // derived directly from the generated OpenAPI types. Structurally it
-// mirrors internal/director.Plan: goal, success_criteria, phases (each
+// mirrors internal/supervision.Plan: goal, success_criteria, phases (each
 // with its task DAG). Per-task statuses on this payload reflect the
 // planner's emit moment (pending right after planning) and are not
 // the live state; consumers track live progress via the events stream
