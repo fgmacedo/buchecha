@@ -85,7 +85,7 @@ The boundary cuts both ways:
 
 The domain is small. We use the parts of DDD that pay off and skip the rest.
 
-- **Value objects** (immutable, equality by value, no identity): `Plan`, `Phase`, `Task`, `TaskStatus` (`pending` / `in_progress` / `done` / `needs_fix`), `Briefing`, `Signal` (the iteration outcome string the Executor reports via `bcc_iteration_finished`), `AgentEvent`, `CommitSHA`, `IterationID`, `AgentID`, `Role`. Wire-protocol partials live in `internal/loop/agentcontract/`; Director value objects live in `internal/director/`.
+- **Value objects** (immutable, equality by value, no identity): `Plan`, `Phase`, `Task`, `TaskStatus` (`pending` / `in_progress` / `done` / `needs_fix`), `Briefing`, `Signal` (the iteration outcome string the Executor reports via `iteration_finished`), `AgentEvent`, `CommitSHA`, `IterationID`, `AgentID`, `Role`. Wire-protocol partials live in `internal/loop/agentcontract/`; Director value objects live in `internal/director/`.
 - **Entities** (identity, lifecycle): `Session` (a `bcc run` instance, identified by id), `Iteration` (per phase + attempt within a session).
 - **Domain services** (behavior that does not belong on a single entity): `DirectorDecide` (per-task aggregation: advance / retry / escalate / abort), `ValidatePlan` (DAG cycle detection at phase and task levels).
 - **Ports**: `Executor`, `GitProbe`, `Planner`, `Briefer`, `Reviewer`, `JournalDeltaProvider`, `GitDiffProvider`. Interfaces in the consumer package.
@@ -205,7 +205,7 @@ Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sam
 ### Fixtures
 
 - DAG state fixtures inline in tests; round-trip through `dag.SaveStateFile` / `dag.LoadStateFile`.
-- Stream-json fixtures in `internal/executor/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content. The fixture covers wire-protocol `tool_use` envelopes (`mcp__bcc__bcc_*`) alongside ordinary built-in tools so the parser path is exercised end to end.
+- Stream-json fixtures in `internal/executor/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content. The fixture covers wire-protocol `tool_use` envelopes (`mcp__bcc__*`) alongside ordinary built-in tools so the parser path is exercised end to end.
 - End-to-end fixtures in `testdata/specs/`: sample specs in English and pt-BR to validate localization.
 
 ## Tooling and commands

@@ -269,7 +269,7 @@ type reviewView struct {
 // Plan implements supervision.Planner. It renders the planner prompt, runs
 // claude with the planner connection name, and returns once the agent
 // exits cleanly. The adapter never returns the Plan itself: the agent
-// emits it via bcc_plan_emit, and the run-wide handler stores it.
+// emits it via plan_emit, and the run-wide handler stores it.
 // Callers read the Plan from the dag handler/store after Plan returns.
 //
 // events, when non-nil, receives the planner's stream telemetry
@@ -295,7 +295,7 @@ func (a *Adapter) Plan(ctx context.Context, in supervision.PlannerInput, events 
 }
 
 // Brief implements supervision.Briefer. Same shape as Plan: render, run,
-// return. The Briefing lands in the dag handler via bcc_briefing_emit.
+// return. The Briefing lands in the dag handler via briefing_emit.
 // in.Assignment carries the per-phase (provider, model, effort) the
 // Planner attributed; the loop fills it from the role menu when the
 // Plan left it empty.
@@ -321,8 +321,8 @@ func (a *Adapter) Brief(ctx context.Context, in supervision.BrieferInput, events
 }
 
 // Review implements supervision.Reviewer. The Reviewer's work is recorded
-// as DAG mutations (bcc_task_approved / bcc_task_needs_fix) plus a
-// final bcc_review_finished outcome; the handler is the source of
+// as DAG mutations (task_approved / task_needs_fix) plus a
+// final review_finished outcome; the handler is the source of
 // truth for the resulting state. in.Assignment carries the per-phase
 // (provider, model, effort) the Planner attributed.
 func (a *Adapter) Review(ctx context.Context, in supervision.ReviewerInput, events chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {

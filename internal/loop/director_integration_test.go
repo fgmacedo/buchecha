@@ -742,7 +742,7 @@ func TestDirectorIntegration_EscalateForceApprove(t *testing.T) {
 // TestDirectorIntegration_SilentReviewerEscalatesImmediately is a
 // regression test for commit 04f6a1b (director: reset review outcome
 // between attempts and escalate on empty). A Reviewer that exits
-// without calling bcc_review_finished leaves the outcome empty; the
+// without calling review_finished leaves the outcome empty; the
 // decider must treat that as DirectorEscalate on the first attempt
 // rather than retrying until the budget is exhausted. With
 // retry_budget=2 the unfixed loop would have spawned 3 reviewers
@@ -763,7 +763,7 @@ func TestDirectorIntegration_SilentReviewerEscalatesImmediately(t *testing.T) {
 	h := directorTestHandler(plan)
 
 	// silent: returns without calling any MCP method, in particular
-	// without bcc_review_finished, leaving the iteration outcome empty.
+	// without review_finished, leaving the iteration outcome empty.
 	silent := &fake.Reviewer{
 		ReviewFn: func(_ context.Context, _ supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
 			return &supervision.SpawnStats{}, nil

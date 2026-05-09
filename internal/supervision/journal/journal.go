@@ -17,7 +17,7 @@ const JournalHeading = "## Execution Journal"
 // JournalDeltaProvider is the inline implementation of
 // dag.JournalDeltaProvider that delegates to GatherJournalDelta. The
 // run boot wires this directly into the MCP handler so
-// bcc_get_journal_delta resolves through the canonical Execution
+// get_journal_delta resolves through the canonical Execution
 // Journal heading without an extra format adapter.
 type JournalDeltaProvider struct{}
 

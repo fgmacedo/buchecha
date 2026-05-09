@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "bcc_review_finished",
+  "title": "review_finished",
   "description": "Reviewer reports the natural end of its invocation. Cross-method invariants: approve requires every sub-DAG task done; revise requires at least one needs_fix; escalate requires non-empty reasoning.",
   "type": "object",
   "additionalProperties": false,

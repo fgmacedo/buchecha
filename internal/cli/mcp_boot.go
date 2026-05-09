@@ -41,7 +41,7 @@ type mcpBoot struct {
 // (state, registry) and a 32-byte hex bearer token. state is nil
 // before the Plan is confirmed; the loop seeds it from the Plan once
 // the planner returns. The advertised tool list is the Director method
-// surface (bcc_plan_emit, bcc_task_started, ...): any agent connected
+// surface (plan_emit, task_started, ...): any agent connected
 // through the shared listener discovers them via tools/list and
 // dispatches to handler.
 //
@@ -101,8 +101,8 @@ func (p *dagSnapshotPersister) WriteDAGSnapshot(s *dag.State) error {
 // directory is resolved; the legacy non-Director path skips this.
 //
 // markdownAdapter, when non-nil, becomes the JournalDeltaProvider used
-// to answer bcc_get_journal_delta; pass the active spec format adapter.
-// head, when non-nil, answers bcc_get_baseline. mcpAudit toggles the
+// to answer get_journal_delta; pass the active spec format adapter.
+// head, when non-nil, answers get_baseline. mcpAudit toggles the
 // per-session JSONL audit log.
 func (b *mcpBoot) bindSession(store *session.Store, mcpAudit bool, head dag.HeadProvider, journal dag.JournalDeltaProvider) {
 	if b == nil || b.handler == nil || store == nil {

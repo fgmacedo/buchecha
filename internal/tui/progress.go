@@ -40,7 +40,7 @@ func newProgressBar() progress.Model {
 }
 
 // onTaskStarted increments the started counter and refreshes the bar.
-// The wire contract pairs bcc_task_started with bcc_task_completed by
+// The wire contract pairs task_started with task_completed by
 // id; the panel does not assume IDs and just counts the events.
 func (p *progressPanel) onTaskStarted() {
 	p.tasksStarted++

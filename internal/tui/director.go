@@ -25,14 +25,14 @@ const (
 
 // planSkippedMsg latches the "planner declared the spec done" state on
 // the Model. Sent by the host orchestrator (cli/run_director.go) when
-// the Planner returned via bcc_plan_skip; carries the reason string so
+// the Planner returned via plan_skip; carries the reason string so
 // the View can show it on the friendly terminal screen.
 type planSkippedMsg struct {
 	reason string
 }
 
 // SignalPlanSkipped tells the Model that the Planner declared the spec
-// done via bcc_plan_skip. The Model latches a quit-only terminal
+// done via plan_skip. The Model latches a quit-only terminal
 // screen instead of tearing down the program. Safe to call before or
 // after the bubbletea program has started.
 func (m *Model) SignalPlanSkipped(reason string) {

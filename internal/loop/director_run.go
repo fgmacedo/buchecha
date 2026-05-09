@@ -488,7 +488,7 @@ func runWithAgentEvents(ctx context.Context, events chan<- Event, fn func(chan<-
 // the subprocess exits. Agent events are forwarded onto the loop
 // events channel for the TUI; the canonical signal source is the
 // handler-stored value populated by the executor's
-// bcc_iteration_finished call. An executor that exits without calling
+// iteration_finished call. An executor that exits without calling
 // the terminal method falls back to SignalReview, the safe default
 // (the Reviewer audits regardless and decides advance/retry). The
 // returned stats pointer carries the executor's last result summary
@@ -531,7 +531,7 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 		return agentcontract.SignalUnknown, stats, fmt.Errorf("director: executor run: %w", err)
 	}
 	if result.ExitCode != 0 && handler != nil && handler.IterationSignal(briefingID) == "" {
-		// Executor crashed without emitting bcc_iteration_finished. Surface
+		// Executor crashed without emitting iteration_finished. Surface
 		// the captured stderr tail so the dashboard shows a real diagnostic
 		// instead of a generic blocked state.
 		return agentcontract.SignalBlocked, stats, formatExecutorCrash(result, briefingID)
@@ -548,7 +548,7 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 
 // formatExecutorCrash builds the diagnostic message for an iteration
 // where the Executor exited non-zero without emitting the terminal
-// bcc_iteration_finished call. The format is human-readable, single
+// iteration_finished call. The format is human-readable, single
 // error wrapping a multi-line string, with the iteration id, agent id
 // (when known), the captured stderr tail (when present), and either the
 // path to the persisted capture file or a hint to enable --debug-logs.
@@ -571,7 +571,7 @@ func formatExecutorCrash(result ExecResult, iterationID string) error {
 }
 
 // parseSignalString converts the wire string the agent sent on
-// bcc_iteration_finished to an agentcontract.Signal. Unknown values
+// iteration_finished to an agentcontract.Signal. Unknown values
 // degrade to SignalUnknown so the caller can fall back to a default.
 func parseSignalString(v string) agentcontract.Signal {
 	switch v {

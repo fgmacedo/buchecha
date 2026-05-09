@@ -206,7 +206,7 @@ func testRegisterFn(h *dag.Handler) func(role dag.Role) (string, func(), error) 
 // recordingExecutor is a loop.Executor stand-in that captures Run
 // arguments and never spawns a subprocess. When emitSignal is set and
 // handler+args are wired, it registers an Executor agent on the run
-// handler and calls bcc_iteration_finished — exactly what the
+// handler and calls iteration_finished — exactly what the
 // production claude adapter would do once the briefing closes — so the
 // loop driver picks the signal up via Handler.IterationSignal.
 type recordingExecutor struct {
@@ -469,7 +469,7 @@ func TestRunDirectorWith_RejectsEmptyPlan(t *testing.T) {
 
 // TestRunDirectorWith_PlannerSkipsHeadless drives the planner-skip
 // path end to end on the JSON output: the planner's fake calls
-// bcc_plan_skip via the handler and returns nil; runDirectorWith must
+// plan_skip via the handler and returns nil; runDirectorWith must
 // exit cleanly with ExitDone, mark the session as done, never prompt
 // for confirmation, and never persist a plan.
 func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
@@ -538,7 +538,7 @@ func TestRunDirectorWith_PlannerSkipsHeadless(t *testing.T) {
 }
 
 // TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero reproduces the
-// real-world failure where the planner subprocess called bcc_plan_skip
+// real-world failure where the planner subprocess called plan_skip
 // successfully but then exited with a non-zero status. Handler state
 // is authoritative: the run still surfaces the friendly nothing-to-do
 // path with ExitDone instead of treating the exit code as fatal.
@@ -596,7 +596,7 @@ func TestRunDirectorWith_PlannerSkipsThenAgentExitsNonZero(t *testing.T) {
 
 // TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall keeps the
 // fatal path honest: when the agent crashed without ever calling
-// bcc_plan_emit or bcc_plan_skip, the run still aborts with
+// plan_emit or plan_skip, the run still aborts with
 // ExitInvalid and surfaces the underlying agent error.
 func TestRunDirectorWith_PlannerExitsNonZeroWithoutTerminalCall(t *testing.T) {
 	resetExitCode(t)

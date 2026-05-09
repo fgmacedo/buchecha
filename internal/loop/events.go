@@ -121,7 +121,7 @@ func (PhaseBriefed) isLoopEvent() {}
 
 // PhaseReviewed is emitted after the Director's Reviewer finished an
 // audit. Outcome is the canonical wire value the Reviewer reported via
-// bcc_review_finished ("approve", "revise", "escalate"); Reasoning
+// review_finished ("approve", "revise", "escalate"); Reasoning
 // carries the Reviewer's prose explanation. PhaseReviewed is now an
 // informational summary derived from per-task DAG state plus the
 // review outcome; the canonical per-task transitions are emitted as
@@ -137,7 +137,7 @@ type PhaseReviewed struct {
 func (PhaseReviewed) isLoopEvent() {}
 
 // TaskStarted is emitted when an Executor or Planner reports a task
-// transition to in_progress through bcc_task_started. The "planning"
+// transition to in_progress through task_started. The "planning"
 // task uses the well-known PlanningTaskID. AgentID identifies which
 // agent owns this task transition; the EventService uses it to keep an
 // active-task index and tag subsequent AgentEventReceived events.
@@ -152,7 +152,7 @@ func (TaskStarted) isLoopEvent() {}
 
 // TaskCompleted is emitted when the Executor (or Planner for the
 // planning task) reports a task transition to done through
-// bcc_task_completed.
+// task_completed.
 type TaskCompleted struct {
 	AgentID string
 	PhaseID string
@@ -163,7 +163,7 @@ type TaskCompleted struct {
 func (TaskCompleted) isLoopEvent() {}
 
 // TaskApproved is emitted when the Reviewer marks a task done through
-// bcc_task_approved.
+// task_approved.
 type TaskApproved struct {
 	AgentID string
 	PhaseID string
@@ -174,7 +174,7 @@ type TaskApproved struct {
 func (TaskApproved) isLoopEvent() {}
 
 // TaskNeedsFix is emitted when the Reviewer marks a task needs_fix
-// through bcc_task_needs_fix; Note carries the Reviewer's per-task
+// through task_needs_fix; Note carries the Reviewer's per-task
 // feedback when supplied.
 type TaskNeedsFix struct {
 	AgentID string

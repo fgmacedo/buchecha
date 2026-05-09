@@ -17,8 +17,8 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 
 ## Procedure
 
-1. Call `bcc_task_started(agent_id, "briefing")` so the timeline records that briefing began.
-2. Call `bcc_get_dag_snapshot(agent_id)` to retrieve the full Plan plus per-phase and per-task status. Use it to choose:
+1. Call `task_started(agent_id, "briefing")` so the timeline records that briefing began.
+2. Call `get_dag_snapshot(agent_id)` to retrieve the full Plan plus per-phase and per-task status. Use it to choose:
    - One eligible phase (its phase-level `depends_on` are all done). The loop suggested `{{.PhaseID}}` based on its own scheduling; override only if the snapshot makes clear that this phase is no longer the right choice.
    - A sub-DAG of tasks within that phase whose statuses are `pending` or `needs_fix` and whose intra-phase dependencies are either also in the sub-DAG or already `done`.
 3. Inspect the runtime state to ground the briefing: `Grep` / `Glob` the working tree and run read-only `Bash` (`ls`, `git diff`, `go vet`) to see what the previous phase actually produced. This is the work the Planner could not do; lean on it.{{ if .SpecPath }} Read the spec at `{{.SpecPath}}` (use the `Read` tool; if the path is a directory, treat it as a spec bundle) only to resolve questions the Plan and the working tree do not answer.{{ end }} The Executor will read the spec itself; you do not need to paste it.
@@ -26,10 +26,10 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
    - **Fast tier Executor**: write an exhaustive briefing (file paths, function signatures, exact test cases, the precise change). The Executor stitches; you specify.
    - **Mid tier Executor**: write a moderate briefing (objectives and constraints; tactical decisions like "which helper" or "which library matches existing style" stay open). The Executor decides locally.
    - **Frontier tier Executor**: write a goal-only briefing (success criteria and constraints; let the Executor reason from the spec).
-5. Emit the `Briefing` via `bcc_briefing_emit(agent_id, briefing)`. The handler validates that the phase is eligible and the sub-DAG is consistent; on rejection, correct and re-emit.
+5. Emit the `Briefing` via `briefing_emit(agent_id, briefing)`. The handler validates that the phase is eligible and the sub-DAG is consistent; on rejection, correct and re-emit.
 
    **Argument shape**: pass `briefing` as a JSON object literal, not as a stringified JSON. The argument value must be the briefing object itself (`{"phase_id": ..., "sub_dag_task_ids": [...], ...}`), not a string containing JSON (`"{\"phase_id\": ...}"`). The schema rejects strings.
-6. Call `bcc_task_completed(agent_id, "briefing", summary)` once the Briefing is accepted. `summary` is one short sentence describing the choice (e.g. "phase P5 sub-DAG = T5.4, T5.5; mid-tier Executor; prepended prior_feedback").
+6. Call `task_completed(agent_id, "briefing", summary)` once the Briefing is accepted. `summary` is one short sentence describing the choice (e.g. "phase P5 sub-DAG = T5.4, T5.5; mid-tier Executor; prepended prior_feedback").
 
 ## Briefing shape
 

@@ -10,47 +10,47 @@ The methods bcc exposes depend on the role bcc spawned you in (Planner, Briefer,
 
 | Method | Purpose |
 |---|---|
-| `bcc_task_started(agent_id, "planning")` | Open the planning task on the timeline. Use the literal id `"planning"`. |
-| `bcc_plan_emit(agent_id, plan)` | Submit the typed Plan. The handler validates it against the typed Plan shape and the structural invariants (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps). On rejection bcc returns the validator error; correct and re-emit. |
-| `bcc_task_completed(agent_id, "planning", summary)` | Close the planning task. `summary` is one short sentence. |
+| `task_started(agent_id, "planning")` | Open the planning task on the timeline. Use the literal id `"planning"`. |
+| `plan_emit(agent_id, plan)` | Submit the typed Plan. The handler validates it against the typed Plan shape and the structural invariants (phase ids unique, task ids unique within phase, no cycles, no cross-phase task deps). On rejection bcc returns the validator error; correct and re-emit. |
+| `task_completed(agent_id, "planning", summary)` | Close the planning task. `summary` is one short sentence. |
 
 ### Briefer
 
 | Method | Purpose |
 |---|---|
-| `bcc_get_dag_snapshot(agent_id)` | Read the full DAG state to pick the next eligible phase and sub-DAG. |
-| `bcc_briefing_emit(agent_id, briefing)` | Submit the per-iteration Briefing. `iteration_id`, `phase_id`, and a non-empty `sub_dag_task_ids` are required; the sub-DAG must lie inside one eligible phase, and each task must be `pending` or `needs_fix`. |
+| `get_dag_snapshot(agent_id)` | Read the full DAG state to pick the next eligible phase and sub-DAG. |
+| `briefing_emit(agent_id, briefing)` | Submit the per-iteration Briefing. `iteration_id`, `phase_id`, and a non-empty `sub_dag_task_ids` are required; the sub-DAG must lie inside one eligible phase, and each task must be `pending` or `needs_fix`. |
 
 ### Executor
 
 | Method | Purpose |
 |---|---|
-| `bcc_get_briefing(agent_id)` | Read the Briefing bcc bound your agent to. |
-| `bcc_get_pending_tasks(agent_id)` | List tasks in your sub-DAG that are still `pending` or `needs_fix`. Use it at retry boundaries; the set shrinks as the Reviewer approves. |
-| `bcc_task_started(agent_id, task_id)` | Mark a task `in_progress`. |
-| `bcc_task_completed(agent_id, task_id)` | Mark a task `done`. |
-| `bcc_iteration_finished(agent_id, signal, summary)` | Close the iteration. `signal` is `continue`, `review`, `done`, or `blocked`. Call this exactly once, immediately before exit. |
+| `get_briefing(agent_id)` | Read the Briefing bcc bound your agent to. |
+| `get_pending_tasks(agent_id)` | List tasks in your sub-DAG that are still `pending` or `needs_fix`. Use it at retry boundaries; the set shrinks as the Reviewer approves. |
+| `task_started(agent_id, task_id)` | Mark a task `in_progress`. |
+| `task_completed(agent_id, task_id)` | Mark a task `done`. |
+| `iteration_finished(agent_id, signal, summary)` | Close the iteration. `signal` is `continue`, `review`, `done`, or `blocked`. Call this exactly once, immediately before exit. |
 
 ### Reviewer
 
 | Method | Purpose |
 |---|---|
-| `bcc_get_briefing(agent_id)` | Re-read the Briefing the Executor was given. |
-| `bcc_get_dag_snapshot(agent_id)` | Read your phase's task statuses. |
-| `bcc_get_baseline(agent_id)` | Get the phase-scoped baseline SHA and current HEAD; the Reviewer uses Bash (git diff/log/show) to inspect the cumulative work of the phase. |
-| `bcc_get_journal_delta(agent_id)` | Get the spec-journal delta (added entries) the Executor produced. |
-| `bcc_task_approved(agent_id, task_id)` | Mark a sub-DAG task `done`. |
-| `bcc_task_needs_fix(agent_id, task_id, feedback)` | Return a sub-DAG task to `needs_fix`. `feedback` is the per-task correction the next attempt receives. |
-| `bcc_review_finished(agent_id, outcome, reasoning)` | Close the review. `outcome` is `approve` (every sub-DAG task done), `revise` (one or more `needs_fix`), or `escalate` (non-empty `reasoning`). Call this exactly once, immediately before exit. |
+| `get_briefing(agent_id)` | Re-read the Briefing the Executor was given. |
+| `get_dag_snapshot(agent_id)` | Read your phase's task statuses. |
+| `get_baseline(agent_id)` | Get the phase-scoped baseline SHA and current HEAD; the Reviewer uses Bash (git diff/log/show) to inspect the cumulative work of the phase. |
+| `get_journal_delta(agent_id)` | Get the spec-journal delta (added entries) the Executor produced. |
+| `task_approved(agent_id, task_id)` | Mark a sub-DAG task `done`. |
+| `task_needs_fix(agent_id, task_id, feedback)` | Return a sub-DAG task to `needs_fix`. `feedback` is the per-task correction the next attempt receives. |
+| `review_finished(agent_id, outcome, reasoning)` | Close the review. `outcome` is `approve` (every sub-DAG task done), `revise` (one or more `needs_fix`), or `escalate` (non-empty `reasoning`). Call this exactly once, immediately before exit. |
 
 ## Polling pattern
 
 There is no streaming notification from bcc to the agent. Read the state explicitly at the boundaries that matter for your role:
 
-- **Entry**: read what bcc gave you (`bcc_get_briefing`, `bcc_get_dag_snapshot`).
-- **Per task**: pair `bcc_task_started` with `bcc_task_completed` (Executor) or `bcc_task_approved` / `bcc_task_needs_fix` (Reviewer).
-- **Retry boundary** (Executor): call `bcc_get_pending_tasks` after the Reviewer has audited so you only re-attempt what is still open.
-- **Exit**: call the role's terminal method once (`bcc_iteration_finished` for the Executor, `bcc_review_finished` for the Reviewer, `bcc_task_completed("planning", summary)` for the Planner). A missing terminal call causes bcc to treat the run as invalid.
+- **Entry**: read what bcc gave you (`get_briefing`, `get_dag_snapshot`).
+- **Per task**: pair `task_started` with `task_completed` (Executor) or `task_approved` / `task_needs_fix` (Reviewer).
+- **Retry boundary** (Executor): call `get_pending_tasks` after the Reviewer has audited so you only re-attempt what is still open.
+- **Exit**: call the role's terminal method once (`iteration_finished` for the Executor, `review_finished` for the Reviewer, `task_completed("planning", summary)` for the Planner). A missing terminal call causes bcc to treat the run as invalid.
 
 Do not over-poll. Three to five MCP calls per role per iteration is the working budget.
 
@@ -60,14 +60,14 @@ All MCP errors are structured. The cases you should expect and recover from:
 
 - **Schema validation**: bcc returns the failing JSON pointer and constraint. Fix the input and call again.
 - **Out of scope**: a Reviewer marking a task outside its sub-DAG, or an Executor mutating a task it does not own, gets `dag: <method>: agent_id ... not in scope`. Re-read your sub-DAG and only act on its members.
-- **Plan validation** (`bcc_plan_emit`): cycle, duplicate id, cross-phase dep, empty phase. Fix and re-emit.
-- **Briefing validation** (`bcc_briefing_emit`): empty sub-DAG, task not pending/needs_fix, dep neither in sub-DAG nor done. Fix and re-emit.
+- **Plan validation** (`plan_emit`): cycle, duplicate id, cross-phase dep, empty phase. Fix and re-emit.
+- **Briefing validation** (`briefing_emit`): empty sub-DAG, task not pending/needs_fix, dep neither in sub-DAG nor done. Fix and re-emit.
 
 bcc never silently drops your call. Either you see `{"ok":true}` (or a typed result), or you get an error you can act on.
 
 ## Wire constants
 
-The signal alphabet for `bcc_iteration_finished` and the outcome alphabet for `bcc_review_finished` are fixed English values regardless of the project's natural language. Localize human-facing artifacts (commits, journal text, prose) freely; never localize the wire.
+The signal alphabet for `iteration_finished` and the outcome alphabet for `review_finished` are fixed English values regardless of the project's natural language. Localize human-facing artifacts (commits, journal text, prose) freely; never localize the wire.
 
 | Wire field | Allowed values |
 |---|---|

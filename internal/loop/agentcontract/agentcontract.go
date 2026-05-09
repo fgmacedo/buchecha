@@ -19,7 +19,7 @@
 // generation, name prefixing), which lives under internal/mcp and the
 // executor adapter; the per-vendor stream-json parser, which lives
 // under the relevant adapter (e.g. internal/executor/claude/streamjson);
-// the MCP method dispatch table that translates bcc_* method calls into
+// the MCP method dispatch table that translates MCP method calls into
 // DAG mutations, which lives in internal/supervision/dag.
 package agentcontract
 
@@ -39,7 +39,7 @@ import (
 const MCPServerName = "bcc"
 
 // MCPToolNamePrefix is the wire prefix every bcc MCP tool call carries
-// in the agent's tool_use stream (e.g. `mcp__bcc__bcc_task_started`).
+// in the agent's tool_use stream (e.g. `mcp__bcc__task_started`).
 // Mirrored in the SPA at internal/webui/web/src/lib/mcp.ts; both must
 // stay in lockstep with this constant.
 const MCPToolNamePrefix = "mcp__" + MCPServerName + "__"

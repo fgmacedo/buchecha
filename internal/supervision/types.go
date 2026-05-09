@@ -108,7 +108,7 @@ type PreparedBriefing struct {
 
 // Briefing is the Briefer's per-iteration instruction set for one
 // Executor. The Briefer picks a sub-DAG of tasks within a single
-// eligible phase and emits the Briefing through bcc_briefing_emit; the
+// eligible phase and emits the Briefing through briefing_emit; the
 // loop persists it and renders the Executor prompt from it.
 type Briefing struct {
 	IterationID   string   `json:"iteration_id"`

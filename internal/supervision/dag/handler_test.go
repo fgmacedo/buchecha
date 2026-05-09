@@ -68,7 +68,7 @@ func TestHandleCall_AgentRoleMismatchedToConnectionRejected(t *testing.T) {
 	}
 }
 
-// validPlanInput returns a plan body acceptable to bcc_plan_emit's
+// validPlanInput returns a plan body acceptable to plan_emit's
 // schema and ValidatePlan.
 func validPlanInput(t *testing.T) map[string]any {
 	t.Helper()
@@ -508,7 +508,7 @@ func TestRecordSyntheticApproval_RequiresIterationID(t *testing.T) {
 }
 
 // emitSamplePlan installs samplePlan() into the handler via the
-// bcc_plan_emit path so subsequent tests run against a real DAG state.
+// plan_emit path so subsequent tests run against a real DAG state.
 func emitSamplePlan(t *testing.T, h *Handler) {
 	t.Helper()
 	registry := h.Registry()
@@ -1056,7 +1056,7 @@ func TestHandleCall_AuditLogRecordsSuccessAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(body, "bcc_plan_emit") {
+	if !strings.Contains(body, "plan_emit") {
 		t.Errorf("audit body missing method: %s", body)
 	}
 	if !strings.Contains(body, "\"error\":") {
@@ -1064,7 +1064,7 @@ func TestHandleCall_AuditLogRecordsSuccessAndFailure(t *testing.T) {
 	}
 }
 
-// schemaRejectionMissingTask covers schema validation: bcc_task_started
+// schemaRejectionMissingTask covers schema validation: task_started
 // requires id; without it, the call is rejected before any state mutates.
 func TestHandleCall_SchemaRejectsMissingRequiredField(t *testing.T) {
 	registry := NewAgentRegistry(nil)
@@ -1337,7 +1337,7 @@ func TestHandler_ResetReviewOutcome(t *testing.T) {
 	})
 }
 
-// fakeHead implements HeadProvider for bcc_get_baseline tests.
+// fakeHead implements HeadProvider for get_baseline tests.
 type fakeHead struct {
 	sha string
 	err error

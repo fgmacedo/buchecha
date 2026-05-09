@@ -11,23 +11,23 @@ import (
 
 // methodSchemaFile maps each MCP method name to the embedded JSON
 // Schema file (relative to internal/supervision/schemas/mcp/) that
-// validates its input. The Plan body inside bcc_plan_emit is checked
+// validates its input. The Plan body inside plan_emit is checked
 // separately against the existing Plan schema in internal/supervision.
 var methodSchemaFile = map[string]string{
-	MethodPlanEmit:          "schemas/mcp/bcc_plan_emit.schema.json",
-	MethodPlanSkip:          "schemas/mcp/bcc_plan_skip.schema.json",
-	MethodBriefingEmit:      "schemas/mcp/bcc_briefing_emit.schema.json",
-	MethodGetDAGSnapshot:    "schemas/mcp/bcc_get_dag_snapshot.schema.json",
-	MethodGetBriefing:       "schemas/mcp/bcc_get_briefing.schema.json",
-	MethodGetPendingTasks:   "schemas/mcp/bcc_get_pending_tasks.schema.json",
-	MethodTaskStarted:       "schemas/mcp/bcc_task_started.schema.json",
-	MethodTaskCompleted:     "schemas/mcp/bcc_task_completed.schema.json",
-	MethodTaskApproved:      "schemas/mcp/bcc_task_approved.schema.json",
-	MethodTaskNeedsFix:      "schemas/mcp/bcc_task_needs_fix.schema.json",
-	MethodIterationFinished: "schemas/mcp/bcc_iteration_finished.schema.json",
-	MethodReviewFinished:    "schemas/mcp/bcc_review_finished.schema.json",
-	MethodGetBaseline:       "schemas/mcp/bcc_get_baseline.schema.json",
-	MethodGetJournalDelta:   "schemas/mcp/bcc_get_journal_delta.schema.json",
+	MethodPlanEmit:          "schemas/mcp/plan_emit.schema.json",
+	MethodPlanSkip:          "schemas/mcp/plan_skip.schema.json",
+	MethodBriefingEmit:      "schemas/mcp/briefing_emit.schema.json",
+	MethodGetDAGSnapshot:    "schemas/mcp/get_dag_snapshot.schema.json",
+	MethodGetBriefing:       "schemas/mcp/get_briefing.schema.json",
+	MethodGetPendingTasks:   "schemas/mcp/get_pending_tasks.schema.json",
+	MethodTaskStarted:       "schemas/mcp/task_started.schema.json",
+	MethodTaskCompleted:     "schemas/mcp/task_completed.schema.json",
+	MethodTaskApproved:      "schemas/mcp/task_approved.schema.json",
+	MethodTaskNeedsFix:      "schemas/mcp/task_needs_fix.schema.json",
+	MethodIterationFinished: "schemas/mcp/iteration_finished.schema.json",
+	MethodReviewFinished:    "schemas/mcp/review_finished.schema.json",
+	MethodGetBaseline:       "schemas/mcp/get_baseline.schema.json",
+	MethodGetJournalDelta:   "schemas/mcp/get_journal_delta.schema.json",
 }
 
 // compileMethodSchemas reads every per-method schema embedded in the

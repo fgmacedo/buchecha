@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "bcc_task_needs_fix",
+  "title": "task_needs_fix",
   "description": "Reviewer returns a task to needs_fix with per-task feedback. Scope-checked against the audited SubDAG.",
   "type": "object",
   "additionalProperties": false,

@@ -154,7 +154,7 @@ func TestRenderBriefingSystem_IncludesPartials(t *testing.T) {
 		t.Fatalf("RenderBriefingSystem: %v", err)
 	}
 	for _, marker := range []string{
-		"bcc_task_started",
+		"task_started",
 		"absolute restrictions",
 		"git push",
 		"Clean on entry",

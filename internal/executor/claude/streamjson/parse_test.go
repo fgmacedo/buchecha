@@ -119,12 +119,12 @@ func TestParseLine_Cases(t *testing.T) {
 		},
 		{
 			name: "bcc-prefixed mcp tool surfaces as plain tool_use",
-			line: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01","name":"mcp__bcc__bcc_plan_emit","input":{"agent_id":"a","plan":{}}}]}}`,
+			line: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01","name":"mcp__bcc__plan_emit","input":{"agent_id":"a","plan":{}}}]}}`,
 			want: []agentcontract.AgentEvent{{
 				Kind: agentcontract.KindToolUse, At: at,
 				Tool: &agentcontract.ToolCallInfo{
 					ID:   "toolu_01",
-					Name: "mcp__bcc__bcc_plan_emit",
+					Name: "mcp__bcc__plan_emit",
 					Args: map[string]any{"agent_id": "a", "plan": map[string]any{}},
 				},
 			}},

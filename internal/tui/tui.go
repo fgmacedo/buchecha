@@ -152,7 +152,7 @@ type Model struct {
 	sessionReason  string
 	sessionExitMsg string // best-effort hint surfaced after a failed [e] edit
 
-	// nothingToDoMode latches when the Planner reports via bcc_plan_skip
+	// nothingToDoMode latches when the Planner reports via plan_skip
 	// that the spec is already complete. The dashboard renders a
 	// quit-only friendly screen and stays alive until the user presses
 	// q / Ctrl+C; nothingToDoReason carries the planner's free-text
@@ -712,7 +712,7 @@ func (m Model) viewContent() string {
 }
 
 // viewNothingToDo renders the friendly terminal screen latched when the
-// Planner declared the spec done via bcc_plan_skip. The user has no
+// Planner declared the spec done via plan_skip. The user has no
 // remediation to perform, so the screen exposes only a quit
 // instruction. The reason text the planner attached is shown verbatim
 // so the user can see why the run was a no-op.

@@ -51,7 +51,7 @@ type DirectorDecision struct {
 }
 
 // ReviewOutcome is the canonical Reviewer outcome reported through
-// bcc_review_finished. The decider consumes it together with the
+// review_finished. The decider consumes it together with the
 // per-task DAG state to decide the next loop step.
 type ReviewOutcome string
 

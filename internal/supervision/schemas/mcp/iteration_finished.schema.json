@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "bcc_iteration_finished",
+  "title": "iteration_finished",
   "description": "Executor reports the natural end of its invocation with one of review|done|blocked.",
   "type": "object",
   "additionalProperties": false,

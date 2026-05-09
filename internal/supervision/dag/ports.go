@@ -7,14 +7,14 @@ import (
 )
 
 // HeadProvider is the read-only git probe the handler consults to
-// answer bcc_get_baseline. The loop's GitProbe satisfies it
+// answer get_baseline. The loop's GitProbe satisfies it
 // structurally via its HeadSHA method.
 type HeadProvider interface {
 	HeadSHA(ctx context.Context) (string, error)
 }
 
 // JournalDeltaProvider is the port the handler consults to answer
-// bcc_get_journal_delta. supervision.JournalDeltaProvider is the
+// get_journal_delta. supervision.JournalDeltaProvider is the
 // in-tree implementation, delegating to GatherJournalDelta against
 // the canonical "## Execution Journal" heading; alternative
 // implementations may pin a different heading.
@@ -23,7 +23,7 @@ type JournalDeltaProvider interface {
 }
 
 // PlanPersister is the call-through the handler uses after a successful
-// bcc_plan_emit to hand the validated Plan back to the run-wide store.
+// plan_emit to hand the validated Plan back to the run-wide store.
 // The handler owns DAG state in memory; persistence beyond the in-memory
 // state is the cli/loop's responsibility, so the port is narrow.
 type PlanPersister interface {
@@ -31,7 +31,7 @@ type PlanPersister interface {
 }
 
 // BriefingPersister is the call-through the handler uses after
-// bcc_briefing_emit to hand the validated Briefing back to the
+// briefing_emit to hand the validated Briefing back to the
 // per-session store. Same shape and rationale as PlanPersister.
 type BriefingPersister interface {
 	WriteBriefing(b *supervision.Briefing) error

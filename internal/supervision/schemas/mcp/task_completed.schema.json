@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "bcc_task_completed",
+  "title": "task_completed",
   "description": "Marks a task as done. Scope-checked against the calling agent's SubDAG; Planner uses id=\"planning\" for the planning task.",
   "type": "object",
   "additionalProperties": false,

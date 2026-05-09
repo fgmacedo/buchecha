@@ -20,7 +20,7 @@ type Planner interface {
 }
 
 // Briefer spawns the Briefer agent for a single iteration. The agent
-// emits its Briefing through the MCP method bcc_briefing_emit; the
+// emits its Briefing through the MCP method briefing_emit; the
 // loop reads it back from the handler. Brief returns when the agent
 // process has exited cleanly or with an error, plus telemetry for the
 // cost panel.
@@ -31,8 +31,8 @@ type Briefer interface {
 }
 
 // Reviewer spawns the Reviewer agent for one (phase, sub-DAG) pair. The
-// agent reports per-task outcomes through bcc_task_approved and
-// bcc_task_needs_fix, finalising with bcc_review_finished. Review
+// agent reports per-task outcomes through task_approved and
+// task_needs_fix, finalising with review_finished. Review
 // returns when the agent process has exited; the loop reads the
 // resulting DAG state and review outcome from the handler.
 //
@@ -107,8 +107,8 @@ type BrieferInput struct {
 
 // ReviewerInput is the request payload for Reviewer.Review. The
 // Reviewer reads the briefing, per-task ids, and the diff/journal
-// snapshots through MCP queries (bcc_get_briefing, bcc_get_baseline,
-// bcc_get_journal_delta) once the loop has captured them on the
+// snapshots through MCP queries (get_briefing, get_baseline,
+// get_journal_delta) once the loop has captured them on the
 // handler; bcc no longer pre-collects acceptance evidence on the wire.
 // IterationID identifies the briefing the Reviewer audits; AgentID is
 // the per-spawn registry id.

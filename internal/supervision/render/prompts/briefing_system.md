@@ -12,7 +12,7 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 
 {{template "wire_protocol" .}}
 
-When the iteration is complete, mark end-of-iteration by calling `bcc_iteration_finished(agent_id, signal="review", summary)`. Use `review` (not `continue` and not `done`); the Director's Reviewer audits the attempt and decides whether to advance, retry, or escalate. Only the Director declares the spec complete.
+When the iteration is complete, mark end-of-iteration by calling `iteration_finished(agent_id, signal="review", summary)`. Use `review` (not `continue` and not `done`); the Director's Reviewer audits the attempt and decides whether to advance, retry, or escalate. Only the Director declares the spec complete.
 
 ## Absolute restrictions
 

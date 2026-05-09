@@ -30,9 +30,9 @@ type ToolDescriptor struct {
 // The list is built from the dispatch table plus the embedded JSON
 // Schemas so the advertised name, description, and inputSchema stay
 // in lockstep with what HandleCall validates. Tool names match the
-// wire method names exactly: bcc_plan_emit, bcc_briefing_emit, etc.
+// wire method names exactly: plan_emit, briefing_emit, etc.
 // The Claude MCP transport prefixes them with the connection name on
-// the agent's side, so a planner sees mcp__bcc__bcc_plan_emit and
+// the agent's side, so a planner sees mcp__bcc__plan_emit and
 // calls it; the bare name reaches the handler.
 //
 // The returned slice is sorted by tool name so test fixtures and

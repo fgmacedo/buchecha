@@ -107,13 +107,13 @@ type DirectorPorts struct {
 	Plan *supervision.Plan
 
 	// Briefer spawns the Briefer agent for one iteration. Required.
-	// The agent emits the Briefing through bcc_briefing_emit; the loop
+	// The agent emits the Briefing through briefing_emit; the loop
 	// reads it back from Handler.Briefing(iterationID).
 	Briefer supervision.Briefer
 
 	// Reviewer spawns the Reviewer agent for one iteration. Required.
-	// The agent reports per-task outcomes through bcc_task_approved /
-	// bcc_task_needs_fix and a final bcc_review_finished; the loop
+	// The agent reports per-task outcomes through task_approved /
+	// task_needs_fix and a final review_finished; the loop
 	// reads the resulting DAG state and review outcome from Handler.
 	Reviewer supervision.Reviewer
 

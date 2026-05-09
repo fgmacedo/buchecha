@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "bcc_plan_emit",
+  "title": "plan_emit",
   "description": "Planner emits the validated Plan. The handler runs ValidatePlan after schema validation; both must pass before the Plan replaces session state.",
   "type": "object",
   "additionalProperties": false,

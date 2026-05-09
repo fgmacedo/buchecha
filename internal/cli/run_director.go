@@ -37,7 +37,7 @@ import (
 )
 
 // errPlannerSkipped is returned by freshPlan / resolveDirectorPlan when
-// the Planner declared the spec done by calling bcc_plan_skip. It is a
+// the Planner declared the spec done by calling plan_skip. It is a
 // success path: callers map it to ExitDone and surface a friendly
 // "nothing to do" message instead of a fatal error.
 type errPlannerSkipped struct {
@@ -344,7 +344,7 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 
 // buildCapabilityRegistry merges the curated catalog of every known
 // provider into a single CapabilityRegistry. Used by the run-wide
-// handler for tier and summary lookups when validating bcc_plan_emit
+// handler for tier and summary lookups when validating plan_emit
 // payloads and for renders that want a flat catalog (auditing, future
 // API endpoints).
 func buildCapabilityRegistry() menu.CapabilityRegistry {
@@ -1133,14 +1133,14 @@ func printSessionResumeHint(w io.Writer, sessionID, specPath string) {
 
 // LoopFinishedReasonNothingToDo is the canonical Reason carried on the
 // LoopFinished event when the Planner declared the spec done via
-// bcc_plan_skip. Headless render backends (text/json) emit this reason
+// plan_skip. Headless render backends (text/json) emit this reason
 // so consumers can branch deterministically; the TUI maps the same
 // reason to a friendly terminal screen.
 const LoopFinishedReasonNothingToDo = "nothing_to_do"
 
 // LoopFinishedReasonPlannerFailed is the canonical Reason emitted when
 // the planner subprocess exited with no terminal MCP call (no
-// bcc_plan_emit, no bcc_plan_skip). The TUI keeps the dashboard alive
+// plan_emit, no plan_skip). The TUI keeps the dashboard alive
 // in session mode so the user can read the underlying error in the
 // session footer and decide whether to resume / edit / quit.
 const LoopFinishedReasonPlannerFailed = "planner_failed"
@@ -1370,10 +1370,10 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		}
 	}
 
-	// The Plan flows through the MCP handler via bcc_plan_emit; the
+	// The Plan flows through the MCP handler via plan_emit; the
 	// adapter return is nil by design. Handler state is authoritative:
 	// inspect it before honouring runErr so that a misbehaving agent
-	// that crashed after calling bcc_plan_emit / bcc_plan_skip still has
+	// that crashed after calling plan_emit / plan_skip still has
 	// its terminal call respected. A non-zero exit only becomes fatal
 	// when the planner left no terminal state behind.
 	if h := directorEffectiveHandler(deps); h != nil {
@@ -1388,7 +1388,7 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 		if runErr != nil {
 			return nil, fmt.Errorf("director: plan: %w", runErr)
 		}
-		return nil, errors.New("director: planner exited without emitting a plan or calling bcc_plan_skip")
+		return nil, errors.New("director: planner exited without emitting a plan or calling plan_skip")
 	}
 	plan.SpecHash = hash
 	if plan.PlannedAt.IsZero() {
