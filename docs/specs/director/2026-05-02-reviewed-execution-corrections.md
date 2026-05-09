@@ -501,3 +501,17 @@ Every method in PRD 5 section 8 has a JSON Schema and a real handler dispatch: e
 - `internal/director/render_test.go::TestRenderBriefingPrompt_IncludesPartials` and `internal/format/markdown_bcc/markdown_bcc_test.go::TestBuildPrompt_LoopMode_IncludesContractCore` were still asserting the legacy `mcp__bcc__*` tool names embedded in the prompt. Both updated to assert the new MCP method names (`bcc_task_started`, `bcc_task_completed`, `bcc_iteration_finished`); the underlying prompts already compose the rewritten partial.
 - `internal/director/testdata/briefing_golden.md` regenerated under `-update-golden` because the wire-protocol partial body changed end-to-end. The change is purely the new MCP usage manual; no semantic shift in the surrounding prompt.
 - `docs/specs/director/index.md` already named PRD 5 as the current target and PRD 2 as superseded, and listed both the new PRD 5 and the corrections spec under "Documents in this initiative", so the P8 doc-index task was already discharged by prior phases. No edit needed; verified at completion.
+
+### 2026-05-09 00:00, Phase wire-rename: Drop redundant bcc_ prefix from 14 MCP method names
+
+The 14 MCP method constants in `internal/supervision/dag/handler.go` had their values stripped of the `bcc_` prefix (`bcc_plan_emit` → `plan_emit`, etc.). The `bcc` connection name already namespaces the tools on the agent side (`mcp__bcc__plan_emit`), so the double prefix was redundant. All 14 schema files under `internal/supervision/schemas/mcp/` were renamed to match, and every framework-side reference (error messages, comments, godoc, prompts, golden fixtures, test literals, project docs) was updated in a single transactional commit.
+
+**Decisions:**
+
+- Constant identifiers (`MethodPlanEmit`, `MethodTaskStarted`, etc.) are unchanged; only the string values changed. Callers throughout the framework reference the constants, so no cascade edit was needed in handler dispatch or schema loading after the constants block was updated.
+- `MCPServerName` and `MCPToolNamePrefix` are unchanged; the connection name `bcc` stays and `mcp__bcc__` remains the agent-side prefix.
+- `internal/webui/web/src/lib/mcp.ts` is out of scope for this phase; it still references the old style in a comment.
+
+**Discovered:**
+
+- The two JSONL stream fixtures (`internal/executor/claude/testdata/full-iter.jsonl`, `internal/executor/claude/streamjson/testdata/full-iter.jsonl`) already used the single-prefix form (`mcp__bcc__task_started`, not `mcp__bcc__bcc_task_started`), so no change was needed there.
