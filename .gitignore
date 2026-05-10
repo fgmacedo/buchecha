@@ -54,5 +54,6 @@ internal/webui/web/*.tsbuildinfo
 /tmp/
 .bcc-cache/
 .claude/scheduled_tasks.lock
+.compare-worktrees/
 testdata/diag-dag-output/
 testdata/bcc-validation/
