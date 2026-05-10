@@ -4,47 +4,91 @@ import type { SeqEvent } from './use-events'
 // Role is the set of roles that emit spawn_finished events.
 export type Role = 'planner' | 'briefer' | 'executor' | 'reviewer'
 
-// SpawnCost is the cost breakdown from a spawn_finished event.
-interface SpawnCost {
-  input_tokens: number
-  output_tokens: number
-  cache_read_input_tokens: number
-  cache_creation_input_tokens: number
-  usd: number
+// TokenUsage mirrors the Go agentcontract.TokenUsage value object: five
+// disjoint, additive token buckets plus an optional provider tag. The
+// wire emitter (internal/loop/eventjson.go) renders this exact shape on
+// agent_event.usage, agent_event.done.tokens, and spawn_finished.cost.tokens.
+export interface TokenUsage {
+  input_fresh: number
+  input_cached: number
+  cache_write: number
+  output: number
+  reasoning: number
+  provider?: string
 }
 
-// SpawnFinishedPayload is the shape of a spawn_finished event payload.
+// SpawnCostWire is the cost block of a spawn_finished event: a USD scalar
+// alongside the same TokenUsage shape.
+interface SpawnCostWire {
+  usd: number
+  tokens?: TokenUsage
+}
+
+// SpawnFinishedPayload is the shape of a spawn_finished event payload as
+// the SSE stream delivers it. Only fields the aggregator reads are typed;
+// the rest are tolerated through the index signature.
 interface SpawnFinishedPayload {
   type: 'spawn_finished'
   role?: string
-  cost?: SpawnCost
+  cost?: SpawnCostWire
   [key: string]: unknown
 }
 
-// CostAgg is the aggregated cost breakdown across a session.
+// CostAgg is the aggregated cost breakdown across a session. totalTokens
+// preserves the five buckets so consumers can show disaggregated totals
+// (per-bucket rows in the cost-meter popover) on top of the headline sum.
 export interface CostAgg {
   totalUSD: number
-  totalTokens: {
-    input: number
-    output: number
-    cacheRead: number
-    cacheCreate: number
-  }
+  totalTokens: TokenUsage
+  totalTokensSum: number
   perRole: Record<string, { usd: number; tokens: number }>
   perIteration: Array<{ iterationIndex: number; usd: number; tokens: number }>
 }
 
 // LiveAgentTokens accumulates per-message token usage emitted by an
 // in-flight agent spawn through assistant_text events. Once the agent's
-// spawn_finished event lands the finalized totals from cost replace this
-// in-flight tally; until then the bucket drives the live token counter.
+// spawn_finished event lands, the finalized totals from `cost.tokens`
+// replace this in-flight tally so the same usage is not double-counted.
 interface LiveAgentTokens {
   role: string
   iterationIndex: number
-  input: number
-  output: number
-  cacheRead: number
-  cacheCreate: number
+  tokens: TokenUsage
+}
+
+const ZERO_TOKENS: TokenUsage = {
+  input_fresh: 0,
+  input_cached: 0,
+  cache_write: 0,
+  output: 0,
+  reasoning: 0,
+}
+
+function totalOf(t: TokenUsage): number {
+  return t.input_fresh + t.input_cached + t.cache_write + t.output + t.reasoning
+}
+
+function addInto(into: TokenUsage, more: TokenUsage): void {
+  into.input_fresh += more.input_fresh
+  into.input_cached += more.input_cached
+  into.cache_write += more.cache_write
+  into.output += more.output
+  into.reasoning += more.reasoning
+}
+
+// readTokenUsage normalizes any object that looks like a wire TokenUsage
+// into the typed shape, defaulting missing buckets to 0. Returns null for
+// non-objects so callers can short-circuit.
+function readTokenUsage(raw: unknown): TokenUsage | null {
+  if (!raw || typeof raw !== 'object') return null
+  const u = raw as Record<string, unknown>
+  return {
+    input_fresh: typeof u.input_fresh === 'number' ? u.input_fresh : 0,
+    input_cached: typeof u.input_cached === 'number' ? u.input_cached : 0,
+    cache_write: typeof u.cache_write === 'number' ? u.cache_write : 0,
+    output: typeof u.output === 'number' ? u.output : 0,
+    reasoning: typeof u.reasoning === 'number' ? u.reasoning : 0,
+    provider: typeof u.provider === 'string' ? u.provider : undefined,
+  }
 }
 
 /**
@@ -61,10 +105,7 @@ export function computeCostAgg(events: SeqEvent[]): CostAgg {
   const perIterationMap: Map<number, { usd: number; tokens: number }> = new Map()
 
   let totalUSD = 0
-  let totalInputTokens = 0
-  let totalOutputTokens = 0
-  let totalCacheReadTokens = 0
-  let totalCacheCreateTokens = 0
+  const totalTokens: TokenUsage = { ...ZERO_TOKENS }
 
   // Track in-flight token usage per agent_id so we can absorb it into
   // totals only for agents whose spawn has not finished yet. Finalized
@@ -106,28 +147,22 @@ export function computeCostAgg(events: SeqEvent[]): CostAgg {
       const iterationIndex = parseIterIndex(iterationId)
 
       const usd = cost.usd ?? 0
-      const inputTokens = cost.input_tokens ?? 0
-      const outputTokens = cost.output_tokens ?? 0
-      const cacheReadTokens = cost.cache_read_input_tokens ?? 0
-      const cacheCreateTokens = cost.cache_creation_input_tokens ?? 0
+      const tokens = readTokenUsage(cost.tokens) ?? ZERO_TOKENS
+      const tokensSum = totalOf(tokens)
 
       totalUSD += usd
-      totalInputTokens += inputTokens
-      totalOutputTokens += outputTokens
-      totalCacheReadTokens += cacheReadTokens
-      totalCacheCreateTokens += cacheCreateTokens
+      addInto(totalTokens, tokens)
 
       const role = payload.role ?? 'unknown'
-      bumpRole(role, usd, inputTokens + outputTokens)
-      bumpIter(iterationIndex, usd, inputTokens + outputTokens)
+      bumpRole(role, usd, tokensSum)
+      bumpIter(iterationIndex, usd, tokensSum)
       continue
     }
 
     if (event.type !== 'agent_event') continue
     if (event.kind !== 'assistant_text') continue
-    const usage = event.usage
-    if (!usage || typeof usage !== 'object') continue
-    const u = usage as Record<string, unknown>
+    const usage = readTokenUsage(event.usage)
+    if (!usage) continue
     const agentId = typeof event.agent_id === 'string' ? event.agent_id : ''
     if (!agentId) continue
     const role =
@@ -145,19 +180,9 @@ export function computeCostAgg(events: SeqEvent[]): CostAgg {
       ({
         role,
         iterationIndex,
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheCreate: 0,
+        tokens: { ...ZERO_TOKENS },
       } as LiveAgentTokens)
-    bucket.input += typeof u.input_tokens === 'number' ? u.input_tokens : 0
-    bucket.output += typeof u.output_tokens === 'number' ? u.output_tokens : 0
-    bucket.cacheRead +=
-      typeof u.cache_read_input_tokens === 'number' ? u.cache_read_input_tokens : 0
-    bucket.cacheCreate +=
-      typeof u.cache_creation_input_tokens === 'number'
-        ? u.cache_creation_input_tokens
-        : 0
+    addInto(bucket.tokens, usage)
     liveByAgent.set(agentId, bucket)
   }
 
@@ -165,12 +190,10 @@ export function computeCostAgg(events: SeqEvent[]): CostAgg {
   // finished. Finalized agents already contributed via spawn_finished.
   for (const [agentId, bucket] of liveByAgent) {
     if (finalizedAgentIds.has(agentId)) continue
-    totalInputTokens += bucket.input
-    totalOutputTokens += bucket.output
-    totalCacheReadTokens += bucket.cacheRead
-    totalCacheCreateTokens += bucket.cacheCreate
-    bumpRole(bucket.role, 0, bucket.input + bucket.output)
-    bumpIter(bucket.iterationIndex, 0, bucket.input + bucket.output)
+    const tokensSum = totalOf(bucket.tokens)
+    addInto(totalTokens, bucket.tokens)
+    bumpRole(bucket.role, 0, tokensSum)
+    bumpIter(bucket.iterationIndex, 0, tokensSum)
   }
 
   const perIteration = Array.from(perIterationMap.entries())
@@ -179,21 +202,18 @@ export function computeCostAgg(events: SeqEvent[]): CostAgg {
 
   return {
     totalUSD,
-    totalTokens: {
-      input: totalInputTokens,
-      output: totalOutputTokens,
-      cacheRead: totalCacheReadTokens,
-      cacheCreate: totalCacheCreateTokens,
-    },
+    totalTokens,
+    totalTokensSum: totalOf(totalTokens),
     perRole,
     perIteration,
   }
 }
 
 /**
- * useCostAggregator derives cost metrics from the events stream.
- * It only reads spawn_finished events and aggregates them by role and iteration.
- * The hook is memoized on events.length (not deep equality) for efficiency.
+ * useCostAggregator derives cost metrics from the events stream. Memoized
+ * on events.length only — every new event grows the array and bumps the
+ * length, so the existing dependency stays correct. Deep equality would
+ * cost more than recomputing.
  */
 export function useCostAggregator(events: SeqEvent[]): CostAgg {
   return useMemo(() => computeCostAgg(events), [events.length])

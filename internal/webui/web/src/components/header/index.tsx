@@ -75,8 +75,10 @@ export function Header({ snapshot, events, leading }: HeaderProps) {
   const maxIter = latestIter?.maxIter ?? session?.max_iter ?? 0
 
   const eta = session ? computeEta(elapsedMs, iterIndex, maxIter) : null
-  const totalTokens =
-    costAgg.totalTokens.input + costAgg.totalTokens.output
+  // Sum across all five vendor-neutral buckets (input_fresh, input_cached,
+  // cache_write, output, reasoning). cache_read tokens are the bulk of
+  // every cached call; ignoring them under-reports the total by 50x+.
+  const totalTokens = costAgg.totalTokensSum
   const progressPct =
     maxIter > 0
       ? Math.min(100, (iterIndex / maxIter) * 100)

@@ -140,7 +140,7 @@ export function CostMeter({ agg, compact = false }: CostMeterProps) {
     setIsOpen(!isOpen)
   }
 
-  const totalTokens = agg.totalTokens.input + agg.totalTokens.output
+  const totalTokens = agg.totalTokensSum
 
   return (
     <Popover
@@ -198,6 +198,45 @@ export function CostMeter({ agg, compact = false }: CostMeterProps) {
       }
     >
       <div className="space-y-3">
+        {/* Per-bucket section: surfaces the 5 vendor-neutral token buckets
+            so users can see what fraction of the total came from cache,
+            output, etc. cache_read is usually >90% of the total when caching
+            is healthy; spotting it here is the headline diagnostic. */}
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground mb-2">By Bucket</h4>
+          <div className="space-y-1.5">
+            {(
+              [
+                ['fresh', agg.totalTokens.input_fresh],
+                ['cached', agg.totalTokens.input_cached],
+                ['cache write', agg.totalTokens.cache_write],
+                ['output', agg.totalTokens.output],
+                ['reasoning', agg.totalTokens.reasoning],
+              ] as const
+            ).map(([label, value]) => {
+              const pct =
+                agg.totalTokensSum > 0
+                  ? ((value / agg.totalTokensSum) * 100).toFixed(0)
+                  : '0'
+              return (
+                <div
+                  key={label}
+                  className="flex items-center justify-between text-xs"
+                  data-testid={`bucket-${label.replace(' ', '-')}`}
+                >
+                  <span className="text-foreground flex-1">{label}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-numeric text-muted-foreground">{value}</span>
+                    <span className="text-muted-foreground w-6 text-right">{pct}%</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="border-t border-border-subtle" />
+
         {/* Per-role section */}
         <div>
           <h4 className="text-xs font-semibold text-muted-foreground mb-2">By Role</h4>
