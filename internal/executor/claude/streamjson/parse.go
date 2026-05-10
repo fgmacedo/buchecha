@@ -103,12 +103,7 @@ func parseAssistant(raw []byte, at time.Time) []agentcontract.AgentEvent {
 	var v struct {
 		Message struct {
 			Content []assistantContent `json:"content"`
-			Usage   struct {
-				InputTokens              int64 `json:"input_tokens"`
-				OutputTokens             int64 `json:"output_tokens"`
-				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-			} `json:"usage"`
+			Usage   anthropicUsageRaw  `json:"usage"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -143,21 +138,47 @@ func parseAssistant(raw []byte, at time.Time) []agentcontract.AgentEvent {
 			})
 		}
 	}
-	u := v.Message.Usage
-	if u.InputTokens+u.OutputTokens+u.CacheReadInputTokens+u.CacheCreationInputTokens > 0 {
+	if usage := anthropicUsage(v.Message.Usage); !usage.IsZero() {
 		for i := range out {
 			if out[i].Kind == agentcontract.KindAssistantText {
-				out[i].Usage = &agentcontract.UsageInfo{
-					InputTokens:              u.InputTokens,
-					OutputTokens:             u.OutputTokens,
-					CacheReadInputTokens:     u.CacheReadInputTokens,
-					CacheCreationInputTokens: u.CacheCreationInputTokens,
-				}
+				out[i].Usage = &usage
 				break
 			}
 		}
 	}
 	return out
+}
+
+// anthropicUsageRaw is the four-field shape Claude's stream-json carries
+// on assistant.usage and result.usage. Adapter-internal; never escapes.
+type anthropicUsageRaw struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+}
+
+// anthropicUsage normalizes Claude's four-field usage payload into the
+// vendor-neutral 5-bucket TokenUsage. Mapping:
+//
+//	input_tokens                → InputFresh   (uncached prompt)
+//	cache_read_input_tokens     → InputCached  (served from prefix cache)
+//	cache_creation_input_tokens → CacheWrite   (written to cache)
+//	output_tokens               → Output
+//	(reasoning is 0 today; extended-thinking would surface it)
+//
+// The four Anthropic buckets are already disjoint and additive, so the
+// normalization is a 1:1 rename — no subtraction needed (unlike OpenAI
+// and Gemini, where cached_tokens is a subset of prompt_tokens).
+func anthropicUsage(u anthropicUsageRaw) agentcontract.TokenUsage {
+	return agentcontract.TokenUsage{
+		InputFresh:  u.InputTokens,
+		InputCached: u.CacheReadInputTokens,
+		CacheWrite:  u.CacheCreationInputTokens,
+		Output:      u.OutputTokens,
+		Reasoning:   0,
+		Provider:    agentcontract.ProviderAnthropic,
+	}
 }
 
 func parseUser(raw []byte, at time.Time) []agentcontract.AgentEvent {
@@ -252,15 +273,10 @@ func parseRateLimit(raw []byte, at time.Time) []agentcontract.AgentEvent {
 
 func parseResult(raw []byte, at time.Time) []agentcontract.AgentEvent {
 	var v struct {
-		NumTurns     int     `json:"num_turns"`
-		TotalCostUSD float64 `json:"total_cost_usd"`
-		DurationMS   int64   `json:"duration_ms"`
-		Usage        struct {
-			InputTokens              int64 `json:"input_tokens"`
-			OutputTokens             int64 `json:"output_tokens"`
-			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-		} `json:"usage"`
+		NumTurns     int               `json:"num_turns"`
+		TotalCostUSD float64           `json:"total_cost_usd"`
+		DurationMS   int64             `json:"duration_ms"`
+		Usage        anthropicUsageRaw `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil
@@ -269,13 +285,10 @@ func parseResult(raw []byte, at time.Time) []agentcontract.AgentEvent {
 		Kind: agentcontract.KindResultSummary,
 		At:   at,
 		Done: &agentcontract.ResultSummaryInfo{
-			NumTurns:                 v.NumTurns,
-			TotalCostUSD:             v.TotalCostUSD,
-			DurationMS:               v.DurationMS,
-			InputTokens:              v.Usage.InputTokens,
-			OutputTokens:             v.Usage.OutputTokens,
-			CacheReadInputTokens:     v.Usage.CacheReadInputTokens,
-			CacheCreationInputTokens: v.Usage.CacheCreationInputTokens,
+			NumTurns:     v.NumTurns,
+			TotalCostUSD: v.TotalCostUSD,
+			DurationMS:   v.DurationMS,
+			Tokens:       anthropicUsage(v.Usage),
 		},
 	}}
 }

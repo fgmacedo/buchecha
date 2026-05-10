@@ -15,7 +15,7 @@ func TestHealth_onAgentEvent_AccumulatesCounters(t *testing.T) {
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolUse, At: now.Add(-20 * time.Second), Tool: &agentcontract.ToolCallInfo{}})
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolResult, At: now.Add(-15 * time.Second), Tool: &agentcontract.ToolCallInfo{IsError: true}})
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary, At: now, Done: &agentcontract.ResultSummaryInfo{
-		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
+		Tokens: agentcontract.TokenUsage{InputFresh: 1500, Output: 700}, TotalCostUSD: 0.42,
 	}})
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindRateLimit, At: now, Rate: &agentcontract.RateLimitInfo{Status: "warning"}})
 
@@ -40,22 +40,21 @@ func TestHealth_AssistantTextUsageAccumulatesAndReconciles(t *testing.T) {
 	now := time.Date(2026, 4, 29, 14, 30, 0, 0, time.UTC)
 	h := healthPanel{startedAt: now.Add(-time.Minute)}
 
-	// Two assistant messages with per-message Usage. The four-field sum
+	// Two assistant messages with per-message Usage. The 5-bucket Total()
 	// should accumulate into iterTokens (the live, in-flight counter).
 	h.onAgentEvent(agentcontract.AgentEvent{
 		Kind: agentcontract.KindAssistantText, At: now.Add(-30 * time.Second),
 		Text: "first turn",
-		Usage: &agentcontract.UsageInfo{
-			InputTokens: 100, OutputTokens: 20,
-			CacheReadInputTokens: 10, CacheCreationInputTokens: 5,
+		Usage: &agentcontract.TokenUsage{
+			InputFresh: 100, Output: 20,
+			InputCached: 10, CacheWrite: 5,
 		},
 	})
 	h.onAgentEvent(agentcontract.AgentEvent{
 		Kind: agentcontract.KindAssistantText, At: now.Add(-15 * time.Second),
 		Text: "second turn",
-		Usage: &agentcontract.UsageInfo{
-			InputTokens: 200, OutputTokens: 40,
-			CacheReadInputTokens: 0, CacheCreationInputTokens: 0,
+		Usage: &agentcontract.TokenUsage{
+			InputFresh: 200, Output: 40,
 		},
 	})
 	if h.iterTokens != 100+20+10+5+200+40 {
@@ -69,12 +68,14 @@ func TestHealth_AssistantTextUsageAccumulatesAndReconciles(t *testing.T) {
 		t.Errorf("live total = %d, want 375", got)
 	}
 
-	// Terminal result event reconciles to the authoritative four-field
+	// Terminal result event reconciles to the authoritative 5-bucket
 	// total and resets the per-iteration counter. The authoritative value
 	// can differ slightly from the per-message sum (ok by design).
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary, At: now, Done: &agentcontract.ResultSummaryInfo{
-		InputTokens: 320, OutputTokens: 64,
-		CacheReadInputTokens: 12, CacheCreationInputTokens: 5,
+		Tokens: agentcontract.TokenUsage{
+			InputFresh: 320, Output: 64,
+			InputCached: 12, CacheWrite: 5,
+		},
 		TotalCostUSD: 0.10,
 	}})
 	if h.iterTokens != 0 {
@@ -90,7 +91,7 @@ func TestHealth_view_RendersAllRows(t *testing.T) {
 	h := healthPanel{startedAt: now.Add(-time.Minute)}
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindToolUse, At: now.Add(-10 * time.Second), Tool: &agentcontract.ToolCallInfo{}})
 	h.onAgentEvent(agentcontract.AgentEvent{Kind: agentcontract.KindResultSummary, At: now, Done: &agentcontract.ResultSummaryInfo{
-		InputTokens: 1500, OutputTokens: 700, TotalCostUSD: 0.42,
+		Tokens: agentcontract.TokenUsage{InputFresh: 1500, Output: 700}, TotalCostUSD: 0.42,
 	}})
 
 	out := h.view(now, 40)

@@ -94,16 +94,13 @@ func (h *healthPanel) onAgentEvent(ev agentcontract.AgentEvent) {
 		// panel shows a live count during the iteration. The terminal
 		// KindResultSummary reconciles to the authoritative total.
 		if ev.Usage != nil {
-			h.iterTokens += ev.Usage.InputTokens + ev.Usage.OutputTokens +
-				ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
+			h.iterTokens += ev.Usage.Total()
 		}
 	case agentcontract.KindResultSummary:
 		if ev.Done != nil {
 			// Reconcile: replace the live per-message estimate with the
-			// authoritative four-field total from the terminal result event.
-			authoritative := ev.Done.InputTokens + ev.Done.OutputTokens +
-				ev.Done.CacheReadInputTokens + ev.Done.CacheCreationInputTokens
-			h.totalTokens += authoritative
+			// authoritative 5-bucket total from the terminal result event.
+			h.totalTokens += ev.Done.Tokens.Total()
 			h.iterTokens = 0
 			h.totalCostUSD += ev.Done.TotalCostUSD
 		}

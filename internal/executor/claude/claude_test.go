@@ -595,17 +595,17 @@ func TestRun_SpawnFinishedCostMatchesResultSummaryEvent(t *testing.T) {
 	if finished.Cost.USD != done.TotalCostUSD {
 		t.Errorf("Cost.USD = %v, want %v (from result_summary)", finished.Cost.USD, done.TotalCostUSD)
 	}
-	if int64(finished.Cost.InputTokens) != done.InputTokens {
-		t.Errorf("Cost.InputTokens = %d, want %d", finished.Cost.InputTokens, done.InputTokens)
+	if finished.Cost.Tokens.InputFresh != done.Tokens.InputFresh {
+		t.Errorf("Cost.Tokens.InputFresh = %d, want %d", finished.Cost.Tokens.InputFresh, done.Tokens.InputFresh)
 	}
-	if int64(finished.Cost.OutputTokens) != done.OutputTokens {
-		t.Errorf("Cost.OutputTokens = %d, want %d", finished.Cost.OutputTokens, done.OutputTokens)
+	if finished.Cost.Tokens.Output != done.Tokens.Output {
+		t.Errorf("Cost.Tokens.Output = %d, want %d", finished.Cost.Tokens.Output, done.Tokens.Output)
 	}
-	if int64(finished.Cost.CacheReadTokens) != done.CacheReadInputTokens {
-		t.Errorf("Cost.CacheReadTokens = %d, want %d", finished.Cost.CacheReadTokens, done.CacheReadInputTokens)
+	if finished.Cost.Tokens.InputCached != done.Tokens.InputCached {
+		t.Errorf("Cost.Tokens.InputCached = %d, want %d", finished.Cost.Tokens.InputCached, done.Tokens.InputCached)
 	}
-	if int64(finished.Cost.CacheCreateTokens) != done.CacheCreationInputTokens {
-		t.Errorf("Cost.CacheCreateTokens = %d, want %d", finished.Cost.CacheCreateTokens, done.CacheCreationInputTokens)
+	if finished.Cost.Tokens.CacheWrite != done.Tokens.CacheWrite {
+		t.Errorf("Cost.Tokens.CacheWrite = %d, want %d", finished.Cost.Tokens.CacheWrite, done.Tokens.CacheWrite)
 	}
 }
 

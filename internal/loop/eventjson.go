@@ -233,10 +233,10 @@ func jsonPayload(ev Event) map[string]any {
 			"exit_code":   e.ExitCode,
 			"duration_ms": e.DurationMS,
 			"cost": map[string]any{
-				"input_tokens":                e.Cost.InputTokens,
-				"output_tokens":               e.Cost.OutputTokens,
-				"cache_read_input_tokens":     e.Cost.CacheReadTokens,
-				"cache_creation_input_tokens": e.Cost.CacheCreateTokens,
+				"input_tokens":                e.Cost.Tokens.InputFresh,
+				"output_tokens":               e.Cost.Tokens.Output,
+				"cache_read_input_tokens":     e.Cost.Tokens.InputCached,
+				"cache_creation_input_tokens": e.Cost.Tokens.CacheWrite,
 				"usd":                         e.Cost.USD,
 			},
 		}
@@ -299,10 +299,10 @@ func agentEventJSON(ae agentcontract.AgentEvent, level string) map[string]any {
 		out["text"] = ae.Text
 		if ae.Kind == agentcontract.KindAssistantText && ae.Usage != nil {
 			out["usage"] = map[string]any{
-				"input_tokens":                ae.Usage.InputTokens,
-				"output_tokens":               ae.Usage.OutputTokens,
-				"cache_read_input_tokens":     ae.Usage.CacheReadInputTokens,
-				"cache_creation_input_tokens": ae.Usage.CacheCreationInputTokens,
+				"input_tokens":                ae.Usage.InputFresh,
+				"output_tokens":               ae.Usage.Output,
+				"cache_read_input_tokens":     ae.Usage.InputCached,
+				"cache_creation_input_tokens": ae.Usage.CacheWrite,
 			}
 		}
 	case agentcontract.KindToolUse:
@@ -339,10 +339,10 @@ func agentEventJSON(ae agentcontract.AgentEvent, level string) map[string]any {
 			out["done"] = map[string]any{
 				"num_turns":                   ae.Done.NumTurns,
 				"total_cost_usd":              ae.Done.TotalCostUSD,
-				"input_tokens":                ae.Done.InputTokens,
-				"output_tokens":               ae.Done.OutputTokens,
-				"cache_read_input_tokens":     ae.Done.CacheReadInputTokens,
-				"cache_creation_input_tokens": ae.Done.CacheCreationInputTokens,
+				"input_tokens":                ae.Done.Tokens.InputFresh,
+				"output_tokens":               ae.Done.Tokens.Output,
+				"cache_read_input_tokens":     ae.Done.Tokens.InputCached,
+				"cache_creation_input_tokens": ae.Done.Tokens.CacheWrite,
 				"duration_ms":                 ae.Done.DurationMS,
 			}
 		}

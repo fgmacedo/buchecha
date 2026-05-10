@@ -887,12 +887,13 @@ func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEve
 		}
 	}
 	if body.Usage != nil {
-		ev.Usage = &agentcontract.UsageInfo{
-			InputTokens:              body.Usage.InputTokens,
-			OutputTokens:             body.Usage.OutputTokens,
-			CacheReadInputTokens:     body.Usage.CacheReadInputTokens,
-			CacheCreationInputTokens: body.Usage.CacheCreationInputTokens,
-		}
+		usage := wireUsageToTokenUsage(
+			body.Usage.InputTokens,
+			body.Usage.OutputTokens,
+			body.Usage.CacheReadInputTokens,
+			body.Usage.CacheCreationInputTokens,
+		)
+		ev.Usage = &usage
 	}
 	if body.Rate != nil {
 		ev.Rate = &agentcontract.RateLimitInfo{
@@ -902,13 +903,15 @@ func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEve
 	}
 	if body.Done != nil {
 		ev.Done = &agentcontract.ResultSummaryInfo{
-			NumTurns:                 body.Done.NumTurns,
-			TotalCostUSD:             body.Done.TotalCostUSD,
-			InputTokens:              body.Done.InputTokens,
-			OutputTokens:             body.Done.OutputTokens,
-			CacheReadInputTokens:     body.Done.CacheReadInputTokens,
-			CacheCreationInputTokens: body.Done.CacheCreationInputTokens,
-			DurationMS:               body.Done.DurationMS,
+			NumTurns:     body.Done.NumTurns,
+			TotalCostUSD: body.Done.TotalCostUSD,
+			DurationMS:   body.Done.DurationMS,
+			Tokens: wireUsageToTokenUsage(
+				body.Done.InputTokens,
+				body.Done.OutputTokens,
+				body.Done.CacheReadInputTokens,
+				body.Done.CacheCreationInputTokens,
+			),
 		}
 	}
 	return ev, true
@@ -923,4 +926,20 @@ func parseAt(s string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// wireUsageToTokenUsage maps the on-disk Anthropic-shaped usage fields
+// (input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens)
+// back into the vendor-neutral TokenUsage. Mirrors the inverse of the
+// translation in internal/loop/eventjson.go; both will be replaced when
+// the wire format flips to the 5-bucket vendor-neutral shape.
+func wireUsageToTokenUsage(inputFresh, output, cacheRead, cacheWrite int64) agentcontract.TokenUsage {
+	return agentcontract.TokenUsage{
+		InputFresh:  inputFresh,
+		InputCached: cacheRead,
+		CacheWrite:  cacheWrite,
+		Output:      output,
+		Reasoning:   0,
+		Provider:    agentcontract.ProviderAnthropic,
+	}
 }

@@ -237,8 +237,10 @@ func textRenderAgentEvent(ae agentcontract.AgentEvent) (string, []slog.Attr) {
 			attrs = append(attrs,
 				slog.Int("num_turns", ae.Done.NumTurns),
 				slog.Float64("total_cost_usd", ae.Done.TotalCostUSD),
-				slog.Int64("input_tokens", ae.Done.InputTokens),
-				slog.Int64("output_tokens", ae.Done.OutputTokens),
+				slog.Int64("input_tokens", ae.Done.Tokens.InputFresh),
+				slog.Int64("output_tokens", ae.Done.Tokens.Output),
+				slog.Int64("cache_read_tokens", ae.Done.Tokens.InputCached),
+				slog.Int64("cache_write_tokens", ae.Done.Tokens.CacheWrite),
 				slog.Int64("duration_ms", ae.Done.DurationMS),
 			)
 		}

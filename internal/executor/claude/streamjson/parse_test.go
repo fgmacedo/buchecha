@@ -103,7 +103,42 @@ func TestParseLine_Cases(t *testing.T) {
 				Kind: agentcontract.KindResultSummary, At: at,
 				Done: &agentcontract.ResultSummaryInfo{
 					NumTurns: 12, TotalCostUSD: 0.34, DurationMS: 42100,
-					InputTokens: 12000, OutputTokens: 2300,
+					Tokens: agentcontract.TokenUsage{
+						InputFresh: 12000,
+						Output:     2300,
+						Provider:   agentcontract.ProviderAnthropic,
+					},
+				},
+			}},
+		},
+		{
+			name: "result summary with full anthropic mapping",
+			line: `{"type":"result","subtype":"success","num_turns":1,"total_cost_usd":0.05,"duration_ms":100,"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":900,"cache_creation_input_tokens":40}}`,
+			want: []agentcontract.AgentEvent{{
+				Kind: agentcontract.KindResultSummary, At: at,
+				Done: &agentcontract.ResultSummaryInfo{
+					NumTurns: 1, TotalCostUSD: 0.05, DurationMS: 100,
+					Tokens: agentcontract.TokenUsage{
+						InputFresh:  100,
+						Output:      50,
+						InputCached: 900,
+						CacheWrite:  40,
+						Provider:    agentcontract.ProviderAnthropic,
+					},
+				},
+			}},
+		},
+		{
+			name: "assistant text with usage attaches to first text event",
+			line: `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}}`,
+			want: []agentcontract.AgentEvent{{
+				Kind: agentcontract.KindAssistantText, At: at, Text: "hi",
+				Usage: &agentcontract.TokenUsage{
+					InputFresh:  1,
+					Output:      2,
+					InputCached: 3,
+					CacheWrite:  4,
+					Provider:    agentcontract.ProviderAnthropic,
 				},
 			}},
 		},
@@ -191,7 +226,7 @@ func TestParseLine_FullIterFixture(t *testing.T) {
 		{Kind: agentcontract.KindAssistantText, At: at, Text: "Result: ok"},
 		{Kind: agentcontract.KindToolUse, At: at, Tool: &agentcontract.ToolCallInfo{ID: "toolu_w3", Name: "mcp__bcc__iteration_result", Args: map[string]any{"value": "continue", "summary": "phase 1 advanced"}}},
 		{Kind: agentcontract.KindToolResult, At: at, Tool: &agentcontract.ToolCallInfo{ID: "toolu_w3", IsError: false, Summary: "ok"}},
-		{Kind: agentcontract.KindResultSummary, At: at, Done: &agentcontract.ResultSummaryInfo{NumTurns: 3, TotalCostUSD: 0.01, DurationMS: 4200, InputTokens: 100, OutputTokens: 50}},
+		{Kind: agentcontract.KindResultSummary, At: at, Done: &agentcontract.ResultSummaryInfo{NumTurns: 3, TotalCostUSD: 0.01, DurationMS: 4200, Tokens: agentcontract.TokenUsage{InputFresh: 100, Output: 50, Provider: agentcontract.ProviderAnthropic}}},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("event count = %d, want %d:\n got=%#v", len(got), len(want), got)

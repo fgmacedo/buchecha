@@ -47,7 +47,7 @@ type AgentEvent struct {
 	Init  *InitInfo          // KindInit
 	Tool  *ToolCallInfo      // KindToolUse, KindToolResult
 	Text  string             // KindThinking, KindAssistantText
-	Usage *UsageInfo         // KindAssistantText only: per-message token usage
+	Usage *TokenUsage        // KindAssistantText only: per-message token usage
 	Rate  *RateLimitInfo     // KindRateLimit
 	Done  *ResultSummaryInfo // KindResultSummary
 }
@@ -68,16 +68,6 @@ func (ev AgentEvent) WithOrigin(agentID string, role Role, phaseID, iterationID 
 	ev.IterationID = iterationID
 	ev.Attempt = attempt
 	return ev
-}
-
-// UsageInfo carries per-message token usage attached to assistant text
-// events. The four fields sum to the total billable tokens for that
-// message. Cache fields are zero when caching was not involved.
-type UsageInfo struct {
-	InputTokens              int64
-	OutputTokens             int64
-	CacheReadInputTokens     int64
-	CacheCreationInputTokens int64
 }
 
 // InitInfo carries data from a session-init event.
@@ -104,14 +94,12 @@ type RateLimitInfo struct {
 }
 
 // ResultSummaryInfo carries the agent's per-iteration cost and usage
-// totals (last event of an iteration in stream-json). The four token
-// fields sum to the total billable token count for the iteration.
+// totals (last event of an iteration in stream-json). Tokens groups the
+// vendor-neutral usage breakdown; TotalCostUSD is the provider-reported
+// dollar cost for the iteration; NumTurns and DurationMS are bookkeeping.
 type ResultSummaryInfo struct {
-	NumTurns                 int
-	TotalCostUSD             float64
-	InputTokens              int64
-	OutputTokens             int64
-	CacheReadInputTokens     int64
-	CacheCreationInputTokens int64
-	DurationMS               int64
+	NumTurns     int
+	TotalCostUSD float64
+	DurationMS   int64
+	Tokens       TokenUsage
 }

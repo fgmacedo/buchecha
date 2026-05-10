@@ -12,11 +12,14 @@ func resultSummaryEvent(usd float64, input, output, cacheRead, cacheCreate int64
 		Kind: agentcontract.KindResultSummary,
 		At:   time.Now(),
 		Done: &agentcontract.ResultSummaryInfo{
-			TotalCostUSD:             usd,
-			InputTokens:              input,
-			OutputTokens:             output,
-			CacheReadInputTokens:     cacheRead,
-			CacheCreationInputTokens: cacheCreate,
+			TotalCostUSD: usd,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh:  input,
+				Output:      output,
+				InputCached: cacheRead,
+				CacheWrite:  cacheCreate,
+				Provider:    agentcontract.ProviderAnthropic,
+			},
 		},
 	}
 }
@@ -26,15 +29,15 @@ func TestLastResultSummary_EmptySlice(t *testing.T) {
 	if ok {
 		t.Fatalf("expected false for nil slice, got true")
 	}
-	if c != (Cost{}) {
-		t.Errorf("expected zero Cost, got %+v", c)
+	if c != nil {
+		t.Errorf("expected nil ResultSummaryInfo, got %+v", c)
 	}
 	c2, ok2 := LastResultSummary([]agentcontract.AgentEvent{})
 	if ok2 {
 		t.Fatalf("expected false for empty slice, got true")
 	}
-	if c2 != (Cost{}) {
-		t.Errorf("expected zero Cost for empty slice, got %+v", c2)
+	if c2 != nil {
+		t.Errorf("expected nil ResultSummaryInfo for empty slice, got %+v", c2)
 	}
 }
 
@@ -58,20 +61,20 @@ func TestLastResultSummary_SingleResult(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected true for slice with result_summary")
 	}
-	if c.USD != 0.012 {
-		t.Errorf("USD = %v, want 0.012", c.USD)
+	if c.TotalCostUSD != 0.012 {
+		t.Errorf("TotalCostUSD = %v, want 0.012", c.TotalCostUSD)
 	}
-	if c.InputTokens != 1000 {
-		t.Errorf("InputTokens = %d, want 1000", c.InputTokens)
+	if c.Tokens.InputFresh != 1000 {
+		t.Errorf("InputFresh = %d, want 1000", c.Tokens.InputFresh)
 	}
-	if c.OutputTokens != 300 {
-		t.Errorf("OutputTokens = %d, want 300", c.OutputTokens)
+	if c.Tokens.Output != 300 {
+		t.Errorf("Output = %d, want 300", c.Tokens.Output)
 	}
-	if c.CacheReadTokens != 50 {
-		t.Errorf("CacheReadTokens = %d, want 50", c.CacheReadTokens)
+	if c.Tokens.InputCached != 50 {
+		t.Errorf("InputCached = %d, want 50", c.Tokens.InputCached)
 	}
-	if c.CacheCreateTokens != 20 {
-		t.Errorf("CacheCreateTokens = %d, want 20", c.CacheCreateTokens)
+	if c.Tokens.CacheWrite != 20 {
+		t.Errorf("CacheWrite = %d, want 20", c.Tokens.CacheWrite)
 	}
 }
 
@@ -86,11 +89,11 @@ func TestLastResultSummary_ReturnsLast(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected true")
 	}
-	if c.USD != 0.099 {
-		t.Errorf("USD = %v, want 0.099 (last entry)", c.USD)
+	if c.TotalCostUSD != 0.099 {
+		t.Errorf("TotalCostUSD = %v, want 0.099 (last entry)", c.TotalCostUSD)
 	}
-	if c.InputTokens != 9000 {
-		t.Errorf("InputTokens = %d, want 9000", c.InputTokens)
+	if c.Tokens.InputFresh != 9000 {
+		t.Errorf("InputFresh = %d, want 9000", c.Tokens.InputFresh)
 	}
 }
 
@@ -104,14 +107,15 @@ func TestLastResultSummary_NilDoneSkipped(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected true; second entry has non-nil Done")
 	}
-	if c.USD != 0.007 {
-		t.Errorf("USD = %v, want 0.007", c.USD)
+	if c.TotalCostUSD != 0.007 {
+		t.Errorf("TotalCostUSD = %v, want 0.007", c.TotalCostUSD)
 	}
 }
 
 func TestLastResultSummary_ParsedFromFixtureStream(t *testing.T) {
 	// Verify round-trip through ParseLine → LastResultSummary using the
-	// same JSON shape the real claude CLI emits.
+	// same JSON shape the real claude CLI emits. The Anthropic adapter
+	// must map the four legacy fields onto the 5-bucket TokenUsage.
 	line := []byte(`{"type":"result","subtype":"success","is_error":false,"duration_ms":300,"total_cost_usd":0.012,"usage":{"input_tokens":1000,"output_tokens":300,"cache_read_input_tokens":50,"cache_creation_input_tokens":20}}`)
 	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	events := ParseLine(line, at)
@@ -122,19 +126,22 @@ func TestLastResultSummary_ParsedFromFixtureStream(t *testing.T) {
 	if !ok {
 		t.Fatalf("LastResultSummary returned false")
 	}
-	if c.USD != 0.012 {
-		t.Errorf("USD = %v, want 0.012", c.USD)
+	if c.TotalCostUSD != 0.012 {
+		t.Errorf("TotalCostUSD = %v, want 0.012", c.TotalCostUSD)
 	}
-	if c.InputTokens != 1000 {
-		t.Errorf("InputTokens = %d, want 1000", c.InputTokens)
+	if c.Tokens.InputFresh != 1000 {
+		t.Errorf("InputFresh = %d, want 1000", c.Tokens.InputFresh)
 	}
-	if c.OutputTokens != 300 {
-		t.Errorf("OutputTokens = %d, want 300", c.OutputTokens)
+	if c.Tokens.Output != 300 {
+		t.Errorf("Output = %d, want 300", c.Tokens.Output)
 	}
-	if c.CacheReadTokens != 50 {
-		t.Errorf("CacheReadTokens = %d, want 50", c.CacheReadTokens)
+	if c.Tokens.InputCached != 50 {
+		t.Errorf("InputCached = %d, want 50", c.Tokens.InputCached)
 	}
-	if c.CacheCreateTokens != 20 {
-		t.Errorf("CacheCreateTokens = %d, want 20", c.CacheCreateTokens)
+	if c.Tokens.CacheWrite != 20 {
+		t.Errorf("CacheWrite = %d, want 20", c.Tokens.CacheWrite)
+	}
+	if c.Tokens.Provider != agentcontract.ProviderAnthropic {
+		t.Errorf("Provider = %q, want %q", c.Tokens.Provider, agentcontract.ProviderAnthropic)
 	}
 }

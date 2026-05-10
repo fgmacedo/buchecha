@@ -576,8 +576,8 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 		stats = &supervision.SpawnStats{
 			DurationMS:   dur,
 			CostUSD:      lastSummary.TotalCostUSD,
-			InputTokens:  lastSummary.InputTokens,
-			OutputTokens: lastSummary.OutputTokens,
+			InputTokens:  lastSummary.Tokens.InputFresh,
+			OutputTokens: lastSummary.Tokens.Output,
 		}
 	}
 	if err != nil {

@@ -367,13 +367,12 @@ func (e *Executor) Run(ctx context.Context, prompt string, events chan<- agentco
 	// Emit SpawnFinished before any return path so observers always see the
 	// closing event paired with SpawnStarted, even on non-zero exits.
 	if spawnID != "" && e.cfg.Events != nil {
-		cost, _ := streamjson.LastResultSummary(parsedEvents)
-		spawnCost := loop.SpawnCost{
-			InputTokens:       cost.InputTokens,
-			OutputTokens:      cost.OutputTokens,
-			CacheReadTokens:   cost.CacheReadTokens,
-			CacheCreateTokens: cost.CacheCreateTokens,
-			USD:               cost.USD,
+		var spawnCost loop.SpawnCost
+		if summary, ok := streamjson.LastResultSummary(parsedEvents); ok {
+			spawnCost = loop.SpawnCost{
+				Tokens: summary.Tokens,
+				USD:    summary.TotalCostUSD,
+			}
 		}
 		exitCode := 0
 		if cmd.ProcessState != nil {

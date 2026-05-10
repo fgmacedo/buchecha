@@ -215,13 +215,13 @@ type LoopFinished struct {
 
 func (LoopFinished) isLoopEvent() {}
 
-// SpawnCost holds the token and cost metrics for a spawn.
+// SpawnCost holds the per-spawn token and dollar metrics. Tokens carries
+// the vendor-neutral 5-bucket usage; USD is the provider-reported dollar
+// cost. The two are kept separate because providers report cost as a
+// single scalar and bcc does not recompute it from buckets.
 type SpawnCost struct {
-	InputTokens       int
-	OutputTokens      int
-	CacheReadTokens   int
-	CacheCreateTokens int
-	USD               float64
+	Tokens agentcontract.TokenUsage
+	USD    float64
 }
 
 // SpawnStarted is emitted when an agent spawn begins. The SpawnID is

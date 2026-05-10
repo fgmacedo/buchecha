@@ -584,18 +584,17 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 
 	if latest != nil {
 		stats.CostUSD = latest.TotalCostUSD
-		stats.InputTokens = latest.InputTokens
-		stats.OutputTokens = latest.OutputTokens
+		stats.InputTokens = latest.Tokens.InputFresh
+		stats.OutputTokens = latest.Tokens.Output
 	}
 
 	if spawnID != "" && a.cfg.Events != nil {
-		cost, _ := streamjson.LastResultSummary(parsedEvents)
-		spawnCost := loop.SpawnCost{
-			InputTokens:       cost.InputTokens,
-			OutputTokens:      cost.OutputTokens,
-			CacheReadTokens:   cost.CacheReadTokens,
-			CacheCreateTokens: cost.CacheCreateTokens,
-			USD:               cost.USD,
+		var spawnCost loop.SpawnCost
+		if summary, ok := streamjson.LastResultSummary(parsedEvents); ok {
+			spawnCost = loop.SpawnCost{
+				Tokens: summary.Tokens,
+				USD:    summary.TotalCostUSD,
+			}
 		}
 		exitCode := 0
 		if cmd.ProcessState != nil {

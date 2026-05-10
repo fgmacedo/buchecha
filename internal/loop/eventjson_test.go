@@ -129,9 +129,11 @@ func TestMarshalJSONEvent_AgentResultSummary(t *testing.T) {
 		Done: &agentcontract.ResultSummaryInfo{
 			NumTurns:     12,
 			TotalCostUSD: 0.34,
-			InputTokens:  12000,
-			OutputTokens: 2300,
 			DurationMS:   42100,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh: 12000,
+				Output:     2300,
+			},
 		},
 	}}
 	got, err := loop.MarshalJSONEvent(ev)
@@ -151,13 +153,15 @@ func TestMarshalJSONEvent_AgentResultSummaryWithCacheTokens(t *testing.T) {
 		Kind: agentcontract.KindResultSummary,
 		At:   at,
 		Done: &agentcontract.ResultSummaryInfo{
-			NumTurns:                 4,
-			TotalCostUSD:             0.10,
-			InputTokens:              5000,
-			OutputTokens:             1000,
-			CacheReadInputTokens:     800,
-			CacheCreationInputTokens: 200,
-			DurationMS:               15000,
+			NumTurns:     4,
+			TotalCostUSD: 0.10,
+			DurationMS:   15000,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh:  5000,
+				Output:      1000,
+				InputCached: 800,
+				CacheWrite:  200,
+			},
 		},
 	}}
 	got, err := loop.MarshalJSONEvent(ev)
@@ -176,11 +180,11 @@ func TestMarshalJSONEvent_AgentAssistantTextWithUsage(t *testing.T) {
 		Kind: agentcontract.KindAssistantText,
 		At:   at,
 		Text: "Adjusting parser for edge case.",
-		Usage: &agentcontract.UsageInfo{
-			InputTokens:              1200,
-			OutputTokens:             300,
-			CacheReadInputTokens:     500,
-			CacheCreationInputTokens: 100,
+		Usage: &agentcontract.TokenUsage{
+			InputFresh:  1200,
+			Output:      300,
+			InputCached: 500,
+			CacheWrite:  100,
 		},
 	}}
 	got, err := loop.MarshalJSONEvent(ev)
@@ -475,11 +479,13 @@ func TestMarshalJSONEvent_SpawnFinished(t *testing.T) {
 		ExitCode:   0,
 		DurationMS: 5000,
 		Cost: loop.SpawnCost{
-			InputTokens:       12000,
-			OutputTokens:      2300,
-			CacheReadTokens:   800,
-			CacheCreateTokens: 200,
-			USD:               0.34,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh:  12000,
+				Output:      2300,
+				InputCached: 800,
+				CacheWrite:  200,
+			},
+			USD: 0.34,
 		},
 		At: at,
 	}
@@ -533,7 +539,7 @@ func TestMarshalJSONEvent_AllKindsCovered(t *testing.T) {
 		loop.PhaseBriefed{PhaseID: "P1", Iteration: 1, At: at},
 		loop.PhaseReviewed{PhaseID: "P1", Attempt: 1, At: at},
 		loop.SpawnStarted{SpawnID: "spawn123", Role: "executor", PhaseID: "P1", TaskID: "T1.1", IterationID: "iter1", Attempt: 1, Model: "claude-opus", Effort: "high", PromptPath: "/path/to/prompt.md", At: at},
-		loop.SpawnFinished{SpawnID: "spawn123", Role: "executor", ExitCode: 0, DurationMS: 5000, Cost: loop.SpawnCost{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheCreateTokens: 0, USD: 0.05}, At: at},
+		loop.SpawnFinished{SpawnID: "spawn123", Role: "executor", ExitCode: 0, DurationMS: 5000, Cost: loop.SpawnCost{Tokens: agentcontract.TokenUsage{InputFresh: 1000, Output: 500}, USD: 0.05}, At: at},
 		loop.TaskStarted{PhaseID: "P1", TaskID: "T1.1", At: at},
 		loop.TaskCompleted{PhaseID: "P1", TaskID: "T1.1", At: at},
 		loop.TaskApproved{PhaseID: "P1", TaskID: "T1.1", At: at},
