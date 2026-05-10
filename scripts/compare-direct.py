@@ -116,6 +116,34 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def binary_fingerprint(name: str) -> dict[str, str | int | None]:
+    """Resolve `name` on PATH, capture mtime/size, and best-effort the
+    `--version` output. Returned as a dict so the report records exactly
+    which binary measured. Missing binary returns {"path": None, ...}."""
+    resolved = shutil.which(name)
+    info: dict[str, str | int | None] = {
+        "name": name,
+        "path": resolved,
+        "size_bytes": None,
+        "mtime": None,
+        "version": None,
+    }
+    if not resolved:
+        return info
+    try:
+        st = os.stat(resolved)
+        info["size_bytes"] = int(st.st_size)
+        info["mtime"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%S", time.localtime(st.st_mtime)
+        )
+    except OSError:
+        pass
+    proc = run([resolved, "--version"])
+    if proc.returncode == 0:
+        info["version"] = (proc.stdout + proc.stderr).strip().splitlines()[0][:200] if (proc.stdout or proc.stderr) else None
+    return info
+
+
 def working_tree_clean(repo: Path) -> bool:
     out = must_run(["git", "status", "--porcelain"], cwd=repo)
     return out.strip() == ""
@@ -161,6 +189,7 @@ def remove_worktree(repo: Path, path: Path, branch: str) -> None:
 DIFF_EXCLUDE_PREFIXES = (
     ".bcc/",          # bcc session artifacts (cost.json, plan.json, etc.)
     ".bcc.toml",      # comparator-injected config patch
+    ".compare-spec.md",  # external spec staged into each worktree
     "direct.stream.jsonl",  # comparator-captured claude stream log
 )
 
@@ -554,13 +583,20 @@ def main() -> int:
 
     repo = repo_root()
 
-    # spec is resolved as a path RELATIVE to the repo root. Each side
-    # later joins this against its own worktree, so the agent sees a
-    # spec inside the worktree, not in the parent repo. Passing the
-    # parent-absolute path leaked writes to the parent on retry: the
-    # agent occasionally derived "project root" from the spec's dir
-    # rather than cwd.
+    # spec is resolved into two parts:
+    #   - spec_relpath: path inside each worktree where bcc reads the
+    #     spec from. If the source spec lives in the repo, we reuse
+    #     its in-tree relative path (the worktree's git checkout has
+    #     it). If it lives outside, we drop a copy at a stable name
+    #     inside each worktree so the comparator works with any spec.
+    #   - spec_text: full spec content, embedded in the direct prompt.
+    #
+    # Pointing at a worktree-local path matters: passing a parent-
+    # absolute path leaked writes to the parent because the agent
+    # sometimes derived "project root" from the spec's directory
+    # rather than from cwd.
     spec_relpath: Path | None = None
+    spec_source: Path | None = None  # absolute source path; copied per-worktree if external
     spec_text: str | None = None
     if args.baseline:
         spec_relpath = Path(BASELINES[args.baseline])
@@ -575,9 +611,11 @@ def main() -> int:
         try:
             spec_relpath = candidate.relative_to(repo)
         except ValueError:
-            p.error(
-                f"spec must live inside the repo root {repo}; got {candidate}"
-            )
+            # External spec: stage it into each worktree under a stable
+            # path so bcc and direct see the same content from a path
+            # that lives inside their respective trees.
+            spec_relpath = Path(".compare-spec.md")
+            spec_source = candidate
         spec_text = candidate.read_text()
 
     prompt_for_direct = args.prompt
@@ -597,18 +635,32 @@ def main() -> int:
         )
         return 2
 
-    if shutil.which("bcc") is None:
+    bcc_info = binary_fingerprint("bcc")
+    claude_info = binary_fingerprint("claude")
+    if bcc_info["path"] is None:
         sys.stderr.write("bcc not found on PATH\n")
         return 2
-    if shutil.which("claude") is None:
+    if claude_info["path"] is None:
         sys.stderr.write("claude not found on PATH\n")
         return 2
+    sys.stderr.write(
+        f"bcc:    {bcc_info['path']}  ({bcc_info['version']}, "
+        f"mtime {bcc_info['mtime']}, {bcc_info['size_bytes']} bytes)\n"
+        f"claude: {claude_info['path']}  ({claude_info['version']})\n"
+    )
 
     base_sha = head_sha(repo)
     sys.stderr.write(f"base SHA: {base_sha}\n")
 
     bcc_wt, bcc_branch = make_worktree(repo, "bcc", base_sha)
     direct_wt, direct_branch = make_worktree(repo, "direct", base_sha)
+
+    # Stage external specs into each worktree so the path bcc reads
+    # from lives inside the working tree. (Specs that already live in
+    # the repo are picked up by the worktree's git checkout.)
+    if spec_source is not None and spec_relpath is not None:
+        for wt in (bcc_wt, direct_wt):
+            (wt / spec_relpath).write_text(spec_text or "")
 
     try:
         sys.stderr.write(f"running bcc in {bcc_wt}\n")
@@ -640,6 +692,16 @@ def main() -> int:
                 json.dumps(
                     {
                         "base_sha": base_sha,
+                        "binaries": {
+                            "bcc": bcc_info,
+                            "claude": claude_info,
+                        },
+                        "spec": {
+                            "source": str(args.spec.resolve()) if args.spec else None,
+                            "baseline": args.baseline,
+                            "relpath_in_worktree": str(spec_relpath) if spec_relpath else None,
+                            "external": spec_source is not None,
+                        },
                         "results": [
                             {
                                 "label": r.label,
