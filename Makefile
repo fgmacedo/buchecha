@@ -1,5 +1,11 @@
 .PHONY: build install check-build test test-race vet fmt fmt-check lint tidy clean api-openapi webui webui-size release-snapshot release-check precommit-install precommit-run
 
+# Inject the git description into internal/cli.version so `bcc --version`
+# identifies the build (e.g. `019affe-dirty`). goreleaser does this with
+# {{.Version}} for tagged releases; local builds use git describe.
+VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X github.com/fgmacedo/buchecha/internal/cli.version=$(VERSION)
+
 check-build:
 	go build ./...
 
@@ -21,10 +27,10 @@ webui-size: webui
 	go run ./internal/webui/cmd/check-bundle-size
 
 build: webui-size check-build
-	go build -o bcc ./cmd/bcc
+	go build -ldflags '$(LDFLAGS)' -o bcc ./cmd/bcc
 
 install: check-build
-	go install ./cmd/bcc
+	go install -ldflags '$(LDFLAGS)' ./cmd/bcc
 
 test:
 	go test ./...
