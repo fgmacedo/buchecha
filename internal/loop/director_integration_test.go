@@ -115,11 +115,6 @@ func (r *directorFakeRuns) inc() {
 	r.n++
 	r.mu.Unlock()
 }
-func (r *directorFakeRuns) get() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.n
-}
 
 type directorFakeExec struct {
 	signal  agentcontract.Signal
@@ -281,7 +276,7 @@ func directorTestHandler(plan *supervision.Plan) *dag.Handler {
 	return h
 }
 
-func runDirectorLoop(t *testing.T, l *loop.Loop) (int, error, []loop.Event) {
+func runDirectorLoop(t *testing.T, l *loop.Loop) (int, []loop.Event, error) {
 	t.Helper()
 	events := make(chan loop.Event, 1024)
 	code, err := l.Run(context.Background(), events)
@@ -289,7 +284,7 @@ func runDirectorLoop(t *testing.T, l *loop.Loop) (int, error, []loop.Event) {
 	for ev := range events {
 		got = append(got, ev)
 	}
-	return code, err, got
+	return code, got, err
 }
 
 // TestDirectorIntegration_ApproveBothPhases drives the happy path: two
@@ -322,7 +317,7 @@ func TestDirectorIntegration_ApproveBothPhases(t *testing.T) {
 		},
 	}
 
-	code, err, evs := runDirectorLoop(t, l)
+	code, evs, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -380,7 +375,7 @@ func TestDirectorIntegration_RetryBudgetExhausted(t *testing.T) {
 			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, runsCounter),
 		},
 	}
-	code, err, evs := runDirectorLoop(t, l)
+	code, evs, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -432,7 +427,7 @@ func TestDirectorIntegration_NoCommitGoesToReviewer(t *testing.T) {
 			NewExecutor: directorNewExecutor(h, agentcontract.SignalReview, runsCounter),
 		},
 	}
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -477,7 +472,7 @@ func TestDirectorIntegration_BlockedSignal(t *testing.T) {
 			NewExecutor: directorNewExecutor(h, agentcontract.SignalBlocked, runsCounter),
 		},
 	}
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -549,7 +544,7 @@ func TestDirectorIntegration_SessionLifecycle_EscalationMarksPending(t *testing.
 		},
 	}
 
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	<-probeDone
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -646,7 +641,7 @@ func TestDirectorIntegration_EscalateResumeWithHint(t *testing.T) {
 			Escalation:  gate,
 		},
 	}
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -724,7 +719,7 @@ func TestDirectorIntegration_EscalateForceApprove(t *testing.T) {
 			Escalation:  gate,
 		},
 	}
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -787,7 +782,7 @@ func TestDirectorIntegration_SilentReviewerEscalatesImmediately(t *testing.T) {
 		},
 	}
 
-	code, err, evs := runDirectorLoop(t, l)
+	code, evs, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -912,7 +907,7 @@ func TestDirectorIntegration_SkipReviewBypassesReviewer(t *testing.T) {
 		},
 	}
 
-	code, err, evs := runDirectorLoop(t, l)
+	code, evs, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -973,7 +968,7 @@ func TestDirectorIntegration_PreparedBriefingSkipsBriefer(t *testing.T) {
 		},
 	}
 
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1074,7 +1069,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 			Stats:       statsLog,
 		},
 	}
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1203,7 +1198,7 @@ func TestDirectorIntegration_PhaseSubDAGSequence(t *testing.T) {
 		},
 	}
 
-	code, err, evs := runDirectorLoop(t, l)
+	code, evs, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -1359,7 +1354,7 @@ func TestDirectorIntegration_RetryNarrowsToNeedsFix(t *testing.T) {
 		},
 	}
 
-	code, err, _ := runDirectorLoop(t, l)
+	code, _, err := runDirectorLoop(t, l)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

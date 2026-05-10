@@ -61,7 +61,6 @@ func TestPromptService_Get(t *testing.T) {
 		{name: "empty role", role: "", wantErr: ErrInvalidRequest},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := svc.Get(context.Background(), sess.ID, tc.role)
 			if tc.wantErr != nil {
@@ -181,7 +180,6 @@ func TestPromptService_GetSpawn(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := svc.GetSpawn(context.Background(), sess.ID, tc.spawnID)
 			if tc.wantErr != nil {

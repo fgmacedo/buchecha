@@ -402,7 +402,6 @@ func TestEventService_Subscribe_MultipleSubscribersSeeIdenticalSeqs(t *testing.T
 	wg.Add(subs)
 	results := make([][]int64, subs)
 	for i := range channels {
-		i := i
 		go func() {
 			defer wg.Done()
 			for se := range channels[i] {

@@ -1,0 +1,37 @@
+# golangci-lint configuration. Pinned to v2.12.x via .mise.toml.
+# Reference: https://golangci-lint.run/usage/configuration/
+
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: standard
+  enable:
+    - bodyclose      # http.Response.Body must be closed
+    - copyloopvar    # capture-by-value loop var bugs (Go 1.22+)
+    - misspell       # common misspellings
+    - unconvert      # redundant type conversions
+  settings:
+    errcheck:
+      # Conventional ignores: print-to-writer and Close calls. Keeping
+      # an explicit list rather than a blanket pattern so anything new
+      # surfaces a lint failure and forces a deliberate decision.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+  exclusions:
+    paths:
+      - internal/webui/web
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

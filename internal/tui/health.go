@@ -129,9 +129,9 @@ func (h healthPanel) view(now time.Time, _ int) string {
 	if !h.lastEvent.IsZero() {
 		heartbeat = formatDuration(now.Sub(h.lastEvent))
 	}
-	b.WriteString(fmt.Sprintf("  heartbeat: %s %s\n", heartbeat, aliveDot(h.lastEvent, now)))
+	fmt.Fprintf(&b, "  heartbeat: %s %s\n", heartbeat, aliveDot(h.lastEvent, now))
 
-	b.WriteString(fmt.Sprintf("  tools/min: %d\n", toolsPerMin(h.toolStamps, now)))
+	fmt.Fprintf(&b, "  tools/min: %d\n", toolsPerMin(h.toolStamps, now))
 
 	errCount := countSince(h.errorStamps, now.Add(-5*time.Minute))
 	errLine := fmt.Sprintf("  errors (5m): %d", errCount)
@@ -147,12 +147,12 @@ func (h healthPanel) view(now time.Time, _ int) string {
 	}
 	b.WriteString("  rate: " + rate + "\n")
 
-	b.WriteString(fmt.Sprintf("  tokens: %s", formatTokens(h.totalTokens+h.iterTokens)))
+	fmt.Fprintf(&b, "  tokens: %s", formatTokens(h.totalTokens+h.iterTokens))
 	if dom := dominantBucket(h.totalBuckets.Add(h.iterBuckets)); dom != "" {
 		b.WriteString(theme.subtle.Render(" " + dom))
 	}
 	b.WriteByte('\n')
-	b.WriteString(fmt.Sprintf("  cost: $%.2f\n", h.totalCostUSD))
+	fmt.Fprintf(&b, "  cost: $%.2f\n", h.totalCostUSD)
 
 	if key, count, ok := h.suspect.triggered(); ok {
 		b.WriteString("  ")

@@ -27,7 +27,7 @@ func TestNewSpawnID_AllCharsInAlphabet(t *testing.T) {
 	for i := range 20 {
 		id := NewSpawnID()
 		for j, c := range id {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z')) {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
 				t.Errorf("iter %d: id[%d]=%c not in [0-9a-z]; id=%q", i, j, c, id)
 			}
 		}

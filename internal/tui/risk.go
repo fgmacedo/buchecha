@@ -96,8 +96,8 @@ func (r riskPanel) view(now time.Time, _ int) string {
 	if r.commitsKnown {
 		commits = theme.subtle.Render(fmt.Sprintf(" (%s)", pluralize(r.runCommitCount, "commit", "commits")))
 	}
-	b.WriteString(fmt.Sprintf("  %s tasks completed: %d/%d%s\n",
-		theme.ok.Render("✓"), r.tasksCompleted, r.tasksStarted, commits))
+	fmt.Fprintf(&b, "  %s tasks completed: %d/%d%s\n",
+		theme.ok.Render("✓"), r.tasksCompleted, r.tasksStarted, commits)
 
 	uncommitted := "..."
 	if r.dirtyKnown {
@@ -111,8 +111,8 @@ func (r riskPanel) view(now time.Time, _ int) string {
 	if !r.lastEditAt.IsZero() && r.dirtyKnown && r.dirtyFileCount > 0 {
 		editHint = fmt.Sprintf(" (last edit %s ago)", formatDuration(now.Sub(r.lastEditAt)))
 	}
-	b.WriteString(fmt.Sprintf("  %s uncommitted: %s%s\n",
-		uncommittedGlyph, uncommitted, theme.subtle.Render(editHint)))
+	fmt.Fprintf(&b, "  %s uncommitted: %s%s\n",
+		uncommittedGlyph, uncommitted, theme.subtle.Render(editHint))
 
 	b.WriteString("  ")
 	b.WriteString(signalLine(r.currentIter, r.lastSignal, r.signalRawVal, r.signalKnown))

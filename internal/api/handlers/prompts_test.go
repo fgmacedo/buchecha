@@ -69,7 +69,6 @@ func TestPrompts_AllFourRolesServed(t *testing.T) {
 		{"reviewer", "# reviewer prompt\n"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.role, func(t *testing.T) {
 			t.Parallel()
 			resp, err := http.Get(srv.URL + "/api/v1/sessions/" + sess.ID + "/prompts/" + tc.role)

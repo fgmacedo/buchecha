@@ -273,12 +273,17 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 					fmt.Errorf("director: git head before phase %s attempt %d: %w", phaseID, attempt, err)
 			}
 
-			os.Setenv("BCC_RUNNING", "1")
-			os.Setenv("BCC_ITERATION", strconv.Itoa(attempt))
-			os.Setenv("BCC_MAX_ITERATIONS", strconv.Itoa(1+budget))
-			os.Setenv("BCC_SPEC_PATH", l.SpecPath)
+			setEnv := func(key, val string) {
+				if err := os.Setenv(key, val); err != nil {
+					logger.Warn("director set env", "key", key, "err", err)
+				}
+			}
+			setEnv("BCC_RUNNING", "1")
+			setEnv("BCC_ITERATION", strconv.Itoa(attempt))
+			setEnv("BCC_MAX_ITERATIONS", strconv.Itoa(1+budget))
+			setEnv("BCC_SPEC_PATH", l.SpecPath)
 			if branch, gerr := l.Git.CurrentBranch(ctx); gerr == nil && branch != "" {
-				os.Setenv("BCC_BRANCH", branch)
+				setEnv("BCC_BRANCH", branch)
 			}
 
 			iterStart := time.Now()
@@ -693,7 +698,7 @@ func (b *taskEventBridge) OnCall(method, agentID string, _ dag.Role, input map[s
 	id, _ := input["id"].(string)
 	phase := ""
 	if entry, ok := b.reg.Lookup(dag.AgentID(agentID)); ok {
-		phase = string(entry.PhaseID)
+		phase = entry.PhaseID
 	}
 	now := time.Now()
 	var ev Event

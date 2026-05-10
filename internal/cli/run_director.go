@@ -492,7 +492,7 @@ func makeNewExecutor(
 			MCPToken:          mcpCfg.MCPToken,
 			MCPConnectionName: mcpCfg.MCPConnectionName,
 			AgentID:           mcpCfg.AgentID,
-			PhaseID:           string(args.PhaseID),
+			PhaseID:           args.PhaseID,
 			IterationID:       args.BriefingID,
 			Attempt:           args.Attempt,
 			SessionStore:      store,

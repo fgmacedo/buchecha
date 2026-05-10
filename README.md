@@ -93,11 +93,31 @@ If you only touch Go files and do not need to rebuild the dashboard, `make insta
 make test               # full unit test suite
 make test-race          # same, with the race detector (required before commits to concurrent code)
 make vet                # go vet ./...
+make lint               # golangci-lint run ./...
 make fmt                # gofmt -w .
 make fmt-check          # CI-style check, fails on diff
 make tidy               # go mod tidy
 make clean              # remove ./bcc
 ```
+
+### 3a. Pre-commit hooks
+
+Pre-commit hooks run gofmt, go vet, golangci-lint, go build, and the full `go test -race` suite (excluding `internal/webui`, which CI exercises with the SPA bundle). Install once per clone:
+
+```bash
+mise install            # picks up pre-commit + golangci-lint pinned in .mise.toml
+make precommit-install  # wires .git/hooks/pre-commit to .pre-commit-config.yaml
+```
+
+If `pre-commit install` errors with `Cowardly refusing to install hooks with core.hooksPath set`, run `git config --unset core.hooksPath` once and retry. The setting is rarely needed in this repo and pre-commit refuses to overwrite it.
+
+Run the same gates manually anytime:
+
+```bash
+make precommit-run      # pre-commit run --all-files
+```
+
+For WIP commits where you want to skip the gate intentionally, `git commit --no-verify` bypasses it. Hook output is local; CI re-runs the same checks plus the webui bundle build.
 
 Targeted tests during iteration:
 

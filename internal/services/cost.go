@@ -280,7 +280,7 @@ func rebuildCostFromEvents(sessionDir, id string) (CostAggregate, error) {
 		}
 		return CostAggregate{}, fmt.Errorf("open events.ndjson: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	acc := newCostAccumulator()
 	dec := json.NewDecoder(f)

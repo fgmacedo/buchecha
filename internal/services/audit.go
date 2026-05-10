@@ -156,7 +156,7 @@ func (a *Audit) logSlog(entry AuditEntry) {
 	if entry.Result.Code != "" {
 		attrs = append(attrs, slog.String("error_code", string(entry.Result.Code)))
 	}
-	logger.LogAttrs(nil, slog.LevelInfo, "services audit", attrs...)
+	logger.LogAttrs(context.Background(), slog.LevelInfo, "services audit", attrs...)
 }
 
 // appendFile writes entry as a JSON line to AuditPath. The file is
