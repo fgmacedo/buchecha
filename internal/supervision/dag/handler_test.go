@@ -1469,3 +1469,122 @@ func readFile(t *testing.T, path string) (string, error) {
 	}
 	return string(data), nil
 }
+
+// emitBriefingP1 attaches a Briefing covering P1.t1 + P1.t2 under
+// iteration "P1-1" so reviewer-scoped tests can audit a real briefing
+// state. Returns the registered reviewer's agent id.
+func emitBriefingP1(t *testing.T, h *Handler) AgentID {
+	t.Helper()
+	registry := h.Registry()
+	bid, _ := registry.Register(RoleBriefer, RegisterArgs{})
+	if _, err := h.HandleCall(context.Background(), string(RoleBriefer), MethodBriefingEmit, map[string]any{
+		"agent_id": string(bid),
+		"briefing": map[string]any{
+			"iteration_id":     "P1-1",
+			"phase_id":         "P1",
+			"sub_dag_task_ids": []any{"t1", "t2"},
+			"instructions":     "do t1 and t2",
+			"spec_path":        "/tmp/spec.md",
+		},
+	}); err != nil {
+		t.Fatalf("emit briefing: %v", err)
+	}
+	registry.Deregister(bid)
+	rev, _ := registry.Register(RoleReviewer, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1", "t2"},
+	})
+	return rev
+}
+
+// markStarted advances a task to in_progress so a subsequent
+// task_approved or task_needs_fix transition is legal.
+func markStarted(t *testing.T, h *Handler, phaseID, taskID string) {
+	t.Helper()
+	exec, _ := h.Registry().Register(RoleExecutor, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: phaseID, SubDAG: []string{taskID},
+	})
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+		"agent_id": string(exec),
+		"id":       taskID,
+	}); err != nil {
+		t.Fatalf("task_started %s: %v", taskID, err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskCompleted, map[string]any{
+		"agent_id": string(exec),
+		"id":       taskID,
+	}); err != nil {
+		t.Fatalf("task_completed %s: %v", taskID, err)
+	}
+	h.Registry().Deregister(exec)
+}
+
+func TestHandleTaskNeedsFix_PersistsFeedback(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	rev := emitBriefingP1(t, h)
+	markStarted(t, h, "P1", "t1")
+
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskNeedsFix, map[string]any{
+		"agent_id": string(rev),
+		"id":       "t1",
+		"feedback": "missing edge case",
+	}); err != nil {
+		t.Fatalf("task_needs_fix: %v", err)
+	}
+
+	got := h.NeedsFixFeedback("P1-1")
+	if got["t1"] != "missing edge case" {
+		t.Errorf("NeedsFixFeedback[t1] = %q, want %q", got["t1"], "missing edge case")
+	}
+}
+
+func TestHandleTaskApproved_ClearsFeedback(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	rev := emitBriefingP1(t, h)
+	markStarted(t, h, "P1", "t1")
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskNeedsFix, map[string]any{
+		"agent_id": string(rev),
+		"id":       "t1",
+		"feedback": "fix it",
+	}); err != nil {
+		t.Fatalf("task_needs_fix: %v", err)
+	}
+	// On the next executor pass, the task transitions back to
+	// in_progress before the reviewer approves it.
+	markStarted(t, h, "P1", "t1")
+	if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskApproved, map[string]any{
+		"agent_id": string(rev),
+		"id":       "t1",
+	}); err != nil {
+		t.Fatalf("task_approved: %v", err)
+	}
+	got := h.NeedsFixFeedback("P1-1")
+	if _, ok := got["t1"]; ok {
+		t.Errorf("NeedsFixFeedback[t1] still present after approval: %v", got)
+	}
+}
+
+func TestResetReviewOutcome_ClearsAllFeedback(t *testing.T) {
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitSamplePlan(t, h)
+	rev := emitBriefingP1(t, h)
+	markStarted(t, h, "P1", "t1")
+	markStarted(t, h, "P1", "t2")
+	for _, id := range []string{"t1", "t2"} {
+		if _, err := h.HandleCall(context.Background(), string(RoleReviewer), MethodTaskNeedsFix, map[string]any{
+			"agent_id": string(rev),
+			"id":       id,
+			"feedback": "fix " + id,
+		}); err != nil {
+			t.Fatalf("task_needs_fix %s: %v", id, err)
+		}
+	}
+	if got := h.NeedsFixFeedback("P1-1"); len(got) != 2 {
+		t.Fatalf("expected 2 feedback entries before reset, got %v", got)
+	}
+	h.ResetReviewOutcome("P1-1")
+	if got := h.NeedsFixFeedback("P1-1"); got != nil {
+		t.Errorf("ResetReviewOutcome did not clear feedback: %v", got)
+	}
+}

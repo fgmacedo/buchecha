@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -110,6 +111,13 @@ type briefingState struct {
 	// Executor and one Reviewer per briefing; the slice future-proofs
 	// the parallel-shard case PRD 3 introduces.
 	agents []AgentID
+	// taskFeedback carries the Reviewer's per-task feedback strings sent
+	// via task_needs_fix, keyed by task id. The loop reads it on retry
+	// to render an executor prompt narrowed to the still-incomplete
+	// tasks, with each task's feedback inline. Cleared by the next
+	// reviewer attempt via ResetReviewOutcome and per-id by
+	// task_approved.
+	taskFeedback map[string]string
 }
 
 // Handler implements mcp.Handler against the DAG state and the agent
@@ -1079,7 +1087,8 @@ func (h *Handler) handleGetJournalDelta(_ context.Context, entry AgentEntry, _ m
 }
 
 // handleTaskApproved marks the task as done within the Reviewer's
-// audited sub-DAG.
+// audited sub-DAG. Approval invalidates any prior needs_fix feedback
+// for the same task id under the audited briefing.
 func (h *Handler) handleTaskApproved(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
 	id, _ := input["id"].(string)
 	if err := h.assertReviewerScope(entry, id); err != nil {
@@ -1091,12 +1100,22 @@ func (h *Handler) handleTaskApproved(_ context.Context, entry AgentEntry, input 
 	if err := h.persistDAG(h.state); err != nil {
 		return "", err
 	}
+	if entry.BriefingID != "" {
+		h.mu.Lock()
+		if bs := h.briefings[entry.BriefingID]; bs != nil {
+			delete(bs.taskFeedback, id)
+		}
+		h.mu.Unlock()
+	}
 	return `{"ok":true}`, nil
 }
 
-// handleTaskNeedsFix returns the task to needs_fix.
+// handleTaskNeedsFix returns the task to needs_fix and stores the
+// Reviewer's per-task feedback under the audited briefing so the loop
+// can surface it in the next executor prompt.
 func (h *Handler) handleTaskNeedsFix(_ context.Context, entry AgentEntry, input map[string]any) (string, error) {
 	id, _ := input["id"].(string)
+	feedback, _ := input["feedback"].(string)
 	if err := h.assertReviewerScope(entry, id); err != nil {
 		return "", err
 	}
@@ -1105,6 +1124,19 @@ func (h *Handler) handleTaskNeedsFix(_ context.Context, entry AgentEntry, input 
 	}
 	if err := h.persistDAG(h.state); err != nil {
 		return "", err
+	}
+	if entry.BriefingID != "" && feedback != "" {
+		h.mu.Lock()
+		bs := h.briefings[entry.BriefingID]
+		if bs == nil {
+			bs = &briefingState{}
+			h.briefings[entry.BriefingID] = bs
+		}
+		if bs.taskFeedback == nil {
+			bs.taskFeedback = make(map[string]string)
+		}
+		bs.taskFeedback[id] = feedback
+		h.mu.Unlock()
 	}
 	return `{"ok":true}`, nil
 }
@@ -1265,8 +1297,9 @@ func (h *Handler) LastReviewReasoning(iterationID string) string {
 
 // ResetReviewOutcome clears the sticky review verdict on the
 // briefingState for iterationID, so the next Reviewer attempt
-// starts from an empty outcome. No-op when no briefing state is
-// registered for that id.
+// starts from an empty outcome. The per-task feedback map is also
+// reset so the next Reviewer's task_needs_fix calls populate fresh
+// state. No-op when no briefing state is registered for that id.
 func (h *Handler) ResetReviewOutcome(iterationID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1276,6 +1309,23 @@ func (h *Handler) ResetReviewOutcome(iterationID string) {
 	}
 	bs.reviewOutcome = ""
 	bs.reviewReason = ""
+	bs.taskFeedback = nil
+}
+
+// NeedsFixFeedback returns a copy of the per-task feedback strings the
+// last Reviewer attempt attached to task_needs_fix calls under
+// iterationID. Returns nil when no briefing state exists or when no
+// feedback has been recorded yet.
+func (h *Handler) NeedsFixFeedback(iterationID string) map[string]string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := h.briefings[iterationID]
+	if bs == nil || len(bs.taskFeedback) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(bs.taskFeedback))
+	maps.Copy(out, bs.taskFeedback)
+	return out
 }
 
 // assertExecutorScope rejects task ids outside the Executor's

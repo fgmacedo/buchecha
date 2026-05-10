@@ -9,11 +9,11 @@
 // planner, briefer, reviewer) emitted it. AgentEvent and friends
 // (AgentEventKind, InitInfo, ToolCallInfo, UsageInfo, RateLimitInfo,
 // ResultSummaryInfo) define the shape adapters use to forward
-// streaming agent activity. The format-neutral markdown blocks
-// (wire_protocol.md, absolute_restrictions.md, working_tree.md) ship
-// from here so there is one canonical bcc-level statement of these
-// rules; every per-role prompt under internal/supervision/prompts/
-// composes its template by extending Partials().
+// streaming agent activity. The shared markdown surface (currently
+// absolute_restrictions.md) ships from here so the non-negotiable
+// rules have one canonical source; every per-role prompt under
+// internal/supervision/prompts/ composes its template by extending
+// Partials().
 //
 // What is NOT here: the MCP transport itself (HTTP server, mcp-config
 // generation, name prefixing), which lives under internal/mcp and the
@@ -85,39 +85,21 @@ func (s Signal) String() string {
 	}
 }
 
-//go:embed wire_protocol.md
-var wireProtocolMD string
-
 //go:embed absolute_restrictions.md
 var absoluteRestrictionsMD string
 
-//go:embed working_tree.md
-var workingTreeMD string
-
-//go:embed what_bcc_is.md
-var whatBccIsMD string
-
-// Partials returns a *template.Template containing the format-neutral
-// markdown blocks every agent contract should compose. Format adapters
-// extend this template with their own definitions and invoke the
-// partials via:
+// Partials returns a *template.Template containing the shared markdown
+// blocks every per-role prompt composes. Today only one block is
+// shared: `absolute_restrictions`, the non-negotiable rules every role
+// must obey verbatim. Other contract details (wire methods, working
+// tree discipline, role framing) live inline in each role's prompt
+// because the audience differs by role and shared phrasing was
+// shipping irrelevant context to roles that did not need it.
 //
-//	{{template "wire_protocol" .}}
-//	{{template "absolute_restrictions" .}}
-//	{{template "working_tree" .}}
-//	{{template "what_bcc_is" .}}
-//
-// Partials are body-only (no heading) except `what_bcc_is`, which
-// includes its own `## What bcc is` heading because every per-role
-// prompt opens with it. The view passed when invoking `what_bcc_is`
-// must expose a `.Role` field set to one of "planner", "briefer",
-// "executor", "reviewer"; the partial highlights the matching bullet
-// with "(you)".
+// Format adapters extend this template with their own definitions and
+// invoke the partial via `{{template "absolute_restrictions" .}}`.
 func Partials() *template.Template {
 	t := template.New("partials")
-	template.Must(t.New("wire_protocol").Parse(wireProtocolMD))
 	template.Must(t.New("absolute_restrictions").Parse(absoluteRestrictionsMD))
-	template.Must(t.New("working_tree").Parse(workingTreeMD))
-	template.Must(t.New("what_bcc_is").Parse(whatBccIsMD))
 	return t
 }

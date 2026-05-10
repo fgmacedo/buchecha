@@ -174,19 +174,15 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			return l.terminate(events, "fatal", ExitInvalid),
 				fmt.Errorf("director: briefer emitted phase %q, expected %q", briefing.PhaseID, phaseID)
 		}
-		actualSub := briefing.SubDAGTaskIDs
-		if len(actualSub) == 0 {
-			actualSub = subDAG
+		originalSub := briefing.SubDAGTaskIDs
+		if len(originalSub) == 0 {
+			originalSub = subDAG
 		}
+		actualSub := originalSub
 		priorFeedback = ""
 
 		hintForIteration := pendingHint
 		pendingHint = ""
-		userPrompt, err := render.RenderBriefingUser(briefing, phase, hintForIteration)
-		if err != nil {
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: render briefing user prompt: %w", err)
-		}
 		briefingsDir := filepath.Join(d.Store.SessionDir(), "briefings")
 		if err := os.MkdirAll(briefingsDir, 0o755); err != nil {
 			return l.terminate(events, "fatal", ExitInvalid),
@@ -194,9 +190,26 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		}
 		userPromptPath := filepath.Join(briefingsDir,
 			fmt.Sprintf("%s.prompt.md", briefing.IterationID))
-		if err := os.WriteFile(userPromptPath, []byte(userPrompt), 0o644); err != nil {
-			return l.terminate(events, "fatal", ExitInvalid),
-				fmt.Errorf("director: write briefing user prompt: %w", err)
+		// renderUserPromptForAttempt builds the executor user prompt for
+		// the current attempt and persists it at userPromptPath. On
+		// attempt 1, taskIDsOverride is nil and feedback is empty: the
+		// rendered output matches the legacy single-shot path byte for
+		// byte. On retry, callers pass the still-incomplete sub-DAG and
+		// the per-task feedback the previous reviewer attached so the
+		// prompt narrows to the tasks the executor must fix.
+		renderUserPromptForAttempt := func(taskIDsOverride []string, feedback map[string]string) (string, error) {
+			p, rerr := render.RenderBriefingUserView(briefing, phase, hintForIteration, taskIDsOverride, feedback)
+			if rerr != nil {
+				return "", fmt.Errorf("director: render briefing user prompt: %w", rerr)
+			}
+			if werr := os.WriteFile(userPromptPath, []byte(p), 0o644); werr != nil {
+				return "", fmt.Errorf("director: write briefing user prompt: %w", werr)
+			}
+			return p, nil
+		}
+		userPrompt, err := renderUserPromptForAttempt(nil, nil)
+		if err != nil {
+			return l.terminate(events, "fatal", ExitInvalid), err
 		}
 		systemPromptPath := filepath.Join(briefingsDir,
 			fmt.Sprintf("%s.system.md", briefing.IterationID))
@@ -279,6 +292,22 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				Index: globalIter, MaxIter: l.Config.Loop.MaxIterations,
 				BaselineSHA: headBefore, At: iterStart,
 			})
+
+			if attempt > 1 {
+				incompleteSub := filterIncompleteTasks(state, phaseID, originalSub)
+				if len(incompleteSub) == 0 {
+					// Decider should have advanced when every task is done;
+					// guard so we don't spawn an executor with empty scope.
+					return l.terminate(events, "fatal", ExitInvalid),
+						fmt.Errorf("director: phase %s retry attempt %d has no incomplete tasks", phaseID, attempt)
+				}
+				actualSub = incompleteSub
+				feedback := d.Handler.NeedsFixFeedback(briefing.IterationID)
+				userPrompt, err = renderUserPromptForAttempt(actualSub, feedback)
+				if err != nil {
+					return l.terminate(events, "fatal", ExitInvalid), err
+				}
+			}
 
 			execArgs := dag.RegisterArgs{
 				BriefingID: briefing.IterationID,
@@ -459,6 +488,30 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 		"total_elapsed", time.Since(startedAt).String(),
 	)
 	return l.terminate(events, "done", ExitDone), nil
+}
+
+// filterIncompleteTasks returns the subset of taskIDs (preserving
+// their input order) whose status in state is pending or needs_fix
+// for the given phase. Tasks already done, or missing from state,
+// are dropped. Used by the retry path to narrow the sub-DAG handed
+// to the executor and reviewer to the work that still needs to be
+// done.
+func filterIncompleteTasks(state *dag.State, phaseID string, taskIDs []string) []string {
+	if state == nil || len(taskIDs) == 0 {
+		return nil
+	}
+	statuses := state.SubDAGStatuses(phaseID, taskIDs)
+	out := make([]string, 0, len(taskIDs))
+	for _, id := range taskIDs {
+		s, ok := statuses[id]
+		if !ok {
+			continue
+		}
+		if s == supervision.TaskPending || s == supervision.TaskNeedsFix {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // runWithAgentEvents creates a per-call agentEvents channel, pumps it

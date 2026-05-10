@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1240,4 +1241,198 @@ func TestDirectorIntegration_PhaseSubDAGSequence(t *testing.T) {
 	if len(first.SubDAGTaskIDs) == 0 || first.SubDAGTaskIDs[0] != "t1" {
 		t.Errorf("first iteration sub_dag = %v, want [t1]", first.SubDAGTaskIDs)
 	}
+}
+
+// TestDirectorIntegration_RetryNarrowsToNeedsFix exercises the
+// fix that prevents the retry executor from reprocessing already
+// approved tasks. After attempt 1 the reviewer approves t1 and marks
+// t2 and t3 as needs_fix with distinct per-task feedback. The loop is
+// expected to:
+//
+//   - re-render the user prompt with only the still-incomplete tasks
+//     (t2, t3) and the per-task feedback inlined,
+//   - register the executor with SubDAG = [t2, t3] so the MCP handler
+//     rejects task_started/completed for t1.
+//
+// On attempt 2 the reviewer approves t2 and t3 and the run finishes.
+func TestDirectorIntegration_RetryNarrowsToNeedsFix(t *testing.T) {
+	tmp := t.TempDir()
+	specPath := directorTestSpec(t, tmp)
+	store := directorTestStore(t, tmp, specPath)
+
+	plan := &supervision.Plan{
+		Goal: "narrow retry",
+		SuccessCriteria: []string{
+			"executor only revisits needs_fix tasks",
+		},
+		Phases: []supervision.Phase{{
+			ID: "phase-1", Title: "p1", Intent: "p1",
+			Tasks: []supervision.Task{
+				{ID: "t1", Title: "task one", Intent: "i", Status: supervision.TaskPending,
+					Acceptance:  []supervision.AcceptanceItem{{ID: "a1", Description: "ok", Evidence: supervision.EvidenceDiff}},
+					RetryBudget: 3},
+				{ID: "t2", Title: "task two", Intent: "i", Status: supervision.TaskPending,
+					Acceptance:  []supervision.AcceptanceItem{{ID: "a2", Description: "ok", Evidence: supervision.EvidenceDiff}},
+					RetryBudget: 3},
+				{ID: "t3", Title: "task three", Intent: "i", Status: supervision.TaskPending,
+					Acceptance:  []supervision.AcceptanceItem{{ID: "a3", Description: "ok", Evidence: supervision.EvidenceDiff}},
+					RetryBudget: 3},
+			},
+		}},
+	}
+	plan.SpecHash = "deadbeef"
+	if err := store.WritePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+
+	h := directorTestHandler(plan)
+
+	// Capture the SubDAG handed to the executor on each attempt; the
+	// fix narrows it to needs_fix tasks on attempt 2.
+	var execSubDAGs [][]string
+	var execMu sync.Mutex
+	execFactory := func(args dag.RegisterArgs, renderSystem func(string) (string, error), _ *supervision.RoleAssignment) loop.Executor {
+		if renderSystem != nil {
+			if _, err := renderSystem("integration-executor-agent"); err != nil {
+				return &failingDirectorExec{err: err}
+			}
+		}
+		execMu.Lock()
+		execSubDAGs = append(execSubDAGs, slices.Clone(args.SubDAG))
+		execMu.Unlock()
+		return &completingExecutor{handler: h, args: args}
+	}
+
+	// Reviewer: attempt 1 approves t1, marks t2 and t3 as needs_fix
+	// with per-task feedback; attempt 2 approves the remaining tasks.
+	var reviewerCalls int
+	reviewer := &fake.Reviewer{
+		ReviewFn: func(ctx context.Context, in supervision.ReviewerInput, _ chan<- agentcontract.AgentEvent) (*supervision.SpawnStats, error) {
+			reviewerCalls++
+			if reviewerCalls == 1 {
+				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
+					"agent_id": in.AgentID, "id": "t1",
+				}); err != nil {
+					return nil, err
+				}
+				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskNeedsFix, map[string]any{
+					"agent_id": in.AgentID, "id": "t2", "feedback": "fix t2: missing edge case",
+				}); err != nil {
+					return nil, err
+				}
+				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskNeedsFix, map[string]any{
+					"agent_id": in.AgentID, "id": "t3", "feedback": "fix t3: wrong order",
+				}); err != nil {
+					return nil, err
+				}
+				_, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodReviewFinished, map[string]any{
+					"agent_id": in.AgentID, "outcome": "revise", "reasoning": "two tasks need rework",
+				})
+				return &supervision.SpawnStats{}, err
+			}
+			for _, tid := range in.SubDAG {
+				if _, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodTaskApproved, map[string]any{
+					"agent_id": in.AgentID, "id": tid,
+				}); err != nil {
+					return nil, err
+				}
+			}
+			_, err := h.HandleCall(ctx, string(dag.RoleReviewer), dag.MethodReviewFinished, map[string]any{
+				"agent_id": in.AgentID, "outcome": "approve", "reasoning": "ok",
+			})
+			return &supervision.SpawnStats{}, err
+		},
+	}
+
+	cfg := newTestConfig()
+	l := &loop.Loop{
+		SpecPath: specPath,
+		Config:   cfg,
+		Git:      &directorAdvancingGit{},
+		Director: &loop.DirectorPorts{
+			Plan:        plan,
+			Briefer:     briefingEmitter(t, h),
+			Reviewer:    reviewer,
+			Store:       store,
+			Handler:     h,
+			NewExecutor: execFactory,
+		},
+	}
+
+	code, err, _ := runDirectorLoop(t, l)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if code != loop.ExitDone {
+		t.Errorf("exit = %d, want ExitDone", code)
+	}
+
+	if len(execSubDAGs) != 2 {
+		t.Fatalf("executor invocations = %d, want 2 (attempt 1 + retry)", len(execSubDAGs))
+	}
+	if want := []string{"t1", "t2", "t3"}; !equalStrings(execSubDAGs[0], want) {
+		t.Errorf("attempt 1 SubDAG = %v, want %v", execSubDAGs[0], want)
+	}
+	if want := []string{"t2", "t3"}; !equalStrings(execSubDAGs[1], want) {
+		t.Errorf("attempt 2 SubDAG = %v, want %v (must drop approved t1)", execSubDAGs[1], want)
+	}
+
+	// The retry user prompt overwrites the same path. Read it back from
+	// disk and check it carries only t2/t3 plus per-task feedback.
+	promptPath := filepath.Join(store.SessionDir(), "briefings", "phase-1-01.prompt.md")
+	body, rerr := os.ReadFile(promptPath)
+	if rerr != nil {
+		t.Fatalf("read prompt: %v", rerr)
+	}
+	prompt := string(body)
+	if strings.Contains(prompt, "### Task t1:") {
+		t.Errorf("retry prompt still mentions approved task t1:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "### Task t2:") || !strings.Contains(prompt, "### Task t3:") {
+		t.Errorf("retry prompt missing reopened tasks:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "fix t2: missing edge case") {
+		t.Errorf("retry prompt missing t2 feedback:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "fix t3: wrong order") {
+		t.Errorf("retry prompt missing t3 feedback:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "This is a retry.") {
+		t.Errorf("retry prompt missing retry banner:\n%s", prompt)
+	}
+}
+
+// completingExecutor mimics a real executor that walks the
+// RegisterArgs.SubDAG it was registered with: it transitions every
+// task through started → completed and reports signal=review at the
+// end. Used by the retry-narrowing test to drive the DAG forward.
+type completingExecutor struct {
+	handler *dag.Handler
+	args    dag.RegisterArgs
+}
+
+func (e *completingExecutor) Run(ctx context.Context, _ string, _ chan<- agentcontract.AgentEvent) (loop.ExecResult, error) {
+	id, err := e.handler.Registry().Register(dag.RoleExecutor, e.args)
+	if err != nil {
+		return loop.ExecResult{ExitCode: -1}, err
+	}
+	defer e.handler.Registry().Deregister(id)
+	for _, tid := range e.args.SubDAG {
+		if _, err := e.handler.HandleCall(ctx, string(dag.RoleExecutor), dag.MethodTaskStarted, map[string]any{
+			"agent_id": string(id), "id": tid,
+		}); err != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("task_started %s: %w", tid, err)
+		}
+		if _, err := e.handler.HandleCall(ctx, string(dag.RoleExecutor), dag.MethodTaskCompleted, map[string]any{
+			"agent_id": string(id), "id": tid,
+		}); err != nil {
+			return loop.ExecResult{ExitCode: -1}, fmt.Errorf("task_completed %s: %w", tid, err)
+		}
+	}
+	if _, err := e.handler.HandleCall(ctx, string(dag.RoleExecutor), dag.MethodIterationFinished, map[string]any{
+		"agent_id": string(id), "signal": "review",
+	}); err != nil {
+		return loop.ExecResult{ExitCode: -1}, err
+	}
+	return loop.ExecResult{ExitCode: 0}, nil
 }

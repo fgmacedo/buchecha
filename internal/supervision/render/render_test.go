@@ -145,31 +145,42 @@ func TestRenderBriefingUser_OmitsContractSections(t *testing.T) {
 	}
 }
 
-// TestRenderBriefingSystem_IncludesPartials verifies the three
-// agentcontract partials end up in the system prompt; their absence
-// would relax the bcc contract.
-func TestRenderBriefingSystem_IncludesPartials(t *testing.T) {
+// TestRenderBriefingSystem_IncludesContract verifies the executor
+// system prompt carries the contract pieces it needs to operate: the
+// 5 wire methods, the working tree discipline, the agent_id, and the
+// absolute_restrictions partial. Stricter than a substring sweep
+// because the executor cannot recover from a missing contract piece
+// at runtime.
+func TestRenderBriefingSystem_IncludesContract(t *testing.T) {
 	got, err := RenderBriefingSystem("agent-test")
 	if err != nil {
 		t.Fatalf("RenderBriefingSystem: %v", err)
 	}
 	for _, marker := range []string{
+		// Wire methods the executor must call.
+		"get_briefing",
+		"get_pending_tasks",
 		"task_started",
-		"absolute restrictions",
-		"git push",
+		"task_completed",
+		"iteration_finished",
+		// Working tree rules.
 		"Clean on entry",
+		"git add <specific paths>",
+		// Agent identity.
 		"agent-test",
-		"## Identity",
-		"## What bcc is",
-		"**Executor** (you)",
+		// Absolute restrictions partial.
+		"git push",
+		"Work **only inside the project directory**",
 	} {
-		if !strings.Contains(strings.ToLower(got), strings.ToLower(marker)) {
-			t.Errorf("partial marker %q missing from system prompt", marker)
+		if !strings.Contains(got, marker) {
+			t.Errorf("system prompt missing required marker %q", marker)
 		}
 	}
-	for _, otherRole := range []string{"**Planner** (you)", "**Briefer** (you)", "**Reviewer** (you)"} {
+	// The executor prompt must not expose the other roles' identities;
+	// it ships only the executor's own contract.
+	for _, otherRole := range []string{"## Your role: the Planner", "## Your role: the Briefer", "## Your role: the Reviewer", "## What bcc is"} {
 		if strings.Contains(got, otherRole) {
-			t.Errorf("system prompt must not mark %q as (you); rendered:\n%s", otherRole, got)
+			t.Errorf("system prompt leaks %q; the executor prompt should not carry pipeline framing", otherRole)
 		}
 	}
 }
@@ -264,6 +275,106 @@ func TestRenderBriefingUser_FiltersToSubDAG(t *testing.T) {
 	}
 	if !strings.Contains(got, "Second") {
 		t.Errorf("sub-DAG filter dropped target task:\n%s", got)
+	}
+}
+
+// TestRenderBriefingUserView_NarrowedSubDAG verifies that
+// taskIDsOverride replaces the briefing's SubDAGTaskIDs, so the
+// rendered prompt contains only the override tasks regardless of what
+// the briefing originally selected. Used by the loop on retry to
+// narrow the prompt to still-incomplete tasks.
+func TestRenderBriefingUserView_NarrowedSubDAG(t *testing.T) {
+	phase := &Phase{
+		ID: "p1", Title: "t", Intent: "i",
+		Tasks: []Task{
+			{
+				ID: "t1", Title: "First", Intent: "first",
+				Acceptance: []AcceptanceItem{{ID: "a", Description: "first ok", Evidence: EvidenceDiff}},
+				Status:     TaskPending,
+			},
+			{
+				ID: "t2", Title: "Second", Intent: "second",
+				Acceptance: []AcceptanceItem{{ID: "b", Description: "second ok", Evidence: EvidenceDiff}},
+				Status:     TaskPending,
+			},
+			{
+				ID: "t3", Title: "Third", Intent: "third",
+				Acceptance: []AcceptanceItem{{ID: "c", Description: "third ok", Evidence: EvidenceDiff}},
+				Status:     TaskPending,
+			},
+		},
+	}
+	briefing := &Briefing{
+		IterationID:   "p1-1",
+		PhaseID:       "p1",
+		SubDAGTaskIDs: []string{"t1", "t2", "t3"},
+		SpecPath:      "/tmp/spec.md",
+	}
+	got, err := RenderBriefingUserView(briefing, phase, "", []string{"t2"}, nil)
+	if err != nil {
+		t.Fatalf("RenderBriefingUserView: %v", err)
+	}
+	for _, banned := range []string{"First", "Third"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("override should drop %q from prompt:\n%s", banned, got)
+		}
+	}
+	if !strings.Contains(got, "Second") {
+		t.Errorf("override task missing from prompt:\n%s", got)
+	}
+}
+
+// TestRenderBriefingUserView_FeedbackPerTask verifies that the
+// per-task feedback map renders as a "Reviewer feedback (must
+// address)" block under the matching task and only that task.
+func TestRenderBriefingUserView_FeedbackPerTask(t *testing.T) {
+	phase := &Phase{
+		ID: "p1", Title: "t", Intent: "i",
+		Tasks: []Task{
+			{
+				ID: "t1", Title: "First", Intent: "first",
+				Acceptance: []AcceptanceItem{{ID: "a", Description: "first ok", Evidence: EvidenceDiff}},
+				Status:     TaskPending,
+			},
+			{
+				ID: "t2", Title: "Second", Intent: "second",
+				Acceptance: []AcceptanceItem{{ID: "b", Description: "second ok", Evidence: EvidenceDiff}},
+				Status:     TaskPending,
+			},
+		},
+	}
+	briefing := &Briefing{
+		IterationID:   "p1-2",
+		PhaseID:       "p1",
+		SubDAGTaskIDs: []string{"t1", "t2"},
+		SpecPath:      "/tmp/spec.md",
+	}
+	feedback := map[string]string{
+		"t1": "fix off-by-one in loop",
+		"t2": "missing nil check",
+	}
+	got, err := RenderBriefingUserView(briefing, phase, "", nil, feedback)
+	if err != nil {
+		t.Fatalf("RenderBriefingUserView: %v", err)
+	}
+	if !strings.Contains(got, "Reviewer feedback") {
+		t.Errorf("retry prompt missing reviewer-feedback heading:\n%s", got)
+	}
+	if !strings.Contains(got, "fix off-by-one in loop") {
+		t.Errorf("retry prompt missing t1 feedback:\n%s", got)
+	}
+	if !strings.Contains(got, "missing nil check") {
+		t.Errorf("retry prompt missing t2 feedback:\n%s", got)
+	}
+	if !strings.Contains(got, "This is a retry.") {
+		t.Errorf("retry prompt missing retry banner:\n%s", got)
+	}
+
+	// Feedback under t1 must appear before the t2 task header.
+	t1Idx := strings.Index(got, "Reviewer feedback")
+	t2Idx := strings.Index(got, "### Task t2")
+	if t1Idx < 0 || t2Idx < 0 || t1Idx > t2Idx {
+		t.Errorf("t1 feedback should be inside its task block, before t2 header (t1=%d t2=%d):\n%s", t1Idx, t2Idx, got)
 	}
 }
 

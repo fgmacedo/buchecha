@@ -30,6 +30,13 @@ const (
 // Defining it explicitly (instead of feeding the template Briefing +
 // Phase as is) keeps the template stable when either type grows new
 // fields the template does not surface.
+//
+// Feedback maps a task id to the Reviewer's per-task note from the
+// previous attempt's task_needs_fix call. The template renders the
+// note inline under the task block when present. RetryNotice is the
+// flag the template uses to print the "narrowed sub-DAG" banner above
+// the task list when the iteration is a retry; it is set by callers
+// alongside Feedback and Tasks.
 type briefingView struct {
 	IterationID   string
 	PhaseID       string
@@ -42,6 +49,18 @@ type briefingView struct {
 	Instructions  string
 	PriorFeedback string
 	Hint          string
+	Feedback      map[string]string
+	RetryNotice   bool
+}
+
+// FeedbackFor returns the Reviewer's per-task note for the given task
+// id, or empty when no note was recorded. Exposed as a method so the
+// template can look up entries without using the map index helper.
+func (v briefingView) FeedbackFor(taskID string) string {
+	if v.Feedback == nil {
+		return ""
+	}
+	return v.Feedback[taskID]
 }
 
 // RenderBriefingSystem returns the Executor's system prompt: the bcc
@@ -81,7 +100,23 @@ func RenderBriefingSystem(agentID string) (string, error) {
 // reply. When non-empty, render prepends a "User hint (escalation)"
 // block so the Executor sees the user's correction before the
 // reviewer-derived prior feedback.
+//
+// This is the attempt-1 entry point: the rendered prompt covers the
+// briefing's full SubDAGTaskIDs and carries no per-task feedback. The
+// loop driver calls RenderBriefingUserView on retry to narrow the task
+// list and inject the Reviewer's per-task notes.
 func RenderBriefingUser(b *Briefing, p *Phase, hint string) (string, error) {
+	return RenderBriefingUserView(b, p, hint, nil, nil)
+}
+
+// RenderBriefingUserView is the retry-aware variant of
+// RenderBriefingUser. taskIDsOverride, when non-nil, replaces the
+// briefing's SubDAGTaskIDs as the set of tasks rendered; pass it to
+// narrow the prompt to the still-incomplete tasks on retry. feedback
+// maps task id to the Reviewer's per-task note from the previous
+// attempt; the template renders each note inline under its task. Both
+// arguments may be nil to reproduce the attempt-1 behavior.
+func RenderBriefingUserView(b *Briefing, p *Phase, hint string, taskIDsOverride []string, feedback map[string]string) (string, error) {
 	if b == nil {
 		return "", fmt.Errorf("director: RenderBriefingUser: nil briefing")
 	}
@@ -97,7 +132,11 @@ func RenderBriefingUser(b *Briefing, p *Phase, hint string) (string, error) {
 		return "", fmt.Errorf("director: parse briefing template: %w", err)
 	}
 
-	tasks := selectTasks(p, b.SubDAGTaskIDs)
+	taskIDs := taskIDsOverride
+	if taskIDs == nil {
+		taskIDs = b.SubDAGTaskIDs
+	}
+	tasks := selectTasks(p, taskIDs)
 	priorFeedback := ""
 	if b.PriorFeedback != nil {
 		priorFeedback = *b.PriorFeedback
@@ -115,6 +154,8 @@ func RenderBriefingUser(b *Briefing, p *Phase, hint string) (string, error) {
 		Instructions:  b.Instructions,
 		PriorFeedback: priorFeedback,
 		Hint:          hint,
+		Feedback:      feedback,
+		RetryNotice:   len(feedback) > 0,
 	}
 
 	var buf bytes.Buffer

@@ -1,3 +1,0 @@
-- Clean on entry. Clean on exit. Each commit is a milestone with a focused message in imperative mood, lowercase prefix matching the project's `git log` style.
-- Use `git add <specific paths>`, never `git add -A`.
-- Branch name pattern: `<type>/<short-slug>` (e.g., `feat/web-search-ui`, `refac/api-ports-adapters`). On loop iterations after the first, reuse the same branch.

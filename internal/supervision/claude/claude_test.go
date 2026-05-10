@@ -301,39 +301,39 @@ func TestComposePrompt_EmbedsAbsoluteRestrictions(t *testing.T) {
 	}
 }
 
-// TestComposePrompt_EmbedsWhatBccIs guards the "what bcc is" partial:
-// every per-role prompt must carry the shared product description, and
-// the role's bullet must be marked with "(you)" so the agent knows
-// which one of the four it is. Review is not asserted because the
-// review prompt has not adopted the partial yet.
-func TestComposePrompt_EmbedsWhatBccIs(t *testing.T) {
+// TestComposePrompt_RoleScoped verifies each per-role prompt frames
+// the role on its own terms without leaking pipeline-wide context the
+// role does not need. Specifically: no `## What bcc is` block (dropped
+// in favor of role-scoped framing), and no mention of the other three
+// role names that would distract the agent from its own contract.
+func TestComposePrompt_RoleScoped(t *testing.T) {
 	cases := []struct {
-		name       string
-		tpl        string
-		view       any
-		youMarker  string
-		otherRoles []string
+		name        string
+		tpl         string
+		view        any
+		mustContain []string
+		otherRoles  []string
 	}{
 		{
 			"plan",
 			supervision.PlanPromptTemplate(),
 			planView{Role: "planner", AgentID: "planner-001", SpecPath: "/tmp/spec.md"},
-			"**Planner** (you)",
-			[]string{"**Briefer** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+			[]string{"plan_emit", "planner-001"},
+			[]string{"## Your role: the Briefer", "## Your role: the Executor", "## Your role: the Reviewer"},
 		},
 		{
 			"brief",
 			supervision.BriefPromptTemplate(),
 			briefView{Role: "briefer", AgentID: "briefer-001", SpecPath: "/tmp/spec.md", IterationID: "p1-1", PhaseID: "p1"},
-			"**Briefer** (you)",
-			[]string{"**Planner** (you)", "**Executor** (you)", "**Reviewer** (you)"},
+			[]string{"briefing_emit", "briefer-001"},
+			[]string{"## Your role: the Planner", "## Your role: the Executor", "## Your role: the Reviewer"},
 		},
 		{
 			"review",
 			supervision.ReviewPromptTemplate(),
 			reviewView{Role: "reviewer", AgentID: "reviewer-001"},
-			"**Reviewer** (you)",
-			[]string{"**Planner** (you)", "**Briefer** (you)", "**Executor** (you)"},
+			[]string{"review_finished", "reviewer-001"},
+			[]string{"## Your role: the Planner", "## Your role: the Briefer", "## Your role: the Executor"},
 		},
 	}
 	for _, tc := range cases {
@@ -342,18 +342,17 @@ func TestComposePrompt_EmbedsWhatBccIs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("compose: %v", err)
 			}
-			if !strings.Contains(out, "## What bcc is") {
-				t.Errorf("what_bcc_is heading missing from %s prompt", tc.name)
+			if strings.Contains(out, "## What bcc is") {
+				t.Errorf("%s prompt should not carry the shared what_bcc_is block", tc.name)
 			}
-			if !strings.Contains(out, "format-agnostic") {
-				t.Errorf("what_bcc_is body marker missing from %s prompt", tc.name)
-			}
-			if !strings.Contains(out, tc.youMarker) {
-				t.Errorf("expected %q to mark the active role in %s prompt", tc.youMarker, tc.name)
+			for _, want := range tc.mustContain {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s prompt missing required marker %q", tc.name, want)
+				}
 			}
 			for _, other := range tc.otherRoles {
 				if strings.Contains(out, other) {
-					t.Errorf("%s prompt should not mark %q as (you); rendered:\n%s", tc.name, other, out)
+					t.Errorf("%s prompt should not include %q; the role prompt must stay scoped to its own contract", tc.name, other)
 				}
 			}
 		})

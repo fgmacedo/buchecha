@@ -25,66 +25,26 @@ func TestSignal_String(t *testing.T) {
 	}
 }
 
-func TestPartials_DefinesAllThreeBlocks(t *testing.T) {
+func TestPartials_DefinesAbsoluteRestrictions(t *testing.T) {
 	p := Partials()
-	for _, name := range []string{"wire_protocol", "absolute_restrictions", "working_tree"} {
-		if p.Lookup(name) == nil {
-			t.Errorf("partial %q missing", name)
-		}
+	if p.Lookup("absolute_restrictions") == nil {
+		t.Fatalf("partial absolute_restrictions missing")
 	}
-}
-
-func TestPartials_WireProtocol_DescribesMCPMethods(t *testing.T) {
-	p := Partials()
 	var buf bytes.Buffer
-	if err := p.ExecuteTemplate(&buf, "wire_protocol", nil); err != nil {
-		t.Fatalf("execute wire_protocol: %v", err)
+	if err := p.ExecuteTemplate(&buf, "absolute_restrictions", nil); err != nil {
+		t.Fatalf("execute absolute_restrictions: %v", err)
 	}
 	body := buf.String()
 	for _, want := range []string{
-		// Per-role surfaces the Director loop relies on.
-		"Planner", "Briefer", "Executor", "Reviewer",
-		"agent_id",
-		"plan_emit",
-		"briefing_emit",
-		"get_dag_snapshot",
-		"get_briefing",
-		"get_pending_tasks",
-		"get_baseline",
-		"get_journal_delta",
-		"task_started",
-		"task_completed",
-		"task_approved",
-		"task_needs_fix",
-		"iteration_finished",
-		"review_finished",
-		// Wire alphabets stay canonical English regardless of locale.
-		"continue", "review", "done", "blocked",
-		"approve", "revise", "escalate",
+		"Work **only inside the project directory**",
+		"Do not execute",
+		"git push",
+		"Do not run",
+		"Do not touch",
+		"Do not change",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("wire_protocol partial missing %q", want)
-		}
-	}
-}
-
-// TestPartials_WireProtocol_NoLegacyEnvelope ensures the rewritten
-// partial does not still describe the demoted stream-json envelope as
-// the protocol of record.
-func TestPartials_WireProtocol_NoLegacyEnvelope(t *testing.T) {
-	p := Partials()
-	var buf bytes.Buffer
-	if err := p.ExecuteTemplate(&buf, "wire_protocol", nil); err != nil {
-		t.Fatalf("execute wire_protocol: %v", err)
-	}
-	body := buf.String()
-	for _, banned := range []string{
-		"mcp__bcc__task_started",
-		"mcp__bcc__task_completed",
-		"mcp__bcc__iteration_result",
-	} {
-		if strings.Contains(body, banned) {
-			t.Errorf("wire_protocol partial still references legacy envelope %q", banned)
+			t.Errorf("absolute_restrictions partial missing %q", want)
 		}
 	}
 }
@@ -98,27 +58,25 @@ func TestPartials_WireProtocol_NoLegacyEnvelope(t *testing.T) {
 // repo, since the file would only exist there.
 func TestPartials_NoFrameworkPathLeaks(t *testing.T) {
 	p := Partials()
-	for _, name := range []string{"wire_protocol", "absolute_restrictions", "working_tree", "what_bcc_is"} {
-		var buf bytes.Buffer
-		view := struct{ Role string }{Role: "planner"}
-		if err := p.ExecuteTemplate(&buf, name, view); err != nil {
-			t.Fatalf("execute %s: %v", name, err)
-		}
-		body := buf.String()
-		for _, banned := range []string{
-			".schema.json",
-			"internal/",
-		} {
-			if strings.Contains(body, banned) {
-				t.Errorf("%s partial leaks framework path %q; describe the contract without naming files inside the bcc binary", name, banned)
-			}
+	var buf bytes.Buffer
+	view := struct{ Role string }{Role: "planner"}
+	if err := p.ExecuteTemplate(&buf, "absolute_restrictions", view); err != nil {
+		t.Fatalf("execute absolute_restrictions: %v", err)
+	}
+	body := buf.String()
+	for _, banned := range []string{
+		".schema.json",
+		"internal/",
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("absolute_restrictions partial leaks framework path %q; describe the contract without naming files inside the bcc binary", banned)
 		}
 	}
 }
 
 func TestPartials_ComposableWithChild(t *testing.T) {
 	parent := Partials()
-	child, err := parent.New("child").Parse("BEGIN\n{{template \"wire_protocol\" .}}\nEND\n")
+	child, err := parent.New("child").Parse("BEGIN\n{{template \"absolute_restrictions\" .}}\nEND\n")
 	if err != nil {
 		t.Fatal(err)
 	}
