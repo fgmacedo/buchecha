@@ -130,7 +130,7 @@ func TestDrainJSON_InfoLockedSchema(t *testing.T) {
 		`{"at":"2026-04-29T14:32:00Z","kind":"tool_use","level":"info","tool":{"args":{"cmd":"ls"},"id":"t1","name":"Bash"},"type":"agent_event"}`,
 		`{"at":"2026-04-29T14:32:00Z","kind":"tool_result","level":"error","tool":{"id":"t2","is_error":true,"summary":"boom"},"type":"agent_event"}`,
 		`{"at":"2026-04-29T14:32:00Z","kind":"rate_limit","level":"warn","rate":{"status":"warning"},"type":"agent_event"}`,
-		`{"at":"2026-04-29T14:32:00Z","done":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"duration_ms":0,"input_tokens":0,"num_turns":1,"output_tokens":0,"total_cost_usd":0.5},"kind":"result_summary","level":"info","type":"agent_event"}`,
+		`{"at":"2026-04-29T14:32:00Z","done":{"duration_ms":0,"num_turns":1,"tokens":{"cache_write":0,"input_cached":0,"input_fresh":0,"output":0,"reasoning":0},"total_cost_usd":0.5},"kind":"result_summary","level":"info","type":"agent_event"}`,
 		`{"at":"2026-04-29T14:32:00Z","duration_ms":0,"head_advanced":true,"index":1,"level":"info","signal":"done","type":"iter_finished"}`,
 		`{"at":"2026-04-29T14:32:00Z","exit_code":0,"level":"info","reason":"spec done","type":"loop_finished"}`,
 	}

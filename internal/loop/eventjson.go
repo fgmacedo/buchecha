@@ -233,11 +233,8 @@ func jsonPayload(ev Event) map[string]any {
 			"exit_code":   e.ExitCode,
 			"duration_ms": e.DurationMS,
 			"cost": map[string]any{
-				"input_tokens":                e.Cost.Tokens.InputFresh,
-				"output_tokens":               e.Cost.Tokens.Output,
-				"cache_read_input_tokens":     e.Cost.Tokens.InputCached,
-				"cache_creation_input_tokens": e.Cost.Tokens.CacheWrite,
-				"usd":                         e.Cost.USD,
+				"usd":    e.Cost.USD,
+				"tokens": tokenUsageJSON(e.Cost.Tokens),
 			},
 		}
 	default:
@@ -298,12 +295,7 @@ func agentEventJSON(ae agentcontract.AgentEvent, level string) map[string]any {
 	case agentcontract.KindThinking, agentcontract.KindAssistantText:
 		out["text"] = ae.Text
 		if ae.Kind == agentcontract.KindAssistantText && ae.Usage != nil {
-			out["usage"] = map[string]any{
-				"input_tokens":                ae.Usage.InputFresh,
-				"output_tokens":               ae.Usage.Output,
-				"cache_read_input_tokens":     ae.Usage.InputCached,
-				"cache_creation_input_tokens": ae.Usage.CacheWrite,
-			}
+			out["usage"] = tokenUsageJSON(*ae.Usage)
 		}
 	case agentcontract.KindToolUse:
 		if ae.Tool != nil {
@@ -337,13 +329,10 @@ func agentEventJSON(ae agentcontract.AgentEvent, level string) map[string]any {
 	case agentcontract.KindResultSummary:
 		if ae.Done != nil {
 			out["done"] = map[string]any{
-				"num_turns":                   ae.Done.NumTurns,
-				"total_cost_usd":              ae.Done.TotalCostUSD,
-				"input_tokens":                ae.Done.Tokens.InputFresh,
-				"output_tokens":               ae.Done.Tokens.Output,
-				"cache_read_input_tokens":     ae.Done.Tokens.InputCached,
-				"cache_creation_input_tokens": ae.Done.Tokens.CacheWrite,
-				"duration_ms":                 ae.Done.DurationMS,
+				"num_turns":      ae.Done.NumTurns,
+				"total_cost_usd": ae.Done.TotalCostUSD,
+				"duration_ms":    ae.Done.DurationMS,
+				"tokens":         tokenUsageJSON(ae.Done.Tokens),
 			}
 		}
 	}
@@ -355,6 +344,26 @@ func formatAt(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// tokenUsageJSON renders a TokenUsage as a vendor-neutral wire object
+// with the five token buckets and an explicit provider tag. The shape is
+// stable across providers; consumers (TUI, WebUI, comparator) can
+// aggregate without knowing which agent emitted the values. The provider
+// key is omitted when empty so legacy fixtures and tests that build
+// TokenUsage with no provider stamp keep producing the same JSON.
+func tokenUsageJSON(t agentcontract.TokenUsage) map[string]any {
+	out := map[string]any{
+		"input_fresh":  t.InputFresh,
+		"input_cached": t.InputCached,
+		"cache_write":  t.CacheWrite,
+		"output":       t.Output,
+		"reasoning":    t.Reasoning,
+	}
+	if t.Provider != "" {
+		out["provider"] = string(t.Provider)
+	}
+	return out
 }
 
 // assignmentJSON returns the per-role spawn parameters for the

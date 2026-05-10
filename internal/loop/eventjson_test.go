@@ -140,8 +140,10 @@ func TestMarshalJSONEvent_AgentResultSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	// done keys sorted alphabetically; cache token fields present even when zero.
-	want := `{"at":"2026-04-29T14:35:00Z","done":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"duration_ms":42100,"input_tokens":12000,"num_turns":12,"output_tokens":2300,"total_cost_usd":0.34},"kind":"result_summary","level":"info","type":"agent_event"}`
+	// done keys sorted alphabetically; tokens object holds the 5-bucket
+	// vendor-neutral usage. Provider tag omitted because the test value
+	// leaves it unset; bucket fields are always present (zero allowed).
+	want := `{"at":"2026-04-29T14:35:00Z","done":{"duration_ms":42100,"num_turns":12,"tokens":{"cache_write":0,"input_cached":0,"input_fresh":12000,"output":2300,"reasoning":0},"total_cost_usd":0.34},"kind":"result_summary","level":"info","type":"agent_event"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
@@ -168,7 +170,7 @@ func TestMarshalJSONEvent_AgentResultSummaryWithCacheTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-04-29T14:35:00Z","done":{"cache_creation_input_tokens":200,"cache_read_input_tokens":800,"duration_ms":15000,"input_tokens":5000,"num_turns":4,"output_tokens":1000,"total_cost_usd":0.1},"kind":"result_summary","level":"info","type":"agent_event"}`
+	want := `{"at":"2026-04-29T14:35:00Z","done":{"duration_ms":15000,"num_turns":4,"tokens":{"cache_write":200,"input_cached":800,"input_fresh":5000,"output":1000,"reasoning":0},"total_cost_usd":0.1},"kind":"result_summary","level":"info","type":"agent_event"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
@@ -191,8 +193,30 @@ func TestMarshalJSONEvent_AgentAssistantTextWithUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	// usage and its keys appear when non-nil; top-level keys sorted alphabetically.
-	want := `{"at":"2026-04-29T14:32:10Z","kind":"assistant_text","level":"debug","text":"Adjusting parser for edge case.","type":"agent_event","usage":{"cache_creation_input_tokens":100,"cache_read_input_tokens":500,"input_tokens":1200,"output_tokens":300}}`
+	// usage object holds the 5-bucket vendor-neutral usage; top-level keys
+	// sorted alphabetically.
+	want := `{"at":"2026-04-29T14:32:10Z","kind":"assistant_text","level":"debug","text":"Adjusting parser for edge case.","type":"agent_event","usage":{"cache_write":100,"input_cached":500,"input_fresh":1200,"output":300,"reasoning":0}}`
+	if string(got) != want {
+		t.Errorf("\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestMarshalJSONEvent_TokensCarriesProviderTag(t *testing.T) {
+	at := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	ev := loop.AgentEventReceived{Event: agentcontract.AgentEvent{
+		Kind: agentcontract.KindAssistantText,
+		At:   at,
+		Text: "x",
+		Usage: &agentcontract.TokenUsage{
+			InputFresh: 1, Output: 2,
+			Provider: agentcontract.ProviderAnthropic,
+		},
+	}}
+	got, err := loop.MarshalJSONEvent(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"at":"2026-05-10T12:00:00Z","kind":"assistant_text","level":"debug","text":"x","type":"agent_event","usage":{"cache_write":0,"input_cached":0,"input_fresh":1,"output":2,"provider":"anthropic","reasoning":0}}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
@@ -493,7 +517,7 @@ func TestMarshalJSONEvent_SpawnFinished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-05-05T12:05:00Z","cost":{"cache_creation_input_tokens":200,"cache_read_input_tokens":800,"input_tokens":12000,"output_tokens":2300,"usd":0.34},"duration_ms":5000,"exit_code":0,"level":"info","role":"executor","spawn_id":"01arya0000000000000001","type":"spawn_finished"}`
+	want := `{"at":"2026-05-05T12:05:00Z","cost":{"tokens":{"cache_write":200,"input_cached":800,"input_fresh":12000,"output":2300,"reasoning":0},"usd":0.34},"duration_ms":5000,"exit_code":0,"level":"info","role":"executor","spawn_id":"01arya0000000000000001","type":"spawn_finished"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}
@@ -513,7 +537,7 @@ func TestMarshalJSONEvent_SpawnFinishedZeroCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	want := `{"at":"2026-05-05T12:05:00Z","cost":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":0,"output_tokens":0,"usd":0},"duration_ms":1000,"exit_code":1,"level":"info","role":"executor","spawn_id":"01arya0000000000000001","type":"spawn_finished"}`
+	want := `{"at":"2026-05-05T12:05:00Z","cost":{"tokens":{"cache_write":0,"input_cached":0,"input_fresh":0,"output":0,"reasoning":0},"usd":0},"duration_ms":1000,"exit_code":1,"level":"info","role":"executor","spawn_id":"01arya0000000000000001","type":"spawn_finished"}`
 	if string(got) != want {
 		t.Errorf("\n got: %s\nwant: %s", got, want)
 	}

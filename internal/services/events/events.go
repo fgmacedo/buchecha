@@ -835,25 +835,17 @@ func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEve
 			IsError bool           `json:"is_error"`
 			Summary string         `json:"summary"`
 		} `json:"tool"`
-		Text  string `json:"text"`
-		Usage *struct {
-			InputTokens              int64 `json:"input_tokens"`
-			OutputTokens             int64 `json:"output_tokens"`
-			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-		} `json:"usage"`
-		Rate *struct {
+		Text  string          `json:"text"`
+		Usage *wireTokenUsage `json:"usage"`
+		Rate  *struct {
 			Status  string `json:"status"`
 			ResetAt string `json:"reset_at"`
 		} `json:"rate"`
 		Done *struct {
-			NumTurns                 int     `json:"num_turns"`
-			TotalCostUSD             float64 `json:"total_cost_usd"`
-			InputTokens              int64   `json:"input_tokens"`
-			OutputTokens             int64   `json:"output_tokens"`
-			CacheReadInputTokens     int64   `json:"cache_read_input_tokens"`
-			CacheCreationInputTokens int64   `json:"cache_creation_input_tokens"`
-			DurationMS               int64   `json:"duration_ms"`
+			NumTurns     int             `json:"num_turns"`
+			TotalCostUSD float64         `json:"total_cost_usd"`
+			DurationMS   int64           `json:"duration_ms"`
+			Tokens       *wireTokenUsage `json:"tokens"`
 		} `json:"done"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
@@ -887,12 +879,7 @@ func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEve
 		}
 	}
 	if body.Usage != nil {
-		usage := wireUsageToTokenUsage(
-			body.Usage.InputTokens,
-			body.Usage.OutputTokens,
-			body.Usage.CacheReadInputTokens,
-			body.Usage.CacheCreationInputTokens,
-		)
+		usage := body.Usage.toTokenUsage()
 		ev.Usage = &usage
 	}
 	if body.Rate != nil {
@@ -906,12 +893,9 @@ func decodeAgentEvent(raw json.RawMessage, at time.Time) (agentcontract.AgentEve
 			NumTurns:     body.Done.NumTurns,
 			TotalCostUSD: body.Done.TotalCostUSD,
 			DurationMS:   body.Done.DurationMS,
-			Tokens: wireUsageToTokenUsage(
-				body.Done.InputTokens,
-				body.Done.OutputTokens,
-				body.Done.CacheReadInputTokens,
-				body.Done.CacheCreationInputTokens,
-			),
+		}
+		if body.Done.Tokens != nil {
+			ev.Done.Tokens = body.Done.Tokens.toTokenUsage()
 		}
 	}
 	return ev, true
@@ -928,18 +912,26 @@ func parseAt(s string) time.Time {
 	return t
 }
 
-// wireUsageToTokenUsage maps the on-disk Anthropic-shaped usage fields
-// (input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens)
-// back into the vendor-neutral TokenUsage. Mirrors the inverse of the
-// translation in internal/loop/eventjson.go; both will be replaced when
-// the wire format flips to the 5-bucket vendor-neutral shape.
-func wireUsageToTokenUsage(inputFresh, output, cacheRead, cacheWrite int64) agentcontract.TokenUsage {
+// wireTokenUsage is the on-disk shape of the 5-bucket TokenUsage as
+// emitted by internal/loop/eventjson.go. The reader unmarshals into this
+// struct then converts to agentcontract.TokenUsage; new providers add no
+// fields here, only a different value in `provider`.
+type wireTokenUsage struct {
+	InputFresh  int64  `json:"input_fresh"`
+	InputCached int64  `json:"input_cached"`
+	CacheWrite  int64  `json:"cache_write"`
+	Output      int64  `json:"output"`
+	Reasoning   int64  `json:"reasoning"`
+	Provider    string `json:"provider"`
+}
+
+func (w wireTokenUsage) toTokenUsage() agentcontract.TokenUsage {
 	return agentcontract.TokenUsage{
-		InputFresh:  inputFresh,
-		InputCached: cacheRead,
-		CacheWrite:  cacheWrite,
-		Output:      output,
-		Reasoning:   0,
-		Provider:    agentcontract.ProviderAnthropic,
+		InputFresh:  w.InputFresh,
+		InputCached: w.InputCached,
+		CacheWrite:  w.CacheWrite,
+		Output:      w.Output,
+		Reasoning:   w.Reasoning,
+		Provider:    agentcontract.Provider(w.Provider),
 	}
 }
