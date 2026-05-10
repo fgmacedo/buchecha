@@ -57,3 +57,5 @@ internal/webui/web/*.tsbuildinfo
 .compare-worktrees/
 testdata/diag-dag-output/
 testdata/bcc-validation/
+scripts/__pycache__/
+report.json

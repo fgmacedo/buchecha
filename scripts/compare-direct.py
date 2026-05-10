@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -159,9 +160,15 @@ def remove_worktree(repo: Path, path: Path, branch: str) -> None:
 
 def diff_stat(repo: Path, base_sha: str) -> tuple[int, int, int]:
     """Compute (files_changed, lines_added, lines_removed) for the
-    worktree at `repo` against base_sha. Reads `git diff --shortstat`
-    over the workspace so it includes both committed and unstaged
-    changes the agent left behind."""
+    worktree at `repo` against base_sha. Includes tracked, unstaged,
+    AND untracked changes the agent left behind: a direct claude run
+    typically creates new files without staging them, so a plain
+    `git diff <base>` would report 0.
+
+    Uses `git add -N` (intent-to-add) on every untracked path so the
+    diff sees them as additions without actually staging content. The
+    worktree is disposable, so this side effect is fine."""
+    must_run(["git", "add", "-N", "--", "."], cwd=repo)
     out = must_run(
         ["git", "diff", "--shortstat", base_sha, "--"],
         cwd=repo,
@@ -183,6 +190,26 @@ def diff_stat(repo: Path, base_sha: str) -> tuple[int, int, int]:
 # ---------------------------------------------------------------------------
 
 
+def patch_max_iterations(toml_path: Path, max_iter: int) -> None:
+    """Replace `max_iterations = N` under `[loop]` in a .bcc.toml in
+    place. If the file or section is missing, append a fresh `[loop]`
+    block. Targeted regex edit so comments and formatting elsewhere in
+    the file survive."""
+    if not toml_path.exists():
+        toml_path.write_text(f"[loop]\nmax_iterations = {max_iter}\n")
+        return
+    body = toml_path.read_text()
+    pattern = re.compile(
+        r"(^\[loop\][^\[]*?^\s*max_iterations\s*=\s*)\d+",
+        re.MULTILINE | re.DOTALL,
+    )
+    new_body, n = pattern.subn(rf"\g<1>{max_iter}", body, count=1)
+    if n == 0:
+        sep = "" if body.endswith("\n") else "\n"
+        new_body = f"{body}{sep}\n[loop]\nmax_iterations = {max_iter}\n"
+    toml_path.write_text(new_body)
+
+
 def run_bcc(
     worktree: Path,
     prompt: str | None,
@@ -196,8 +223,23 @@ def run_bcc(
     Returns the aggregate plus the diff stats against the worktree's
     base SHA. Wall time is measured externally so it matches the user's
     experience of "how long did the run take".
+
+    The iteration budget is delivered by patching loop.max_iterations
+    inside the worktree's .bcc.toml before launch. There is no
+    `--max-iter` CLI flag and the env layer does not feed Config, so
+    the side effect on disk is unavoidable. The worktree is disposable.
     """
-    args = ["bcc", "run", "-W", "--output", "json", "--no-color", "--max-iter", str(max_iter)]
+    toml_path = worktree / ".bcc.toml"
+    toml_was_tracked = toml_path.exists()
+    patch_max_iterations(toml_path, max_iter)
+    args = [
+        "bcc",
+        "run",
+        "-W",
+        "--output",
+        "json",
+        "--no-color",
+    ]
     if prompt:
         args += ["--prompt", prompt]
     if spec:
@@ -209,8 +251,17 @@ def run_bcc(
     elapsed = time.monotonic() - started
     if proc.returncode != 0:
         sys.stderr.write(
-            f"bcc exited {proc.returncode}; reading partial cost.json anyway\nstderr:\n{proc.stderr[-2000:]}\n"
+            f"bcc exited {proc.returncode}; reading partial cost.json anyway\n"
+            f"args: {' '.join(args)}\n"
+            f"stdout (tail):\n{proc.stdout[-2000:]}\n"
+            f"stderr (tail):\n{proc.stderr[-2000:]}\n"
         )
+
+    # Revert the .bcc.toml patch so it does not contaminate diff_stat.
+    if toml_was_tracked:
+        run(["git", "checkout", "--", ".bcc.toml"], cwd=worktree)
+    elif toml_path.exists():
+        toml_path.unlink()
 
     sessions_dir = worktree / ".bcc" / "sessions"
     if not sessions_dir.exists():
