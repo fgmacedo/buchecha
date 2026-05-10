@@ -554,23 +554,39 @@ def main() -> int:
 
     repo = repo_root()
 
-    spec_path: Path | None = None
+    # spec is resolved as a path RELATIVE to the repo root. Each side
+    # later joins this against its own worktree, so the agent sees a
+    # spec inside the worktree, not in the parent repo. Passing the
+    # parent-absolute path leaked writes to the parent on retry: the
+    # agent occasionally derived "project root" from the spec's dir
+    # rather than cwd.
+    spec_relpath: Path | None = None
+    spec_text: str | None = None
     if args.baseline:
-        spec_path = repo / BASELINES[args.baseline]
-        if not spec_path.exists():
-            p.error(f"baseline spec missing: {spec_path}")
+        spec_relpath = Path(BASELINES[args.baseline])
+        spec_abs = repo / spec_relpath
+        if not spec_abs.exists():
+            p.error(f"baseline spec missing: {spec_abs}")
+        spec_text = spec_abs.read_text()
     elif args.spec:
-        spec_path = args.spec.resolve()
-        if not spec_path.exists():
-            p.error(f"spec missing: {spec_path}")
+        candidate = args.spec.resolve()
+        if not candidate.exists():
+            p.error(f"spec missing: {candidate}")
+        try:
+            spec_relpath = candidate.relative_to(repo)
+        except ValueError:
+            p.error(
+                f"spec must live inside the repo root {repo}; got {candidate}"
+            )
+        spec_text = candidate.read_text()
 
     prompt_for_direct = args.prompt
-    if prompt_for_direct is None and spec_path is not None:
+    if prompt_for_direct is None and spec_text is not None:
         # The direct claude side has no MCP-shaped supervision: it reads
         # the spec inline and runs to completion. Pass the spec contents
         # plus a stable wrapper so both sides see the same text.
         prompt_for_direct = (
-            f"Read and execute this spec end to end:\n\n{spec_path.read_text()}"
+            f"Read and execute this spec end to end:\n\n{spec_text}"
         )
 
     if not working_tree_clean(repo):
@@ -599,7 +615,7 @@ def main() -> int:
         bcc_result = run_bcc(
             bcc_wt,
             prompt=args.prompt,
-            spec=spec_path,
+            spec=(bcc_wt / spec_relpath) if spec_relpath else None,
             max_iter=args.max_iter,
             parent_toml=repo / ".bcc.toml",
         )
