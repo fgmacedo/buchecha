@@ -158,30 +158,64 @@ def remove_worktree(repo: Path, path: Path, branch: str) -> None:
         sys.stderr.write(f"branch delete failed: {exc}\n")
 
 
+DIFF_EXCLUDE_PREFIXES = (
+    ".bcc/",          # bcc session artifacts (cost.json, plan.json, etc.)
+    ".bcc.toml",      # comparator-injected config patch
+    "direct.stream.jsonl",  # comparator-captured claude stream log
+)
+
+
 def diff_stat(repo: Path, base_sha: str) -> tuple[int, int, int]:
     """Compute (files_changed, lines_added, lines_removed) for the
-    worktree at `repo` against base_sha. Includes tracked, unstaged,
-    AND untracked changes the agent left behind: a direct claude run
-    typically creates new files without staging them, so a plain
-    `git diff <base>` would report 0.
+    worktree at `repo` against base_sha. Counts tracked changes, plus
+    untracked-and-non-ignored files (`git add -N`), plus gitignored
+    files the agent created (specs in this repo write outputs to
+    ignored fixture dirs like testdata/diag-dag-output/, so a plain
+    diff would report 0 even when the agent wrote real files).
 
-    Uses `git add -N` (intent-to-add) on every untracked path so the
-    diff sees them as additions without actually staging content. The
-    worktree is disposable, so this side effect is fine."""
+    Framework artifacts under DIFF_EXCLUDE_PREFIXES are filtered out
+    so the count reflects what the agent did on the project, not what
+    the harness wrote alongside.
+
+    For ignored paths we count file count + line additions by reading
+    them off the filesystem; deletions of ignored paths are not
+    detected because their pre-image is by definition never tracked."""
     must_run(["git", "add", "-N", "--", "."], cwd=repo)
+    # Per-file numstat so we can filter framework artifacts before summing.
     out = must_run(
-        ["git", "diff", "--shortstat", base_sha, "--"],
+        ["git", "diff", "--numstat", base_sha, "--"],
         cwd=repo,
     )
     files = added = removed = 0
-    for chunk in out.split(","):
-        chunk = chunk.strip()
-        if "file" in chunk:
-            files = int(chunk.split()[0])
-        elif "insertion" in chunk:
-            added = int(chunk.split()[0])
-        elif "deletion" in chunk:
-            removed = int(chunk.split()[0])
+    for line in out.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        a_str, d_str, path = parts
+        if path.startswith(DIFF_EXCLUDE_PREFIXES):
+            continue
+        files += 1
+        if a_str != "-":
+            added += int(a_str)
+        if d_str != "-":
+            removed += int(d_str)
+
+    ignored = must_run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard"],
+        cwd=repo,
+    )
+    for rel in ignored.splitlines():
+        rel = rel.strip()
+        if not rel or rel.startswith(DIFF_EXCLUDE_PREFIXES):
+            continue
+        path = repo / rel
+        try:
+            data = path.read_bytes()
+        except (OSError, IsADirectoryError):
+            continue
+        files += 1
+        if data:
+            added += data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
     return files, added, removed
 
 
@@ -215,6 +249,7 @@ def run_bcc(
     prompt: str | None,
     spec: Path | None,
     max_iter: int,
+    parent_toml: Path | None,
 ) -> RunResult:
     """Run bcc inside `worktree` and return its aggregate.
 
@@ -224,13 +259,16 @@ def run_bcc(
     base SHA. Wall time is measured externally so it matches the user's
     experience of "how long did the run take".
 
-    The iteration budget is delivered by patching loop.max_iterations
-    inside the worktree's .bcc.toml before launch. There is no
-    `--max-iter` CLI flag and the env layer does not feed Config, so
-    the side effect on disk is unavoidable. The worktree is disposable.
+    .bcc.toml is gitignored and untracked in this repo, so the worktree
+    is born without it. We seed the worktree with the parent repo's
+    .bcc.toml (so providers, env files, debug flags, etc. propagate)
+    then patch loop.max_iterations on top. There is no `--max-iter`
+    CLI flag and the env layer does not feed Config, so the disk side
+    effect is unavoidable. The worktree is disposable.
     """
     toml_path = worktree / ".bcc.toml"
-    toml_was_tracked = toml_path.exists()
+    if parent_toml is not None and parent_toml.exists() and not toml_path.exists():
+        toml_path.write_bytes(parent_toml.read_bytes())
     patch_max_iterations(toml_path, max_iter)
     args = [
         "bcc",
@@ -257,11 +295,9 @@ def run_bcc(
             f"stderr (tail):\n{proc.stderr[-2000:]}\n"
         )
 
-    # Revert the .bcc.toml patch so it does not contaminate diff_stat.
-    if toml_was_tracked:
-        run(["git", "checkout", "--", ".bcc.toml"], cwd=worktree)
-    elif toml_path.exists():
-        toml_path.unlink()
+    # No revert: diff_stat filters DIFF_EXCLUDE_PREFIXES (including
+    # .bcc.toml) and leaving the file in place helps post-mortem
+    # inspection of --keep worktrees.
 
     sessions_dir = worktree / ".bcc" / "sessions"
     if not sessions_dir.exists():
@@ -561,7 +597,11 @@ def main() -> int:
     try:
         sys.stderr.write(f"running bcc in {bcc_wt}\n")
         bcc_result = run_bcc(
-            bcc_wt, prompt=args.prompt, spec=spec_path, max_iter=args.max_iter
+            bcc_wt,
+            prompt=args.prompt,
+            spec=spec_path,
+            max_iter=args.max_iter,
+            parent_toml=repo / ".bcc.toml",
         )
         bcc_result.files_changed, bcc_result.lines_added, bcc_result.lines_removed = (
             diff_stat(bcc_wt, base_sha)
