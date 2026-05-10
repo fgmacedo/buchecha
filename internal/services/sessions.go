@@ -17,15 +17,20 @@ import (
 // its own wire format. Fields the persistence layer does not yet carry
 // (BaselineSHA, IterationIndex, MaxIter) come back zero-valued for
 // V1; later wiring populates them without breaking the contract.
+//
+// CostSummary, when non-nil, is the dollar+token total for the session
+// sourced from cost.json (or the live accumulator). It is nil when the
+// session has no spawns yet so consumers can render a placeholder.
 type SessionMeta struct {
-	ID             string    `json:"id"`
-	SpecPath       string    `json:"spec_path"`
-	BaselineSHA    string    `json:"baseline_sha"`
-	StartedAt      time.Time `json:"started_at"`
-	FinishedAt     time.Time `json:"finished_at,omitzero"`
-	Status         string    `json:"status"`
-	IterationIndex int       `json:"iteration_index"`
-	MaxIter        int       `json:"max_iter"`
+	ID             string       `json:"id"`
+	SpecPath       string       `json:"spec_path"`
+	BaselineSHA    string       `json:"baseline_sha"`
+	StartedAt      time.Time    `json:"started_at"`
+	FinishedAt     time.Time    `json:"finished_at,omitzero"`
+	Status         string       `json:"status"`
+	IterationIndex int          `json:"iteration_index"`
+	MaxIter        int          `json:"max_iter"`
+	CostSummary    *CostSummary `json:"cost_summary,omitempty"`
 }
 
 // DAGSnapshot is a deep-copied snapshot of the DAG state owned by the
@@ -95,10 +100,10 @@ func (s *SessionService) List(ctx context.Context) ([]SessionMeta, error) {
 	out := make([]SessionMeta, 0, len(stored))
 	for _, sess := range stored {
 		if live != nil && sess.ID == live.ID {
-			out = append(out, sessionMetaFrom(*live))
+			out = append(out, s.attachCostSummary(sessionMetaFrom(*live)))
 			continue
 		}
-		out = append(out, sessionMetaFrom(sess))
+		out = append(out, s.attachCostSummary(sessionMetaFrom(sess)))
 	}
 	if live != nil {
 		found := false
@@ -109,10 +114,29 @@ func (s *SessionService) List(ctx context.Context) ([]SessionMeta, error) {
 			}
 		}
 		if !found {
-			out = append([]SessionMeta{sessionMetaFrom(*live)}, out...)
+			out = append([]SessionMeta{s.attachCostSummary(sessionMetaFrom(*live))}, out...)
 		}
 	}
 	return out, nil
+}
+
+// attachCostSummary populates meta.CostSummary by reading cost.json for
+// archived sessions, or by snapshotting the live accumulator for the
+// live session. Failures fall through silently: the field stays nil and
+// consumers render a placeholder.
+func (s *SessionService) attachCostSummary(meta SessionMeta) SessionMeta {
+	if live := s.liveSession(); live != nil && live.ID == meta.ID && s.cost != nil {
+		meta.CostSummary = s.cost.acc.snapshot(meta.ID).summary()
+		return meta
+	}
+	if s.deps.SessionsBaseDir == "" {
+		return meta
+	}
+	costPath := filepath.Join(session.SessionDirFor(s.deps.SessionsBaseDir, meta.ID), "cost.json")
+	if agg, err := readCostJSON(costPath); err == nil {
+		meta.CostSummary = agg.summary()
+	}
+	return meta
 }
 
 // Get returns the metadata for one session id. The live session takes
@@ -138,7 +162,7 @@ func (s *SessionService) Get(ctx context.Context, id string) (SessionMeta, error
 		}
 	}
 	if live := s.liveSession(); live != nil && live.ID == id {
-		return sessionMetaFrom(*live), nil
+		return s.attachCostSummary(sessionMetaFrom(*live)), nil
 	}
 	if s.deps.SessionsBaseDir == "" {
 		return SessionMeta{}, ErrSessionNotFound.WithDetails(map[string]any{"id": id})
@@ -150,7 +174,7 @@ func (s *SessionService) Get(ctx context.Context, id string) (SessionMeta, error
 		}
 		return SessionMeta{}, fmt.Errorf("services: get session %q: %w", id, err)
 	}
-	return sessionMetaFrom(*store.Session()), nil
+	return s.attachCostSummary(sessionMetaFrom(*store.Session())), nil
 }
 
 // Snapshot returns the per-session bootstrap payload: metadata, DAG

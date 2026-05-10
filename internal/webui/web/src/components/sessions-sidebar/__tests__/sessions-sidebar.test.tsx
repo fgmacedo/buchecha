@@ -132,6 +132,48 @@ describe('SessionsSidebar row contents (T10.2)', () => {
   })
 })
 
+describe('SessionsSidebar cost chip', () => {
+  it('renders the cost chip when cost_summary is populated', async () => {
+    const sessionsWithCost = [
+      makeSession({
+        id: 'cccc-0001',
+        status: 'done',
+        spec_path: 'docs/specs/cost.md',
+        // @ts-expect-error spreading fields the type does not enumerate
+        cost_summary: {
+          total_usd: 2.34,
+          total_tokens: {
+            input_fresh: 100,
+            input_cached: 50000,
+            cache_write: 200,
+            output: 1000,
+            reasoning: 0,
+          },
+        },
+      }),
+    ]
+    vi.stubGlobal('fetch', makeFetchMock(sessionsWithCost))
+    const { findAllByRole } = render(
+      React.createElement(SessionsSidebar, { activeSessionId: null }),
+    )
+    await findAllByRole('button')
+    const chip = await screen.findByTestId('session-cost')
+    // Sums all five buckets to 51,300 → "51k"; USD rendered to two decimals.
+    expect(chip.textContent).toContain('$2.34')
+    expect(chip.textContent).toContain('51k')
+  })
+
+  it('hides the cost chip when cost_summary is absent', async () => {
+    const sessionsNoCost = [makeSession({ id: 'nnnn-0001' })]
+    vi.stubGlobal('fetch', makeFetchMock(sessionsNoCost))
+    const { findAllByRole } = render(
+      React.createElement(SessionsSidebar, { activeSessionId: null }),
+    )
+    await findAllByRole('button')
+    expect(screen.queryByTestId('session-cost')).toBeNull()
+  })
+})
+
 describe('SessionsSidebar active row (T10.2)', () => {
   it('applies --surface-elevated background to active row', async () => {
     const { findAllByRole } = render(

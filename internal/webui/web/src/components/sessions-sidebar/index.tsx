@@ -49,6 +49,45 @@ const dtf = new Intl.DateTimeFormat('en', {
   hour12: false,
 })
 
+// formatCostUSD renders a USD figure with two decimals and a leading $.
+// Used for the per-session chip in the sidebar; under $0.01 collapses
+// to "$0.00" so the column width stays predictable.
+function formatCostUSD(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return '$0.00'
+  return `$${usd.toFixed(2)}`
+}
+
+// formatTokensCompact compresses a token total to "k" once it crosses 1k
+// and "M" past 1M. Mirrors the header pill so chip and metric stay in sync.
+function formatTokensCompact(total: number): string {
+  if (!Number.isFinite(total) || total <= 0) return '0'
+  if (total < 1000) return String(total)
+  if (total < 1_000_000) {
+    return `${(total / 1000).toFixed(total >= 10_000 ? 0 : 1)}k`
+  }
+  return `${(total / 1_000_000).toFixed(1)}M`
+}
+
+// totalTokensSum adds the five vendor-neutral buckets (input_fresh,
+// input_cached, cache_write, output, reasoning) to a single headline
+// number. Skipping any bucket repeats the 40-vs-126k bug the WebUI
+// header had before the fix landed.
+function totalTokensSum(tokens: {
+  input_fresh: number
+  input_cached: number
+  cache_write: number
+  output: number
+  reasoning: number
+}): number {
+  return (
+    tokens.input_fresh +
+    tokens.input_cached +
+    tokens.cache_write +
+    tokens.output +
+    tokens.reasoning
+  )
+}
+
 interface SessionRowProps {
   session: SessionMeta
   active: boolean
@@ -114,6 +153,20 @@ function SessionRow({ session, active, onNavigate, buttonRef }: SessionRowProps)
       >
         {middleEllipsis(specFilename, 20)}
       </span>
+
+      {/* Cost chip: USD + compact token total. Hidden when the session
+          has no spawns yet (CostSummary is nil server side). */}
+      {session.cost_summary && (
+        <span
+          className="shrink-0 text-[10px] text-muted-foreground font-mono"
+          data-testid="session-cost"
+          title={`${formatCostUSD(session.cost_summary.total_usd)} • ${totalTokensSum(session.cost_summary.total_tokens).toLocaleString()} tokens`}
+        >
+          {formatCostUSD(session.cost_summary.total_usd)}
+          {' • '}
+          {formatTokensCompact(totalTokensSum(session.cost_summary.total_tokens))}
+        </span>
+      )}
 
       {/* Duration compact */}
       <span className="shrink-0 text-[10px] text-muted-foreground font-mono">

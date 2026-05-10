@@ -35,6 +35,22 @@ type CostAggregate struct {
 	ByRole      []RoleCost               `json:"by_role"`
 }
 
+// CostSummary is the smaller projection embedded in SessionMeta so the
+// sessions list and sidebar can render a per-session chip in one
+// round-trip. The full breakdown lives behind GET /sessions/{id}/cost.
+type CostSummary struct {
+	TotalUSD    float64                  `json:"total_usd"`
+	TotalTokens agentcontract.TokenUsage `json:"total_tokens"`
+}
+
+// summary returns the projection embedded into SessionMeta.
+func (a CostAggregate) summary() *CostSummary {
+	if a.Spawns == 0 && a.TotalUSD == 0 && a.TotalTokens.IsZero() {
+		return nil
+	}
+	return &CostSummary{TotalUSD: a.TotalUSD, TotalTokens: a.TotalTokens}
+}
+
 // RoleCost is one row of the by_role breakdown.
 type RoleCost struct {
 	Role   string                   `json:"role"`

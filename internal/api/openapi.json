@@ -21,6 +21,73 @@
         ],
         "type": "object"
       },
+      "CostAggregate": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/CostAggregate.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "by_role": {
+            "items": {
+              "$ref": "#/components/schemas/RoleCost"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "spawns": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "total_usd": {
+            "format": "double",
+            "type": "number"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "updated_at",
+          "spawns",
+          "total_usd",
+          "total_tokens",
+          "by_role"
+        ],
+        "type": "object"
+      },
+      "CostSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "total_tokens": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "total_usd": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "total_usd",
+          "total_tokens"
+        ],
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -339,6 +406,32 @@
         ],
         "type": "object"
       },
+      "RoleCost": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "type": "string"
+          },
+          "spawns": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/TokenUsage"
+          },
+          "usd": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "role",
+          "spawns",
+          "usd",
+          "tokens"
+        ],
+        "type": "object"
+      },
       "RootCatalog": {
         "additionalProperties": false,
         "properties": {
@@ -413,6 +506,9 @@
           },
           "baseline_sha": {
             "type": "string"
+          },
+          "cost_summary": {
+            "$ref": "#/components/schemas/CostSummary"
           },
           "finished_at": {
             "format": "date-time",
@@ -529,6 +625,43 @@
           "acceptance",
           "status",
           "retry_budget"
+        ],
+        "type": "object"
+      },
+      "TokenUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "CacheWrite": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "InputCached": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "InputFresh": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "Output": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "Provider": {
+            "type": "string"
+          },
+          "Reasoning": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "InputFresh",
+          "InputCached",
+          "CacheWrite",
+          "Output",
+          "Reasoning",
+          "Provider"
         ],
         "type": "object"
       }
@@ -722,6 +855,51 @@
         "summary": "Rendered briefing markdown for one (phase, attempt)",
         "tags": [
           "briefings"
+        ]
+      }
+    },
+    "/sessions/{id}/cost": {
+      "get": {
+        "description": "Returns the cumulative spawn cost and 5-bucket TokenUsage for the session, grouped by role. Live sessions read from the in-memory accumulator; archived sessions read .bcc/sessions/\u003cid\u003e/cost.json (rebuilt from events.ndjson when missing).",
+        "operationId": "get-session-cost",
+        "parameters": [
+          {
+            "description": "Session id (the directory name under .bcc/sessions/).",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Session id (the directory name under .bcc/sessions/).",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostAggregate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get the per-session cost and token aggregate",
+        "tags": [
+          "sessions"
         ]
       }
     },
