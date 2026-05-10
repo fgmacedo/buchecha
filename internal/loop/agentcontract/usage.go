@@ -35,13 +35,13 @@ const (
 // here so this type stays purely about token counts; cost is carried on
 // the event envelope alongside TokenUsage.
 type TokenUsage struct {
-	InputFresh  int64
-	InputCached int64
-	CacheWrite  int64
-	Output      int64
-	Reasoning   int64
+	InputFresh  int64 `json:"input_fresh"`
+	InputCached int64 `json:"input_cached"`
+	CacheWrite  int64 `json:"cache_write"`
+	Output      int64 `json:"output"`
+	Reasoning   int64 `json:"reasoning"`
 
-	Provider Provider
+	Provider Provider `json:"provider,omitempty"`
 }
 
 // Total returns the sum of all five buckets. This is the headline number
