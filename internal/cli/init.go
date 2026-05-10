@@ -129,16 +129,16 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 func WriteConfigTOML(path string, in initInput) error {
 	var sb strings.Builder
 	sb.WriteString("[project]\n")
-	sb.WriteString(fmt.Sprintf("language = %q\n\n", in.Language))
+	fmt.Fprintf(&sb, "language = %q\n\n", in.Language)
 
 	sb.WriteString("# Active journal-storage hint passed to the agent's contract template.\n")
 	sb.WriteString("# bcc never reads the journal; the agent owns the write side.\n")
 	sb.WriteString("[journal]\n")
-	sb.WriteString(fmt.Sprintf("store = %q\n\n", in.JournalStore))
+	fmt.Fprintf(&sb, "store = %q\n\n", in.JournalStore)
 
 	if in.JournalFilePath != "" {
 		sb.WriteString("[journal.file]\n")
-		sb.WriteString(fmt.Sprintf("path = %q\n\n", in.JournalFilePath))
+		fmt.Fprintf(&sb, "path = %q\n\n", in.JournalFilePath)
 	} else {
 		sb.WriteString("[journal.file]\n")
 		sb.WriteString("# path = \".bcc/journal.ndjson\"\n\n")
@@ -150,9 +150,9 @@ func WriteConfigTOML(path string, in initInput) error {
 	sb.WriteString("# or [providers.gemini] (with the binary on PATH) automatically lets\n")
 	sb.WriteString("# the role menus reach those vendors.\n")
 	sb.WriteString("[providers.claude]\n")
-	sb.WriteString(fmt.Sprintf("binary = %q\n", in.Binary))
+	fmt.Fprintf(&sb, "binary = %q\n", in.Binary)
 	sb.WriteString("# extra_args = [\"--strict-mcp-config\", \"--exclude-dynamic-system-prompt-sections\"]\n")
-	sb.WriteString(fmt.Sprintf("skip_permissions = %t\n", in.SkipPermissions))
+	fmt.Fprintf(&sb, "skip_permissions = %t\n", in.SkipPermissions)
 	sb.WriteString("# max_budget_usd = 0  # 0 disables; > 0 caps each Director-role spawn\n\n")
 
 	sb.WriteString("# [providers.codex]\n")
@@ -172,11 +172,11 @@ func WriteConfigTOML(path string, in initInput) error {
 	sb.WriteString("# note = \"only for architecturally-loaded phases\"\n\n")
 
 	sb.WriteString("[loop]\n")
-	sb.WriteString(fmt.Sprintf("max_iterations = %d\n", in.MaxIter))
+	fmt.Fprintf(&sb, "max_iterations = %d\n", in.MaxIter)
 	sb.WriteString("retry_budget = 2\n\n")
 
 	sb.WriteString("[git]\n")
-	sb.WriteString(fmt.Sprintf("branch_prefix = %q\n", in.BranchPrefix))
+	fmt.Fprintf(&sb, "branch_prefix = %q\n", in.BranchPrefix)
 	sb.WriteString("require_commit_per_iteration = true\n\n")
 
 	sb.WriteString("[debug]\n")
@@ -190,7 +190,7 @@ func WriteConfigTOML(path string, in initInput) error {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(fmt.Sprintf("%q", f))
+		fmt.Fprintf(&sb, "%q", f)
 	}
 	sb.WriteString("]\n\n")
 	sb.WriteString("[env.vars]\n")

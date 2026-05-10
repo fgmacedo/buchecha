@@ -106,11 +106,6 @@ type briefingState struct {
 	// the loop driver reads it once the Executor.Run returns to decide
 	// whether to advance, retry, or terminate.
 	iterSignal string
-	// agents references the live agents bound to this briefing so the
-	// handler can answer queries scoped per-agent. Today bcc spawns one
-	// Executor and one Reviewer per briefing; the slice future-proofs
-	// the parallel-shard case PRD 3 introduces.
-	agents []AgentID
 	// taskFeedback carries the Reviewer's per-task feedback strings sent
 	// via task_needs_fix, keyed by task id. The loop reads it on retry
 	// to render an executor prompt narrowed to the still-incomplete
@@ -713,21 +708,21 @@ func (h *Handler) RecordSyntheticApproval(iterationID string) error {
 	if state == nil {
 		return errors.New("dag: RecordSyntheticApproval: no DAG state")
 	}
-	phaseID := PhaseID(bs.briefing.PhaseID)
+	phaseID := bs.briefing.PhaseID
 	phase := state.Phase(phaseID)
 	if phase == nil {
 		return fmt.Errorf("dag: RecordSyntheticApproval: phase %q unknown", phaseID)
 	}
 	approved := make([]string, 0, len(bs.briefing.SubDAGTaskIDs))
 	for _, tid := range bs.briefing.SubDAGTaskIDs {
-		t, ok := phase.Tasks[TaskID(tid)]
+		t, ok := phase.Tasks[tid]
 		if !ok {
 			return fmt.Errorf("dag: RecordSyntheticApproval: task %q not in phase %q", tid, phaseID)
 		}
 		if t.Status == supervision.TaskDone {
 			continue
 		}
-		if err := state.SetTaskStatus(phaseID, TaskID(tid), supervision.TaskDone); err != nil {
+		if err := state.SetTaskStatus(phaseID, tid, supervision.TaskDone); err != nil {
 			return fmt.Errorf("dag: RecordSyntheticApproval: %w", err)
 		}
 		approved = append(approved, tid)
@@ -744,7 +739,7 @@ func (h *Handler) RecordSyntheticApproval(iterationID string) error {
 	if h.audit != nil {
 		input := map[string]any{
 			"iteration_id": iterationID,
-			"phase_id":     string(phaseID),
+			"phase_id":     phaseID,
 		}
 		if len(approved) > 0 {
 			input["approved_task_ids"] = stringSliceToAny(approved)
@@ -772,11 +767,11 @@ func (h *Handler) storeValidatedBriefing(brief *supervision.Briefing, errPrefix 
 	if state == nil {
 		return fmt.Errorf("%s: no plan emitted yet", errPrefix)
 	}
-	phase := state.Phase(PhaseID(brief.PhaseID))
+	phase := state.Phase(brief.PhaseID)
 	if phase == nil {
 		return fmt.Errorf("%s: unknown phase %q", errPrefix, brief.PhaseID)
 	}
-	if !phaseIsEligible(state, PhaseID(brief.PhaseID)) {
+	if !phaseIsEligible(state, brief.PhaseID) {
 		return fmt.Errorf("%s: phase %q not eligible (deps not done)", errPrefix, brief.PhaseID)
 	}
 	if len(brief.SubDAGTaskIDs) == 0 {
@@ -784,7 +779,7 @@ func (h *Handler) storeValidatedBriefing(brief *supervision.Briefing, errPrefix 
 	}
 	subSet := make(map[string]bool, len(brief.SubDAGTaskIDs))
 	for _, tid := range brief.SubDAGTaskIDs {
-		t, ok := phase.Tasks[TaskID(tid)]
+		t, ok := phase.Tasks[tid]
 		if !ok {
 			return fmt.Errorf("%s: task %q not in phase %q", errPrefix, tid, brief.PhaseID)
 		}
@@ -795,9 +790,9 @@ func (h *Handler) storeValidatedBriefing(brief *supervision.Briefing, errPrefix 
 		subSet[tid] = true
 	}
 	for _, tid := range brief.SubDAGTaskIDs {
-		t := phase.Tasks[TaskID(tid)]
+		t := phase.Tasks[tid]
 		for _, dep := range t.DependsOn {
-			if subSet[string(dep)] {
+			if subSet[dep] {
 				continue
 			}
 			depTask := phase.Tasks[dep]
@@ -1036,7 +1031,7 @@ func (h *Handler) IterationSignal(briefingID string) string {
 // across all attempts of the phase) and the current HEAD SHA so the
 // Reviewer can run git diff/log/show via Bash.
 func (h *Handler) handleGetBaseline(ctx context.Context, entry AgentEntry, _ map[string]any) (string, error) {
-	phaseID := string(entry.PhaseID)
+	phaseID := entry.PhaseID
 	if phaseID == "" {
 		return "", errors.New("dag: get_baseline: agent has no phase scope")
 	}
@@ -1224,7 +1219,7 @@ func (h *Handler) ForceApprovePending(iterationID, hint string) error {
 	if state == nil {
 		return errors.New("dag: ForceApprovePending: no DAG state")
 	}
-	phaseID := PhaseID(bs.briefing.PhaseID)
+	phaseID := bs.briefing.PhaseID
 	phase := state.Phase(phaseID)
 	if phase == nil {
 		return fmt.Errorf("dag: ForceApprovePending: phase %q unknown", phaseID)
@@ -1241,7 +1236,7 @@ func (h *Handler) ForceApprovePending(iterationID, hint string) error {
 		if err := state.SetTaskStatus(phaseID, tid, supervision.TaskDone); err != nil {
 			return fmt.Errorf("dag: ForceApprovePending: %w", err)
 		}
-		approved = append(approved, string(tid))
+		approved = append(approved, tid)
 	}
 	if err := h.persistDAG(state); err != nil {
 		return err

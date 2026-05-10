@@ -98,7 +98,7 @@ func gzippedSize(path string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	counter := &countingWriter{}
 	gz := gzip.NewWriter(counter)

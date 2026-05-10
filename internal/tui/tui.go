@@ -30,11 +30,6 @@ import (
 // data-source contract.
 const gitProbeInterval = 2 * time.Second
 
-// nowHealthSplit is the fraction of the layout's full width allocated to
-// the now box; the health box receives the rest. Centralised so future
-// tuning is one edit (kept in code, not config, per the spec).
-const nowHealthSplit = 0.6
-
 // keyMap is the single source of truth for every keybinding the model
 // honors. The handler matches via key.Matches; the help model derives
 // both the inline footer and the ? overlay from the same set, so a new
@@ -720,7 +715,7 @@ func (m Model) viewContent() string {
 // instruction. The reason text the planner attached is shown verbatim
 // so the user can see why the run was a no-op.
 func (m Model) viewNothingToDo() string {
-	var b lipgloss.Style = theme.title
+	b := theme.title
 	title := b.Render("[ bcc: nothing to do ]")
 	reason := m.nothingToDoReason
 	if reason == "" {

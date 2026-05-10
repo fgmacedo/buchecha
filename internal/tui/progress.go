@@ -108,7 +108,7 @@ func (p progressPanel) view(_ int) string {
 	}
 	b.WriteString("  ")
 	b.WriteString(p.bar.ViewAs(pct))
-	b.WriteString(fmt.Sprintf("  %d/%d tasks", p.tasksCompleted, p.tasksStarted))
+	fmt.Fprintf(&b, "  %d/%d tasks", p.tasksCompleted, p.tasksStarted)
 
 	if eta := computeETA(p.durations, p.tasksStarted-p.tasksCompleted); eta > 0 {
 		b.WriteString(", ETA ~")

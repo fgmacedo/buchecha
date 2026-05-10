@@ -127,7 +127,7 @@ func TestComputeSessionHash_AllCasesYield64HexChars(t *testing.T) {
 				t.Fatalf("length = %d, want 64", len(got))
 			}
 			for _, ch := range got {
-				if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+				if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
 					t.Fatalf("non-hex character %q in %q", ch, got)
 				}
 			}

@@ -33,15 +33,3 @@ func TestTools_SortedByName(t *testing.T) {
 		}
 	}
 }
-
-func TestTools_DescriptorType(t *testing.T) {
-	tools, err := Tools()
-	if err != nil {
-		t.Fatalf("Tools() unexpected error: %v", err)
-	}
-	// Compile-time assertion: Tools() must return []ToolDescriptor.
-	// This table confirms each element is addressable as a ToolDescriptor.
-	for _, td := range tools {
-		var _ ToolDescriptor = td
-	}
-}

@@ -224,7 +224,6 @@ func TestSessionService_Get(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			svc := newSessionService(tc.deps)
 			got, err := svc.Get(context.Background(), tc.id)

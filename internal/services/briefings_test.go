@@ -107,7 +107,6 @@ func TestBriefingService_Get(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := svc.Get(context.Background(), sess.ID, tc.phaseID, tc.attempt)
 			if tc.wantErr != nil {

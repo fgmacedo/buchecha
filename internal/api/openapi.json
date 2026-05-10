@@ -631,37 +631,36 @@
       "TokenUsage": {
         "additionalProperties": false,
         "properties": {
-          "CacheWrite": {
+          "cache_write": {
             "format": "int64",
             "type": "integer"
           },
-          "InputCached": {
+          "input_cached": {
             "format": "int64",
             "type": "integer"
           },
-          "InputFresh": {
+          "input_fresh": {
             "format": "int64",
             "type": "integer"
           },
-          "Output": {
+          "output": {
             "format": "int64",
             "type": "integer"
           },
-          "Provider": {
+          "provider": {
             "type": "string"
           },
-          "Reasoning": {
+          "reasoning": {
             "format": "int64",
             "type": "integer"
           }
         },
         "required": [
-          "InputFresh",
-          "InputCached",
-          "CacheWrite",
-          "Output",
-          "Reasoning",
-          "Provider"
+          "input_fresh",
+          "input_cached",
+          "cache_write",
+          "output",
+          "reasoning"
         ],
         "type": "object"
       }

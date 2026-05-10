@@ -536,9 +536,7 @@ func (s *EventService) relay(ctx context.Context, sub *subscriber, snap []SeqEve
 
 func (s *EventService) removeSubscriber(sub *subscriber) {
 	s.mu.Lock()
-	if _, ok := s.subs[sub]; ok {
-		delete(s.subs, sub)
-	}
+	delete(s.subs, sub)
 	s.mu.Unlock()
 }
 
@@ -571,7 +569,7 @@ func (s *EventService) replayLoop(ctx context.Context, sessionDir string, fromSe
 		}
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {

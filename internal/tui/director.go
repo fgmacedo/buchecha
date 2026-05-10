@@ -336,9 +336,7 @@ func (d *directorPanel) onSpawnFinished(role string, usd float64) {
 	if d.costByRole == nil {
 		d.costByRole = map[string]float64{}
 	}
-	if strings.HasPrefix(role, "bcc-") {
-		role = strings.TrimPrefix(role, "bcc-")
-	}
+	role = strings.TrimPrefix(role, "bcc-")
 	if role == "" {
 		role = "unknown"
 	}
@@ -422,10 +420,10 @@ func (d directorPanel) viewWithPlanning(width int, planningPending bool, spinner
 	b.WriteString(theme.warn.Render("planning..."))
 	b.WriteByte('\n')
 	if iterTokens > 0 {
-		b.WriteString(fmt.Sprintf("  tokens: %d\n", iterTokens))
+		fmt.Fprintf(&b, "  tokens: %d\n", iterTokens)
 	}
 	if costUSD > 0 {
-		b.WriteString(fmt.Sprintf("  director cost: $%.2f\n", costUSD))
+		fmt.Fprintf(&b, "  director cost: $%.2f\n", costUSD)
 	}
 	b.WriteString("  ")
 	b.WriteString(theme.subtle.Render("the planner is reading the spec; activity is shown in 'now' and 'recent actions'"))
@@ -457,7 +455,7 @@ func (d directorPanel) view(width int) string {
 			approved++
 		}
 	}
-	b.WriteString(fmt.Sprintf("  phases: %d/%d approved\n", approved, len(d.plan.Phases)))
+	fmt.Fprintf(&b, "  phases: %d/%d approved\n", approved, len(d.plan.Phases))
 
 	planMark := d.planningStatus
 	if planMark == phasePending {
@@ -472,12 +470,12 @@ func (d directorPanel) view(width int) string {
 	default:
 		planGlyph = theme.subtle.Render(planGlyph)
 	}
-	b.WriteString(fmt.Sprintf("  %s planning\n", planGlyph))
+	fmt.Fprintf(&b, "  %s planning\n", planGlyph)
 
 	for _, ph := range d.plan.Phases {
 		mark := d.phaseStatus[ph.ID]
 		glyph := mark.glyph()
-		styled := glyph
+		var styled string
 		switch mark {
 		case phaseApproved:
 			styled = theme.ok.Render(glyph)
@@ -545,7 +543,7 @@ func (d directorPanel) view(width int) string {
 		b.WriteByte('\n')
 	}
 
-	b.WriteString(fmt.Sprintf("  director cost: $%.2f\n", d.cumulativeCost))
+	fmt.Fprintf(&b, "  director cost: $%.2f\n", d.cumulativeCost)
 	if len(d.costByRole) > 0 {
 		// Render the four canonical roles in fixed order so the layout
 		// stays stable across runs even when one role hasn't fired yet.

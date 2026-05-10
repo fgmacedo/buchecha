@@ -523,7 +523,6 @@ func TestIntegration_ReadOnlyEndpointsCoverage(t *testing.T) {
 
 	t.Run("prompts happy path", func(t *testing.T) {
 		for _, role := range []string{"planner", "briefer", "executor", "reviewer"} {
-			role := role
 			t.Run(role, func(t *testing.T) {
 				path := "/api/v1/sessions/" + fixt.archived.ID + "/prompts/" + role
 				status, hdr, body := httpGet(t, fixt, path)
@@ -692,6 +691,7 @@ func TestIntegration_SSEReconnect50Events(t *testing.T) {
 	if err != nil {
 		t.Fatalf("conn1 do: %v", err)
 	}
+	defer func() { _ = resp1.Body.Close() }()
 	if resp1.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp1.Body)
 		t.Fatalf("conn1 status: got %d, want 200 (body=%s)", resp1.StatusCode, body)

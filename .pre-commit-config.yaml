@@ -1,0 +1,56 @@
+# Pre-commit hooks for buchecha.
+#
+# Install: pre-commit install (or `make precommit-install`).
+# Run manually: pre-commit run --all-files (or `make precommit-run`).
+#
+# The hooks rely on the toolchain pinned in .mise.toml (go, golangci-lint,
+# pre-commit). Install it with `mise install` before enabling the hooks.
+#
+# The full Go test suite with -race runs on every commit. If you need to
+# commit WIP without paying that cost, use `git commit --no-verify`.
+
+repos:
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        description: Fail if any Go file would be reformatted by gofmt.
+        entry: bash -c 'out=$(gofmt -l .); if [ -n "$out" ]; then echo "$out" >&2; exit 1; fi'
+        language: system
+        pass_filenames: false
+        files: \.go$
+
+      - id: go-vet
+        name: go vet
+        description: Static checks across every package.
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+        files: \.(go|mod|sum)$
+
+      - id: golangci-lint
+        name: golangci-lint
+        description: Lint with golangci-lint using the project config.
+        entry: golangci-lint run
+        language: system
+        pass_filenames: false
+        files: \.(go|mod|sum|golangci\.ya?ml)$
+
+      - id: go-build
+        name: go build
+        description: Compile every package.
+        entry: go build ./...
+        language: system
+        pass_filenames: false
+        files: \.(go|mod|sum)$
+
+      - id: go-test-race
+        name: go test -race
+        description: |
+          Full test suite with the race detector. Skips internal/webui,
+          whose tests embed the SPA bundle and only pass after `make
+          webui-size`. CI builds the bundle before running tests.
+        entry: bash -c 'go test -race $(go list ./... | grep -v "^github.com/fgmacedo/buchecha/internal/webui$")'
+        language: system
+        pass_filenames: false
+        files: \.(go|mod|sum)$

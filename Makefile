@@ -1,4 +1,4 @@
-.PHONY: build install check-build test test-race vet fmt fmt-check tidy clean api-openapi webui webui-size release-snapshot release-check
+.PHONY: build install check-build test test-race vet fmt fmt-check lint tidy clean api-openapi webui webui-size release-snapshot release-check precommit-install precommit-run
 
 check-build:
 	go build ./...
@@ -41,8 +41,17 @@ fmt:
 fmt-check:
 	@diff=$$(gofmt -l .); if [ -n "$$diff" ]; then echo "$$diff"; exit 1; fi
 
+lint:
+	golangci-lint run ./...
+
 tidy:
 	go mod tidy
+
+precommit-install:
+	pre-commit install
+
+precommit-run:
+	pre-commit run --all-files
 
 clean:
 	rm -f bcc

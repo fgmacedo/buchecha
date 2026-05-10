@@ -120,7 +120,7 @@ func decodeResp(t *testing.T, r *http.Response) rpcResp {
 
 func TestServer_Initialize(t *testing.T) {
 	ts, _ := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      0,
 		"method":  "initialize",
@@ -145,7 +145,7 @@ func TestServer_Initialize(t *testing.T) {
 
 func TestServer_ToolsList(t *testing.T) {
 	ts, _ := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/list",
@@ -177,7 +177,7 @@ func TestServer_ToolsList(t *testing.T) {
 
 func TestServer_ToolsCall_DispatchesToHandler(t *testing.T) {
 	ts, h := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
@@ -220,7 +220,7 @@ func TestServer_ToolsCall_DispatchesToHandler(t *testing.T) {
 func TestServer_ToolsCall_HandlerErrorReturnsRPCError(t *testing.T) {
 	ts, h := newTestServer(t)
 	h.callsErr = errors.New("invalid sub_dag_task_ids")
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      3,
 		"method":  "tools/call",
@@ -237,7 +237,7 @@ func TestServer_ToolsCall_HandlerErrorReturnsRPCError(t *testing.T) {
 
 func TestServer_RejectsUnknownRole(t *testing.T) {
 	ts, _ := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      6,
 		"method":  "initialize",
@@ -249,7 +249,7 @@ func TestServer_RejectsUnknownRole(t *testing.T) {
 
 func TestServer_RejectsMissingRole(t *testing.T) {
 	ts, _ := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      7,
 		"method":  "initialize",
@@ -261,7 +261,7 @@ func TestServer_RejectsMissingRole(t *testing.T) {
 
 func TestServer_NotificationAccepted(t *testing.T) {
 	ts, _ := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"method":  "notifications/initialized",
 	}, "bcc-executor")
@@ -272,7 +272,7 @@ func TestServer_NotificationAccepted(t *testing.T) {
 
 func TestServer_UnknownMethodErrors(t *testing.T) {
 	ts, _ := newTestServer(t)
-	resp := post(t, ts, map[string]any{
+	resp := post(t, ts, map[string]any{ //nolint:bodyclose // closed via t.Cleanup in post
 		"jsonrpc": "2.0",
 		"id":      8,
 		"method":  "resources/list",

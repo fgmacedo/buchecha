@@ -2,14 +2,15 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
-	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/fgmacedo/buchecha/internal/loop"
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/supervision"
 )
 
@@ -66,7 +67,7 @@ func drainText(in <-chan loop.Event, done chan<- struct{}, logger *slog.Logger) 
 	for ev := range in {
 		level := slogLevelOf(loop.LevelOf(ev))
 		msg, attrs := textRenderEvent(ev)
-		logger.LogAttrs(nil, level, msg, attrs...)
+		logger.LogAttrs(context.Background(), level, msg, attrs...)
 	}
 }
 
@@ -75,16 +76,16 @@ func drainText(in <-chan loop.Event, done chan<- struct{}, logger *slog.Logger) 
 func drainJSON(in <-chan loop.Event, done chan<- struct{}, w io.Writer) {
 	defer close(done)
 	bw := bufio.NewWriter(w)
-	defer bw.Flush()
+	defer func() { _ = bw.Flush() }()
 	for ev := range in {
 		line, err := loop.MarshalJSONEvent(ev)
 		if err != nil {
 			slog.Error("ndjson marshal failed", "err", err.Error())
 			continue
 		}
-		bw.Write(line)
-		bw.WriteByte('\n')
-		bw.Flush()
+		_, _ = bw.Write(line)
+		_ = bw.WriteByte('\n')
+		_ = bw.Flush()
 	}
 }
 
