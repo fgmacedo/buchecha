@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 // StatsEntry is one line in stats.jsonl: telemetry for a single agent
@@ -18,16 +20,20 @@ import (
 // optional when they do not apply: Planner spawns leave PhaseID and
 // IterationID empty, and Briefer/Reviewer spawns leave Attempt zero
 // (the executor retry index is meaningful only for Executor entries).
+//
+// Tokens is the vendor-neutral 5-bucket usage; CostUSD is the
+// provider-reported dollar cost. Older stats.jsonl files (pre-rename)
+// carrying flat input_tokens/output_tokens fields are no longer
+// readable; sessions written by older binaries stay readable on those.
 type StatsEntry struct {
-	At           time.Time `json:"at"`
-	Role         string    `json:"role"`
-	PhaseID      string    `json:"phase_id,omitempty"`
-	IterationID  string    `json:"iteration_id,omitempty"`
-	Attempt      int       `json:"attempt,omitempty"`
-	DurationMS   int64     `json:"duration_ms"`
-	CostUSD      float64   `json:"cost_usd"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
+	At          time.Time                `json:"at"`
+	Role        string                   `json:"role"`
+	PhaseID     string                   `json:"phase_id,omitempty"`
+	IterationID string                   `json:"iteration_id,omitempty"`
+	Attempt     int                      `json:"attempt,omitempty"`
+	DurationMS  int64                    `json:"duration_ms"`
+	CostUSD     float64                  `json:"cost_usd"`
+	Tokens      agentcontract.TokenUsage `json:"tokens"`
 }
 
 // StatsLog is the append-only writer the loop appends to after every

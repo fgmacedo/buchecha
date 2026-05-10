@@ -148,14 +148,13 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			registry.Deregister(brieferID)
 			if brieferStats != nil {
 				if err := d.Stats.Append(stats.StatsEntry{
-					At:           time.Now(),
-					Role:         string(dag.RoleBriefer),
-					PhaseID:      phaseID,
-					IterationID:  iterationID,
-					DurationMS:   brieferStats.DurationMS,
-					CostUSD:      brieferStats.CostUSD,
-					InputTokens:  brieferStats.InputTokens,
-					OutputTokens: brieferStats.OutputTokens,
+					At:          time.Now(),
+					Role:        string(dag.RoleBriefer),
+					PhaseID:     phaseID,
+					IterationID: iterationID,
+					DurationMS:  brieferStats.DurationMS,
+					CostUSD:     brieferStats.CostUSD,
+					Tokens:      brieferStats.Tokens,
 				}); err != nil {
 					logger.Warn("director stats append briefer", "err", err)
 				}
@@ -321,15 +320,14 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 			}
 			if execStats != nil {
 				if err := d.Stats.Append(stats.StatsEntry{
-					At:           time.Now(),
-					Role:         string(dag.RoleExecutor),
-					PhaseID:      phaseID,
-					IterationID:  briefing.IterationID,
-					Attempt:      attempt,
-					DurationMS:   execStats.DurationMS,
-					CostUSD:      execStats.CostUSD,
-					InputTokens:  execStats.InputTokens,
-					OutputTokens: execStats.OutputTokens,
+					At:          time.Now(),
+					Role:        string(dag.RoleExecutor),
+					PhaseID:     phaseID,
+					IterationID: briefing.IterationID,
+					Attempt:     attempt,
+					DurationMS:  execStats.DurationMS,
+					CostUSD:     execStats.CostUSD,
+					Tokens:      execStats.Tokens,
 				}); err != nil {
 					logger.Warn("director stats append executor", "err", err)
 				}
@@ -394,15 +392,14 @@ func (l *Loop) runDirector(ctx context.Context, events chan<- Event, logger *slo
 				}
 				if reviewerStats != nil {
 					if err := d.Stats.Append(stats.StatsEntry{
-						At:           time.Now(),
-						Role:         string(dag.RoleReviewer),
-						PhaseID:      phaseID,
-						IterationID:  briefing.IterationID,
-						Attempt:      attempt,
-						DurationMS:   reviewerStats.DurationMS,
-						CostUSD:      reviewerStats.CostUSD,
-						InputTokens:  reviewerStats.InputTokens,
-						OutputTokens: reviewerStats.OutputTokens,
+						At:          time.Now(),
+						Role:        string(dag.RoleReviewer),
+						PhaseID:     phaseID,
+						IterationID: briefing.IterationID,
+						Attempt:     attempt,
+						DurationMS:  reviewerStats.DurationMS,
+						CostUSD:     reviewerStats.CostUSD,
+						Tokens:      reviewerStats.Tokens,
 					}); err != nil {
 						logger.Warn("director stats append reviewer", "err", err)
 					}
@@ -574,10 +571,9 @@ func runDirectorExecutor(ctx context.Context, exec Executor, userPrompt string, 
 			dur = lastSummary.DurationMS
 		}
 		stats = &supervision.SpawnStats{
-			DurationMS:   dur,
-			CostUSD:      lastSummary.TotalCostUSD,
-			InputTokens:  lastSummary.Tokens.InputFresh,
-			OutputTokens: lastSummary.Tokens.Output,
+			DurationMS: dur,
+			CostUSD:    lastSummary.TotalCostUSD,
+			Tokens:     lastSummary.Tokens,
 		}
 	}
 	if err != nil {

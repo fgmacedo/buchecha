@@ -584,8 +584,7 @@ func (a *Adapter) runRole(ctx context.Context, role dag.Role, agentID, iteration
 
 	if latest != nil {
 		stats.CostUSD = latest.TotalCostUSD
-		stats.InputTokens = latest.Tokens.InputFresh
-		stats.OutputTokens = latest.Tokens.Output
+		stats.Tokens = latest.Tokens
 	}
 
 	if spawnID != "" && a.cfg.Events != nil {

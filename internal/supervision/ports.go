@@ -128,10 +128,11 @@ type ReviewerInput struct {
 
 // SpawnStats reports the cost and shape of a single Director
 // agent invocation. The TUI accumulates these per role for the cost
-// panel; the loop uses them only for telemetry.
+// panel; the loop uses them only for telemetry. Tokens carries the
+// vendor-neutral 5-bucket usage; CostUSD is the provider-reported
+// dollar cost.
 type SpawnStats struct {
-	DurationMS   int64
-	CostUSD      float64
-	InputTokens  int64
-	OutputTokens int64
+	DurationMS int64
+	CostUSD    float64
+	Tokens     agentcontract.TokenUsage
 }

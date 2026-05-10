@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 )
 
 func TestStatsLog_NilReceiverAppendIsNoop(t *testing.T) {
@@ -24,33 +26,45 @@ func TestStatsLog_RoundtripJSONL(t *testing.T) {
 	s := NewStatsLog(path)
 	entries := []StatsEntry{
 		{
-			At:           time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC),
-			Role:         "bcc-planner",
-			DurationMS:   1200,
-			CostUSD:      0.04,
-			InputTokens:  1500,
-			OutputTokens: 600,
+			At:         time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC),
+			Role:       "bcc-planner",
+			DurationMS: 1200,
+			CostUSD:    0.04,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh: 1500,
+				Output:     600,
+				Provider:   agentcontract.ProviderAnthropic,
+			},
 		},
 		{
-			At:           time.Date(2026, 5, 4, 12, 0, 5, 0, time.UTC),
-			Role:         "bcc-briefer",
-			PhaseID:      "p1",
-			IterationID:  "p1-01",
-			DurationMS:   800,
-			CostUSD:      0.012,
-			InputTokens:  900,
-			OutputTokens: 400,
+			At:          time.Date(2026, 5, 4, 12, 0, 5, 0, time.UTC),
+			Role:        "bcc-briefer",
+			PhaseID:     "p1",
+			IterationID: "p1-01",
+			DurationMS:  800,
+			CostUSD:     0.012,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh:  900,
+				Output:      400,
+				InputCached: 5000,
+				Provider:    agentcontract.ProviderAnthropic,
+			},
 		},
 		{
-			At:           time.Date(2026, 5, 4, 12, 0, 10, 0, time.UTC),
-			Role:         "bcc-executor",
-			PhaseID:      "p1",
-			IterationID:  "p1-01",
-			Attempt:      2,
-			DurationMS:   45_000,
-			CostUSD:      0.32,
-			InputTokens:  12_000,
-			OutputTokens: 4_500,
+			At:          time.Date(2026, 5, 4, 12, 0, 10, 0, time.UTC),
+			Role:        "bcc-executor",
+			PhaseID:     "p1",
+			IterationID: "p1-01",
+			Attempt:     2,
+			DurationMS:  45_000,
+			CostUSD:     0.32,
+			Tokens: agentcontract.TokenUsage{
+				InputFresh:  12_000,
+				Output:      4_500,
+				InputCached: 80_000,
+				CacheWrite:  500,
+				Provider:    agentcontract.ProviderAnthropic,
+			},
 		},
 	}
 	for _, e := range entries {
@@ -86,7 +100,7 @@ func TestStatsLog_RoundtripJSONL(t *testing.T) {
 		if got[i].Role != entries[i].Role || got[i].PhaseID != entries[i].PhaseID ||
 			got[i].IterationID != entries[i].IterationID || got[i].Attempt != entries[i].Attempt ||
 			got[i].DurationMS != entries[i].DurationMS || got[i].CostUSD != entries[i].CostUSD ||
-			got[i].InputTokens != entries[i].InputTokens || got[i].OutputTokens != entries[i].OutputTokens {
+			got[i].Tokens != entries[i].Tokens {
 			t.Errorf("entry %d mismatch:\n got=%+v\nwant=%+v", i, got[i], entries[i])
 		}
 	}

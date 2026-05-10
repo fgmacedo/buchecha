@@ -48,7 +48,7 @@ func TestPlan_RunsAndReportsStats(t *testing.T) {
 	if plan != nil {
 		t.Errorf("Plan should be nil; agent emits via MCP, got %+v", plan)
 	}
-	if stats == nil || stats.CostUSD != 0.012 || stats.InputTokens != 1000 || stats.OutputTokens != 300 {
+	if stats == nil || stats.CostUSD != 0.012 || stats.Tokens.InputFresh != 1000 || stats.Tokens.Output != 300 {
 		t.Errorf("stats = %+v", stats)
 	}
 }

@@ -1034,7 +1034,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 			}
 			return &supervision.SpawnStats{
 				DurationMS: 800, CostUSD: 0.012,
-				InputTokens: 900, OutputTokens: 400,
+				Tokens: agentcontract.TokenUsage{InputFresh: 900, Output: 400},
 			}, nil
 		},
 	}
@@ -1054,7 +1054,7 @@ func TestDirectorIntegration_StatsLogPersistsRoles(t *testing.T) {
 			}
 			return &supervision.SpawnStats{
 				DurationMS: 1200, CostUSD: 0.022,
-				InputTokens: 1400, OutputTokens: 700,
+				Tokens: agentcontract.TokenUsage{InputFresh: 1400, Output: 700},
 			}, nil
 		},
 	}

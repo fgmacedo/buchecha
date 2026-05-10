@@ -1359,12 +1359,11 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	<-pumpDone
 	if plannerStats != nil && deps.stats != nil {
 		if err := deps.stats.Append(stats.StatsEntry{
-			At:           deps.now(),
-			Role:         string(dag.RolePlanner),
-			DurationMS:   plannerStats.DurationMS,
-			CostUSD:      plannerStats.CostUSD,
-			InputTokens:  plannerStats.InputTokens,
-			OutputTokens: plannerStats.OutputTokens,
+			At:         deps.now(),
+			Role:       string(dag.RolePlanner),
+			DurationMS: plannerStats.DurationMS,
+			CostUSD:    plannerStats.CostUSD,
+			Tokens:     plannerStats.Tokens,
 		}); err != nil {
 			slog.Warn("director stats append planner", "err", err)
 		}
