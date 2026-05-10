@@ -97,8 +97,12 @@ type directorPanel struct {
 	currentAttempt   int
 	latestOutcome    string
 	cumulativeCost   float64
-	briefingActive   bool
-	reviewingActive  bool
+	// costByRole sums spawn_finished USD per emitter (planner / briefer /
+	// executor / reviewer). Surfaces as one row per role under the
+	// "director cost" total so users see where the dollars go.
+	costByRole      map[string]float64
+	briefingActive  bool
+	reviewingActive bool
 
 	// planningStatus tracks the well-known "planning" task on the
 	// timeline. The Planner task is not part of the DAG; the loop emits a
@@ -322,13 +326,23 @@ func (d *directorPanel) onEscalation(phaseID string, attempt int, reasoning stri
 	d.phaseStatus[phaseID] = phaseEscalated
 }
 
-// onCost folds an executor result-summary cost into the running total.
-// Director-call costs (planner / briefer / reviewer) are not currently
-// surfaced as events; the panel treats per-iteration executor cost as
-// the live cumulative total. A future event for SpawnStats can
-// flow into the same accumulator without a render-side change.
-func (d *directorPanel) onCost(usd float64) {
+// onSpawnFinished folds a SpawnFinished event into the cumulative cost
+// total and the per-role breakdown shown beneath it. Provider-reported
+// USD is the authoritative scalar; the role string is stripped of the
+// "bcc-" prefix the supervision adapter stamps on so the row label
+// stays compact.
+func (d *directorPanel) onSpawnFinished(role string, usd float64) {
 	d.cumulativeCost += usd
+	if d.costByRole == nil {
+		d.costByRole = map[string]float64{}
+	}
+	if strings.HasPrefix(role, "bcc-") {
+		role = strings.TrimPrefix(role, "bcc-")
+	}
+	if role == "" {
+		role = "unknown"
+	}
+	d.costByRole[role] += usd
 }
 
 // active reports whether the panel has a plan to render. The host uses
@@ -532,6 +546,17 @@ func (d directorPanel) view(width int) string {
 	}
 
 	b.WriteString(fmt.Sprintf("  director cost: $%.2f\n", d.cumulativeCost))
+	if len(d.costByRole) > 0 {
+		// Render the four canonical roles in fixed order so the layout
+		// stays stable across runs even when one role hasn't fired yet.
+		for _, role := range []string{"planner", "briefer", "executor", "reviewer"} {
+			usd, ok := d.costByRole[role]
+			if !ok {
+				continue
+			}
+			b.WriteString(theme.subtle.Render(fmt.Sprintf("    %-9s $%.2f\n", role, usd)))
+		}
+	}
 	return b.String()
 }
 

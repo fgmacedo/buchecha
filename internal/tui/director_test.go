@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"strings"
 	"testing"
 	"time"
@@ -176,12 +175,19 @@ func TestDirectorPanel_AllApproved_ShowsFullCount(t *testing.T) {
 	}
 }
 
-func TestDirectorPanel_OnCost_AccumulatesAcrossEvents(t *testing.T) {
+func TestDirectorPanel_OnSpawnFinished_AccumulatesAcrossRoles(t *testing.T) {
 	d := directorPanel{}
-	d.onCost(0.10)
-	d.onCost(0.25)
-	if d.cumulativeCost < 0.34 || d.cumulativeCost > 0.36 {
-		t.Errorf("cumulativeCost = %f, want ~0.35", d.cumulativeCost)
+	d.onSpawnFinished("bcc-planner", 0.10)
+	d.onSpawnFinished("executor", 0.25)
+	d.onSpawnFinished("executor", 0.05)
+	if d.cumulativeCost < 0.39 || d.cumulativeCost > 0.41 {
+		t.Errorf("cumulativeCost = %f, want ~0.40", d.cumulativeCost)
+	}
+	if d.costByRole["planner"] != 0.10 {
+		t.Errorf("costByRole[planner] = %f, want 0.10 (bcc- prefix stripped)", d.costByRole["planner"])
+	}
+	if d.costByRole["executor"] < 0.29 || d.costByRole["executor"] > 0.31 {
+		t.Errorf("costByRole[executor] = %f, want ~0.30", d.costByRole["executor"])
 	}
 }
 
@@ -316,16 +322,20 @@ func TestUpdate_DirectorEventsFlowToPanel(t *testing.T) {
 	}
 }
 
-func TestUpdate_AgentResultSummary_FoldsCostIntoDirectorPanel(t *testing.T) {
+func TestUpdate_SpawnFinished_FoldsCostIntoDirectorPanel(t *testing.T) {
 	m, _, _, _ := newTestModel(t)
 	at := time.Date(2026, 5, 2, 14, 30, 0, 0, time.UTC)
-	got, _ := m.Update(eventMsg{ev: loop.AgentEventReceived{Event: agentcontract.AgentEvent{
-		Kind: agentcontract.KindResultSummary, At: at,
-		Done: &agentcontract.ResultSummaryInfo{TotalCostUSD: 0.42},
-	}}})
+	got, _ := m.Update(eventMsg{ev: loop.SpawnFinished{
+		Role: "executor",
+		Cost: loop.SpawnCost{USD: 0.42},
+		At:   at,
+	}})
 	mm := got.(Model)
 	if mm.director.cumulativeCost < 0.41 || mm.director.cumulativeCost > 0.43 {
 		t.Errorf("supervision.cumulativeCost = %f, want ~0.42", mm.director.cumulativeCost)
+	}
+	if mm.director.costByRole["executor"] < 0.41 || mm.director.costByRole["executor"] > 0.43 {
+		t.Errorf("costByRole[executor] = %f, want ~0.42", mm.director.costByRole["executor"])
 	}
 }
 

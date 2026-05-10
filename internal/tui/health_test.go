@@ -188,6 +188,33 @@ func TestHealth_view_LoopSuspectRowAppearsWhenTriggered(t *testing.T) {
 	}
 }
 
+func TestDominantBucket(t *testing.T) {
+	cases := []struct {
+		name string
+		u    agentcontract.TokenUsage
+		want string
+	}{
+		{name: "empty", u: agentcontract.TokenUsage{}, want: ""},
+		{name: "below 100 tokens", u: agentcontract.TokenUsage{InputCached: 50}, want: ""},
+		{name: "cache dominant", u: agentcontract.TokenUsage{
+			InputFresh: 100, InputCached: 9000, Output: 100,
+		}, want: "(cached 98%)"},
+		{name: "output dominant", u: agentcontract.TokenUsage{
+			InputFresh: 100, Output: 5000,
+		}, want: "(output 98%)"},
+		{name: "even split (no dominant)", u: agentcontract.TokenUsage{
+			InputFresh: 200, Output: 200, InputCached: 200,
+		}, want: ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := dominantBucket(c.u); got != c.want {
+				t.Errorf("dominantBucket = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestFormatTokens(t *testing.T) {
 	cases := []struct {
 		n    int64

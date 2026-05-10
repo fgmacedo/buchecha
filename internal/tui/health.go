@@ -29,6 +29,14 @@ type healthPanel struct {
 	// Showing totalTokens+iterTokens in the view gives a live count.
 	iterTokens int64
 
+	// totalBuckets accumulates the per-bucket token totals so the view
+	// can surface the dominant bucket (typically "cached" when prompt
+	// caching is healthy). Reconciled the same way totalTokens is: live
+	// per-message increments during an iteration, replaced by the
+	// authoritative result_summary buckets at iteration end.
+	totalBuckets agentcontract.TokenUsage
+	iterBuckets  agentcontract.TokenUsage
+
 	// toolStamps is a ring of recent tool_use timestamps used for the
 	// 60s tools/min figure. Bounded to 1024 entries to keep memory flat
 	// regardless of run length.
@@ -63,6 +71,7 @@ func (h *healthPanel) onAny(at time.Time) {
 // previous iteration. Called before the executor starts each new iteration.
 func (h *healthPanel) onIterStarted() {
 	h.iterTokens = 0
+	h.iterBuckets = agentcontract.TokenUsage{}
 }
 
 // onAgentEvent folds an agent event into the panel's counters. It
@@ -95,13 +104,16 @@ func (h *healthPanel) onAgentEvent(ev agentcontract.AgentEvent) {
 		// KindResultSummary reconciles to the authoritative total.
 		if ev.Usage != nil {
 			h.iterTokens += ev.Usage.Total()
+			h.iterBuckets = h.iterBuckets.Add(*ev.Usage)
 		}
 	case agentcontract.KindResultSummary:
 		if ev.Done != nil {
 			// Reconcile: replace the live per-message estimate with the
 			// authoritative 5-bucket total from the terminal result event.
 			h.totalTokens += ev.Done.Tokens.Total()
+			h.totalBuckets = h.totalBuckets.Add(ev.Done.Tokens)
 			h.iterTokens = 0
+			h.iterBuckets = agentcontract.TokenUsage{}
 			h.totalCostUSD += ev.Done.TotalCostUSD
 		}
 	}
@@ -135,7 +147,11 @@ func (h healthPanel) view(now time.Time, _ int) string {
 	}
 	b.WriteString("  rate: " + rate + "\n")
 
-	b.WriteString(fmt.Sprintf("  tokens: %s\n", formatTokens(h.totalTokens+h.iterTokens)))
+	b.WriteString(fmt.Sprintf("  tokens: %s", formatTokens(h.totalTokens+h.iterTokens)))
+	if dom := dominantBucket(h.totalBuckets.Add(h.iterBuckets)); dom != "" {
+		b.WriteString(theme.subtle.Render(" " + dom))
+	}
+	b.WriteByte('\n')
 	b.WriteString(fmt.Sprintf("  cost: $%.2f\n", h.totalCostUSD))
 
 	if key, count, ok := h.suspect.triggered(); ok {
@@ -187,6 +203,42 @@ func countSince(stamps []time.Time, threshold time.Time) int {
 // shape stays the same.
 func toolsPerMin(stamps []time.Time, now time.Time) int {
 	return countSince(stamps, now.Add(-60*time.Second))
+}
+
+// dominantBucket returns a short annotation pointing at the bucket
+// that holds the largest share of total usage, like "(cached 92%)".
+// Returns empty when no bucket clears 50% (the breakdown is too even
+// to be informative). The label is the bucket the user cares about most:
+// cache_read = "cached" (high means caching is healthy), cache_write =
+// "cache write" (high means context churn), output = "output" (a lot
+// of generation), reasoning = "reasoning" (thinking-heavy model).
+func dominantBucket(t agentcontract.TokenUsage) string {
+	total := t.Total()
+	if total < 100 {
+		return ""
+	}
+	type entry struct {
+		label string
+		val   int64
+	}
+	rows := []entry{
+		{"cached", t.InputCached},
+		{"output", t.Output},
+		{"fresh", t.InputFresh},
+		{"cache write", t.CacheWrite},
+		{"reasoning", t.Reasoning},
+	}
+	var top entry
+	for _, r := range rows {
+		if r.val > top.val {
+			top = r
+		}
+	}
+	pct := float64(top.val) / float64(total) * 100
+	if pct < 50 {
+		return ""
+	}
+	return fmt.Sprintf("(%s %.0f%%)", top.label, pct)
 }
 
 // formatTokens humanises a token total: 1234 → "1.2k", 1234567 →

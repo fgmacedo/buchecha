@@ -607,9 +607,9 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 		m.actions.onAgentEvent(e.Event)
 		m.risk.onAgentEvent(e.Event)
 		m.header.onAny(e.Event.At)
-		if e.Event.Kind == agentcontract.KindResultSummary && e.Event.Done != nil {
-			m.director.onCost(e.Event.Done.TotalCostUSD)
-		}
+		// Director cumulative cost comes from SpawnFinished events (with
+		// role attribution); the result_summary path is only kept for the
+		// per-iteration health metrics now.
 		// Arm the spinner the first moment a tool becomes active. Idle
 		// transitions (tool finished) leave the tick loop to wind down
 		// naturally on the next spinner.TickMsg.
@@ -650,6 +650,9 @@ func (m Model) handleLoopEvent(ev loop.Event) (tea.Model, tea.Cmd) {
 			m.progress.onTaskCompleted()
 			m.risk.onTaskCompleted()
 		}
+		m.header.onAny(e.At)
+	case loop.SpawnFinished:
+		m.director.onSpawnFinished(e.Role, e.Cost.USD)
 		m.header.onAny(e.At)
 	}
 	return m, tea.Batch(cmds...)
