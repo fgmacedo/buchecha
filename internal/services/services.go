@@ -103,8 +103,13 @@ type Services struct {
 // whose individual methods report errors when their dependencies are
 // missing.
 func New(deps Deps) *Services {
+	sessions := newSessionService(deps)
+	var onEvent func(events.SeqEvent)
+	if sessions.cost != nil {
+		onEvent = sessions.cost.onSeqEvent
+	}
 	return &Services{
-		Sessions: newSessionService(deps),
+		Sessions: sessions,
 		Events: events.New(events.Deps{
 			LoopEvents:            deps.LoopEvents,
 			SessionStore:          deps.SessionStore,
@@ -112,6 +117,7 @@ func New(deps Deps) *Services {
 			EventsLogPath:         deps.EventsLogPath,
 			LiveAliasArchivedID:   deps.LiveAliasArchivedID,
 			ReplayInterEventDelay: deps.ReplayInterEventDelay,
+			OnSeqEvent:            onEvent,
 		}),
 		Briefings: newBriefingService(deps),
 		Prompts:   newPromptService(deps),

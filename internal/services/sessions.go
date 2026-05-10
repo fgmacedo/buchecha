@@ -67,10 +67,11 @@ const LiveSessionAlias = "live"
 // read from .bcc/sessions/<id>/.
 type SessionService struct {
 	deps Deps
+	cost *costMaterializer
 }
 
 func newSessionService(deps Deps) *SessionService {
-	return &SessionService{deps: deps}
+	return &SessionService{deps: deps, cost: newCostMaterializer(deps)}
 }
 
 // List returns metadata for every session known under

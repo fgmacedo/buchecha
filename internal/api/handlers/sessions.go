@@ -29,6 +29,21 @@ type getSessionOutput struct {
 	Body services.SessionMeta
 }
 
+// getSessionCostInput captures the {id} path parameter for the cost
+// endpoint. Distinct from getSessionInput so each handler reads only
+// the parameters it needs.
+type getSessionCostInput struct {
+	ID string `path:"id" doc:"Session id (the directory name under .bcc/sessions/)." minLength:"1"`
+}
+
+// getSessionCostOutput returns the bare CostAggregate. The total_tokens
+// field is the vendor-neutral 5-bucket TokenUsage; total_usd is the
+// provider-reported scalar; by_role groups SpawnFinished costs by
+// emitter (planner/briefer/executor/reviewer).
+type getSessionCostOutput struct {
+	Body services.CostAggregate
+}
+
 // registerSessions wires the list and get operations under the
 // shared sessions resource. Both share the same SessionService and
 // the same error-to-envelope mapping; they live together so the
@@ -70,5 +85,23 @@ func registerSessions(api huma.API, svc *services.Services, deps Deps) {
 			return nil, deps.HumaError(err)
 		}
 		return &getSessionOutput{Body: meta}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-session-cost",
+		Method:      "GET",
+		Path:        "/sessions/{id}/cost",
+		Summary:     "Get the per-session cost and token aggregate",
+		Description: "Returns the cumulative spawn cost and 5-bucket TokenUsage for the session, grouped by role. Live sessions read from the in-memory accumulator; archived sessions read .bcc/sessions/<id>/cost.json (rebuilt from events.ndjson when missing).",
+		Tags:        []string{"sessions"},
+	}, func(ctx context.Context, in *getSessionCostInput) (*getSessionCostOutput, error) {
+		if svc == nil {
+			return nil, deps.HumaError(services.ErrInternal.WithMessage("sessions: services not configured"))
+		}
+		agg, err := svc.Sessions.Cost(ctx, in.ID)
+		if err != nil {
+			return nil, deps.HumaError(err)
+		}
+		return &getSessionCostOutput{Body: agg}, nil
 	})
 }

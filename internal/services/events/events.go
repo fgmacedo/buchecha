@@ -154,6 +154,13 @@ type Deps struct {
 	// ReplayInterEventDelay throttles Replay so each emitted event is
 	// followed by this pause before the next one. Zero emits at full speed.
 	ReplayInterEventDelay time.Duration
+
+	// OnSeqEvent, when non-nil, is called synchronously inside the live
+	// fan-out for every assigned SeqEvent before subscriber dispatch.
+	// The services layer registers a callback here to materialize derived
+	// state (cost.json) from the authoritative event stream. Returning
+	// quickly is mandatory: every microsecond delays subscriber delivery.
+	OnSeqEvent func(SeqEvent)
 }
 
 // SeqEvent is the value type subscribers receive: a monotonic sequence
@@ -463,6 +470,9 @@ func (s *EventService) fanout() {
 		}
 		_, isFinal := ev.(loop.LoopFinished)
 		s.mu.Unlock()
+		if s.deps.OnSeqEvent != nil {
+			s.deps.OnSeqEvent(se)
+		}
 		for _, sub := range recipients {
 			select {
 			case sub.inbox <- se:
