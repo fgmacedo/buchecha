@@ -197,7 +197,7 @@ def run_bcc(
     base SHA. Wall time is measured externally so it matches the user's
     experience of "how long did the run take".
     """
-    args = ["bcc", "run", "--output", "json", "--no-color", "--max-iter", str(max_iter)]
+    args = ["bcc", "run", "-W", "--output", "json", "--no-color", "--max-iter", str(max_iter)]
     if prompt:
         args += ["--prompt", prompt]
     if spec:
