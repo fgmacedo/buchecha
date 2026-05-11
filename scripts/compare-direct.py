@@ -170,17 +170,19 @@ def make_worktree(repo: Path, label: str, base_sha: str) -> tuple[Path, str]:
         ["git", "worktree", "add", "-b", branch, str(path), base_sha],
         cwd=repo,
     )
-    # When the parent repo is bare (worktrunk pattern), git inherits
-    # core.bare=true into the new worktree and refuses status / add /
-    # diff. Override locally via per-worktree config so the rest of the
-    # script (and any consumer running inside the worktree) sees a
-    # regular work tree. Requires extensions.worktreeConfig.
-    is_bare = must_run(
-        ["git", "rev-parse", "--is-bare-repository"], cwd=repo
-    ).strip() == "true"
-    if is_bare:
-        must_run(["git", "config", "extensions.worktreeConfig", "true"], cwd=repo)
-        must_run(["git", "config", "--worktree", "core.bare", "false"], cwd=path)
+    # Inoculate the new worktree against parent core.bare=true. Two
+    # cases collapse to the same fix:
+    #   - parent already bare at creation time (worktrunk pattern);
+    #   - parent becomes bare mid-run (worktrunk, invoked by something
+    #     external to this script, flips it on the fly).
+    # The per-worktree core.bare=false in config.worktree wins over the
+    # inherited value, so git status / add / diff inside this worktree
+    # keeps working regardless. Setting it unconditionally is harmless
+    # for non-bare parents (the override matches the inherited value).
+    # Requires extensions.worktreeConfig=true on the parent for the
+    # --worktree config namespace to exist.
+    must_run(["git", "config", "extensions.worktreeConfig", "true"], cwd=repo)
+    must_run(["git", "config", "--worktree", "core.bare", "false"], cwd=path)
     return path, branch
 
 
