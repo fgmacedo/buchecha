@@ -258,10 +258,13 @@ func New(deps Deps) *EventService {
 
 // Subscribe registers a live subscriber for sessionID and returns a
 // channel that emits buffered events with seq >= fromSeq followed by live
-// events. fromSeq < 1 is normalised to 1. When fromSeq predates the
-// oldest entry still in the ring, the call returns ErrSeqGone and no
-// subscription is created. The returned channel closes on LoopFinished
-// or when ctx is cancelled.
+// events. fromSeq < 1 is the "live tail" sentinel: the subscriber starts
+// at the current head, receives no replay, and never returns ErrSeqGone.
+// Callers that did not see prior events (fresh page load with no
+// Last-Event-ID) pass 0 to opt into this. For fromSeq >= 1, when the
+// value predates the oldest entry still in the ring the call returns
+// ErrSeqGone and no subscription is created. The returned channel closes
+// on LoopFinished or when ctx is cancelled.
 func (s *EventService) Subscribe(ctx context.Context, sessionID string, fromSeq int64) (<-chan SeqEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -272,13 +275,16 @@ func (s *EventService) Subscribe(ctx context.Context, sessionID string, fromSeq 
 	if !s.isLiveSession(sessionID) {
 		return nil, ErrSessionNotFound.WithDetails(map[string]any{"id": sessionID})
 	}
-	if fromSeq < 1 {
-		fromSeq = 1
-	}
 	s.ensureFanout()
 
 	s.mu.Lock()
-	if s.ringSizeLocked() > 0 {
+	if fromSeq < 1 {
+		// Live tail: skip replay and start at the current head. Without
+		// this branch fromSeq would default to 1 and any session whose
+		// ring has rotated past seq 1 would 410 on the very first
+		// connection (the SPA's fresh-page case).
+		fromSeq = s.nextSeq
+	} else if s.ringSizeLocked() > 0 {
 		oldest := s.ring[0].Seq
 		if fromSeq < oldest {
 			s.mu.Unlock()

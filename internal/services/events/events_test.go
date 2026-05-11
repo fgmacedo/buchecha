@@ -350,6 +350,70 @@ func TestEventService_Subscribe_RingOverflowReturnsSeqGone(t *testing.T) {
 	close(ch)
 }
 
+// TestEventService_Subscribe_FromZeroLiveTailsAfterRingRotation covers the
+// SPA's fresh-page bootstrap on a long-running session: the ring has
+// rotated past seq 1, the client sends no Last-Event-ID, and the handler
+// translates that into Subscribe(fromSeq=0). The contract: 0 is "live tail
+// from head" - no replay, no ErrSeqGone, and the subscriber starts
+// receiving events strictly newer than the current head.
+func TestEventService_Subscribe_FromZeroLiveTailsAfterRingRotation(t *testing.T) {
+	t.Parallel()
+	deps, ch := liveDeps(t, "abcabcabc107")
+	svc := New(deps)
+	svc.ensureFanout()
+
+	const overflow = ringSize + 50
+	for i := 1; i <= overflow; i++ {
+		ch <- loop.IterationStarted{Index: i}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		svc.mu.Lock()
+		ringLen := len(svc.ring)
+		next := svc.nextSeq
+		oldest := int64(0)
+		if ringLen > 0 {
+			oldest = svc.ring[0].Seq
+		}
+		svc.mu.Unlock()
+		if ringLen == ringSize && next >= int64(overflow+1) && oldest > 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fan-out did not rotate ring; len=%d nextSeq=%d oldest=%d", ringLen, next, oldest)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub, err := svc.Subscribe(ctx, "abcabcabc107", 0)
+	if err != nil {
+		t.Fatalf("Subscribe(0) after rotation: err = %v, want nil", err)
+	}
+
+	// Capture the head observed at subscribe time; any event we receive
+	// must be strictly after it.
+	svc.mu.Lock()
+	headAtSubscribe := svc.nextSeq
+	svc.mu.Unlock()
+
+	ch <- loop.IterationStarted{Index: overflow + 1}
+
+	select {
+	case se, ok := <-sub:
+		if !ok {
+			t.Fatal("subscriber closed before receiving live event")
+		}
+		if se.Seq < headAtSubscribe {
+			t.Errorf("seq = %d, want >= %d (live tail must not deliver replay)", se.Seq, headAtSubscribe)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no live event after Subscribe(0)")
+	}
+	close(ch)
+}
+
 func TestEventService_Subscribe_CtxCancelClosesSubscriber(t *testing.T) {
 	t.Parallel()
 	deps, ch := liveDeps(t, "abcabcabc104")

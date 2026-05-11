@@ -55,8 +55,24 @@ func eventsHandler(svc *services.Services, deps Deps) http.HandlerFunc {
 			return
 		}
 
-		fromSeq := parseLastEventID(r.Header.Get("Last-Event-ID"))
-		stream, replay, err := pickEventSource(r.Context(), svc, id, fromSeq+1)
+		// Pick the resume hint, in priority order:
+		//   1. Last-Event-ID header (browser-set on EventSource reconnect).
+		//   2. ?last_event_id= query param (deep-link / first-connect
+		//      fallback the SPA uses, because the EventSource constructor
+		//      cannot set custom headers).
+		// When neither is present, fromSeq stays 0 and EventService.Subscribe
+		// treats that as "live tail from head" so a fresh page on a session
+		// whose ring has rotated does not 410. The +1 only fires for an
+		// explicit resume value: we received seq N, give us N+1 next.
+		raw := r.Header.Get("Last-Event-ID")
+		if raw == "" {
+			raw = r.URL.Query().Get("last_event_id")
+		}
+		var fromSeq int64
+		if raw != "" {
+			fromSeq = parseLastEventID(raw) + 1
+		}
+		stream, replay, err := pickEventSource(r.Context(), svc, id, fromSeq)
 		if err != nil {
 			deps.WriteError(w, r, err)
 			return
