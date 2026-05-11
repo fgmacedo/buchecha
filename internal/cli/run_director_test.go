@@ -1372,3 +1372,99 @@ func TestServiceEventsSameOrderForTUIAndAPI(t *testing.T) {
 		}
 	}
 }
+
+// TestRunDirectorWith_BridgesPlannerAgentEventsToServiceEvents asserts
+// that AgentEvents emitted by the planner in the headless path are
+// forwarded to deps.serviceEvents wrapped as loop.AgentEventReceived.
+// Without this bridge the WebUI never sees the planner's agent_event
+// envelopes and the canvas stays on "Waiting for plan..." because the
+// AgentCard correlation in use-agents.ts depends on at least one
+// agent_event carrying an agent_id to bind a pending spawn_started.
+func TestRunDirectorWith_BridgesPlannerAgentEventsToServiceEvents(t *testing.T) {
+	resetExitCode(t)
+	withOutputMode(t, OutputJSON)
+
+	tmp := t.TempDir()
+	specPath := writeTestSpec(t, tmp)
+
+	plannerEvent := agentcontract.AgentEvent{
+		Kind:    agentcontract.KindAssistantText,
+		AgentID: "bcc-planner-test",
+		Role:    agentcontract.RolePlanner,
+		Text:    "hello from planner",
+	}
+
+	planner := &fake.Planner{
+		PlanFn: func(_ context.Context, _ supervision.PlannerInput, events chan<- agentcontract.AgentEvent) (*supervision.Plan, *supervision.SpawnStats, error) {
+			if events == nil {
+				t.Error("planner received nil events channel; service-events bridge not installed")
+			} else {
+				events <- plannerEvent
+			}
+			return scriptedPlan(), &supervision.SpawnStats{}, nil
+		},
+	}
+
+	h := newTestHandler()
+	newExec, _ := recordingExecutorFactory(agentcontract.SignalReview, h)
+	store := mkSessionStore(t, tmp, specPath)
+
+	serviceEvents := make(chan loop.Event, 256)
+	var (
+		mu       sync.Mutex
+		captured []loop.Event
+	)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for ev := range serviceEvents {
+			mu.Lock()
+			captured = append(captured, ev)
+			mu.Unlock()
+		}
+	}()
+
+	deps := directorDeps{
+		handler:       h,
+		planner:       planner,
+		briefer:       scriptedBriefer(h),
+		reviewer:      approvingReviewer(h),
+		store:         store,
+		git:           newAdvancingGit(),
+		newExecutor:   newExec,
+		now:           func() time.Time { return time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC) },
+		serviceEvents: serviceEvents,
+	}
+
+	dio := directorIO{
+		stdin:  strings.NewReader(""),
+		stderr: io.Discard,
+	}
+
+	cfg := directorTestConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := runDirectorWith(ctx, cancel, specPath, cfg, deps, dio); err != nil {
+		t.Fatalf("runDirectorWith: %v", err)
+	}
+	close(serviceEvents)
+	<-drained
+
+	mu.Lock()
+	defer mu.Unlock()
+	var saw bool
+	for _, ev := range captured {
+		are, ok := ev.(loop.AgentEventReceived)
+		if !ok {
+			continue
+		}
+		if are.Event.AgentID == plannerEvent.AgentID && are.Event.Kind == plannerEvent.Kind {
+			saw = true
+			break
+		}
+	}
+	if !saw {
+		t.Errorf("serviceEvents did not receive AgentEventReceived for planner; got %d events", len(captured))
+	}
+}

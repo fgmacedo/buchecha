@@ -1316,17 +1316,37 @@ func freshPlan(ctx context.Context, specPath string, hash string, deps directorD
 	}
 	defer deregister()
 
+	// The planner's AgentEvents reach external consumers via two paths:
+	//   - raw (when non-nil): the TUI bridge consumes wrapped events
+	//     live; runDirectorTUI installs a copy goroutine that also fans
+	//     them into deps.serviceEvents.
+	//   - deps.serviceEvents (when non-nil and raw is nil): the headless
+	//     path has no live renderer, so this is the only way SSE
+	//     subscribers (WebUI) and events.ndjson see the planner's
+	//     agent_event envelopes. Without this the canvas would stay on
+	//     "Waiting for plan..." because the AgentCard correlation in
+	//     use-agents.ts needs at least one agent_event to bind a
+	//     pending spawn_started.
 	var agentEvents chan agentcontract.AgentEvent
 	pumpDone := make(chan struct{})
-	if raw != nil {
+	if raw != nil || deps.serviceEvents != nil {
 		agentEvents = make(chan agentcontract.AgentEvent, 256)
 		go func() {
 			defer close(pumpDone)
 			for ae := range agentEvents {
+				wrapped := loop.AgentEventReceived{Event: ae}
+				if raw != nil {
+					select {
+					case raw <- wrapped:
+					case <-ctx.Done():
+						return
+					}
+					continue
+				}
 				select {
-				case raw <- loop.AgentEventReceived{Event: ae}:
-				case <-ctx.Done():
-					return
+				case deps.serviceEvents <- wrapped:
+				default:
+					slog.Warn("cli: serviceEvents channel full; dropping planner event")
 				}
 			}
 		}()
