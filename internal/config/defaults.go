@@ -1,5 +1,7 @@
 package config
 
+import "slices"
+
 // ApplyDefaults fills in zero-valued fields of c so an empty .bcc.toml
 // produces a working configuration.
 //
@@ -29,7 +31,7 @@ func ApplyDefaults(c *Config) {
 			p.Binary = kp.Binary
 		}
 		if p.ExtraArgs == nil {
-			p.ExtraArgs = append([]string(nil), kp.ExtraArgs...)
+			p.ExtraArgs = slices.Clone(kp.ExtraArgs)
 		}
 		if p.SkipPermissions == nil {
 			v := true
@@ -92,12 +94,14 @@ func defaultBrieferOptions() []RoleOption {
 
 // defaultExecutorOptions: balanced as the default; frontier as an
 // upgrade slot the Planner can reach for on architecturally-loaded
-// phases. Two entries keep the cardápio short while expressing the
-// "Planner can pay more when it needs to" idea.
+// phases, fast as a downgrade slot for phases the Planner already
+// briefed inline. Three entries express the full "Planner can pay
+// more or less when it needs to" idea across the tier spectrum.
 func defaultExecutorOptions() []RoleOption {
 	return []RoleOption{
 		{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium", "high"}},
-		{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"high"}},
+		{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"low", "medium", "high"}},
+		{Provider: "claude", Model: "claude-haiku-4-5", Efforts: []string{"low", "medium", "high"}},
 	}
 }
 
