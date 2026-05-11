@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -169,6 +170,17 @@ def make_worktree(repo: Path, label: str, base_sha: str) -> tuple[Path, str]:
         ["git", "worktree", "add", "-b", branch, str(path), base_sha],
         cwd=repo,
     )
+    # When the parent repo is bare (worktrunk pattern), git inherits
+    # core.bare=true into the new worktree and refuses status / add /
+    # diff. Override locally via per-worktree config so the rest of the
+    # script (and any consumer running inside the worktree) sees a
+    # regular work tree. Requires extensions.worktreeConfig.
+    is_bare = must_run(
+        ["git", "rev-parse", "--is-bare-repository"], cwd=repo
+    ).strip() == "true"
+    if is_bare:
+        must_run(["git", "config", "extensions.worktreeConfig", "true"], cwd=repo)
+        must_run(["git", "config", "--worktree", "core.bare", "false"], cwd=path)
     return path, branch
 
 
@@ -662,26 +674,50 @@ def main() -> int:
         for wt in (bcc_wt, direct_wt):
             (wt / spec_relpath).write_text(spec_text or "")
 
-    try:
+    def _bcc_side() -> RunResult:
         sys.stderr.write(f"running bcc in {bcc_wt}\n")
-        bcc_result = run_bcc(
+        result = run_bcc(
             bcc_wt,
             prompt=args.prompt,
             spec=(bcc_wt / spec_relpath) if spec_relpath else None,
             max_iter=args.max_iter,
             parent_toml=repo / ".bcc.toml",
         )
-        bcc_result.files_changed, bcc_result.lines_added, bcc_result.lines_removed = (
-            diff_stat(bcc_wt, base_sha)
-        )
+        try:
+            result.files_changed, result.lines_added, result.lines_removed = (
+                diff_stat(bcc_wt, base_sha)
+            )
+        except Exception as exc:  # noqa: BLE001 - record and keep going
+            sys.stderr.write(f"bcc diff_stat failed: {exc}\n")
+            result.extra["diff_stat_error"] = str(exc)
+        return result
 
+    def _direct_side() -> RunResult:
         sys.stderr.write(f"running claude in {direct_wt}\n")
-        direct_result = run_direct_claude(direct_wt, prompt=prompt_for_direct or "")
-        (
-            direct_result.files_changed,
-            direct_result.lines_added,
-            direct_result.lines_removed,
-        ) = diff_stat(direct_wt, base_sha)
+        result = run_direct_claude(direct_wt, prompt=prompt_for_direct or "")
+        try:
+            (
+                result.files_changed,
+                result.lines_added,
+                result.lines_removed,
+            ) = diff_stat(direct_wt, base_sha)
+        except Exception as exc:  # noqa: BLE001 - record and keep going
+            sys.stderr.write(f"direct diff_stat failed: {exc}\n")
+            result.extra["diff_stat_error"] = str(exc)
+        return result
+
+    try:
+        # Both sides are independent subprocess waits on different
+        # worktrees; run them in parallel so wall time is max(bcc,
+        # direct) instead of sum. Threads are fine: the work is
+        # subprocess.wait()-bound, the GIL is released there, and
+        # the two sides touch disjoint paths. stderr lines may
+        # interleave; each log line names its side.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            bcc_future = pool.submit(_bcc_side)
+            direct_future = pool.submit(_direct_side)
+        bcc_result = bcc_future.result()
+        direct_result = direct_future.result()
 
         results = [bcc_result, direct_result]
 
