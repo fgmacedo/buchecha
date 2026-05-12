@@ -100,6 +100,10 @@ The boundary cuts both ways:
 1. The framework cannot rely on user-space files. Project docs, `CLAUDE.md`, `AGENTS.md`, custom skills are the user's. A user running `bcc` outside this repo may have none of them, or may have ones that conflict with bcc's contract. Code that reads user-space paths from inside the framework is a leak.
 1. The framework prompts are assertive and self-contained. Per-role prompts live at `internal/supervision/render/prompts/` and the executor prompt is generated from the rendered Briefing on disk. All prompts compose the shared markdown blocks from `internal/loop/agentcontract/` (`wire_protocol.md`, `absolute_restrictions.md`, `working_tree.md`).
 
+### Target-project agnosticism
+
+bcc itself is implemented in Go, but the projects it orchestrates can be in any language, ecosystem, or toolchain. Embedded prompts (`internal/supervision/render/prompts/`, `internal/loop/agentcontract/`) and any framework-emitted instruction must stay neutral. Do not reference commands, build tools, package managers, test runners, linters, or framework conventions from a specific language: no `go build`, `go vet`, `go test`, `npm run`, `pytest`, `cargo build`, `mvn test`, `make`, etc. When the prompt needs to talk about verification, use generic vocabulary ("build", "lint", "test", "type-check") and let the executor pick the concrete command from the target project. The same rule applies to file extensions, directory names, and idioms: if a sentence only makes sense for one ecosystem, it is a leak. The bcc binary's own stack (Go, mise, cobra) is allowed everywhere except inside the embedded prompts the agents consume.
+
 ## Domain language (DDD, lightweight)
 
 The domain is small. We use the parts of DDD that pay off and skip the rest.
