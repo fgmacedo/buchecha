@@ -45,6 +45,37 @@ func (s *State) SubDAGAnyNeedsFix(phaseID PhaseID, subDAG []TaskID) bool {
 	return false
 }
 
+// UnmetDependencies returns the depends_on ids for the task that are
+// not yet TaskDone, in declaration order. An empty result means the
+// task is eligible. The task itself must exist; a missing task or
+// phase returns nil and is treated as "no constraints to evaluate"
+// by callers, which validate task existence via assertExecutorScope
+// before calling this.
+func (s *State) UnmetDependencies(phaseID PhaseID, taskID TaskID) []TaskID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.phases[phaseID]
+	if !ok {
+		return nil
+	}
+	t, ok := ps.Tasks[taskID]
+	if !ok {
+		return nil
+	}
+	var unmet []TaskID
+	for _, dep := range t.DependsOn {
+		dt, ok := ps.Tasks[dep]
+		if !ok {
+			unmet = append(unmet, dep)
+			continue
+		}
+		if dt.Status != supervision.TaskDone {
+			unmet = append(unmet, dep)
+		}
+	}
+	return unmet
+}
+
 // SubDAGStatuses returns a snapshot of the per-task status for the
 // requested sub-DAG ids. Missing ids are omitted from the result.
 func (s *State) SubDAGStatuses(phaseID PhaseID, subDAG []TaskID) map[TaskID]supervision.TaskStatus {

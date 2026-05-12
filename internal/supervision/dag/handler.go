@@ -945,6 +945,9 @@ func (h *Handler) handleTaskStarted(_ context.Context, entry AgentEntry, input m
 	if err := h.assertExecutorScope(entry, id); err != nil {
 		return "", err
 	}
+	if unmet := h.state.UnmetDependencies(entry.PhaseID, id); len(unmet) > 0 {
+		return "", fmt.Errorf("dag: task_started: task %q has unmet depends_on: %v (call task_completed on those first)", id, unmet)
+	}
 	if err := h.state.SetTaskStatus(entry.PhaseID, id, supervision.TaskInProgress); err != nil {
 		return "", fmt.Errorf("dag: task_started: %w", err)
 	}

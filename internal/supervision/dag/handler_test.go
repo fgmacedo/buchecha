@@ -858,6 +858,187 @@ func TestHandleTaskStarted_ReviewerReviewingOnly(t *testing.T) {
 	}
 }
 
+// emitPlanWithDeps installs a single-phase plan where t2 depends on
+// t1 and t3 depends on t1+t2. Used by the depends_on enforcement
+// tests below; the sample plan from emitSamplePlan has no edges.
+func emitPlanWithDeps(t *testing.T, h *Handler) {
+	t.Helper()
+	registry := h.Registry()
+	id, _ := registry.Register(RolePlanner, RegisterArgs{})
+	plan := validPlanInput(t)
+	plan["phases"] = []any{
+		map[string]any{
+			"id": "P1", "title": "p1", "intent": "p1",
+			"tasks": []any{
+				map[string]any{
+					"id": "t1", "title": "task one", "intent": "intent",
+					"acceptance": []any{map[string]any{
+						"id": "a1", "description": "d", "evidence": "diff",
+					}},
+					"status": "pending",
+				},
+				map[string]any{
+					"id": "t2", "title": "task two", "intent": "intent",
+					"depends_on": []any{"t1"},
+					"acceptance": []any{map[string]any{
+						"id": "a1", "description": "d", "evidence": "diff",
+					}},
+					"status": "pending",
+				},
+				map[string]any{
+					"id": "t3", "title": "task three", "intent": "intent",
+					"depends_on": []any{"t1", "t2"},
+					"acceptance": []any{map[string]any{
+						"id": "a1", "description": "d", "evidence": "diff",
+					}},
+					"status": "pending",
+				},
+			},
+		},
+	}
+	if _, err := h.HandleCall(context.Background(), string(RolePlanner), MethodPlanEmit, map[string]any{
+		"agent_id": string(id),
+		"plan":     plan,
+	}); err != nil {
+		t.Fatalf("emit plan with deps: %v", err)
+	}
+	registry.Deregister(id)
+}
+
+func TestHandleTaskStarted_RejectsUnmetDependsOn(t *testing.T) {
+	cases := []struct {
+		name      string
+		preDone   []string // tasks the executor closes before the probe
+		probe     string   // task_started target
+		wantOK    bool
+		wantInErr string // substring expected in error when !wantOK
+	}{
+		{
+			name:   "no deps",
+			probe:  "t1",
+			wantOK: true,
+		},
+		{
+			name:      "single dep unmet",
+			probe:     "t2",
+			wantOK:    false,
+			wantInErr: "unmet depends_on: [t1]",
+		},
+		{
+			name:    "single dep met",
+			preDone: []string{"t1"},
+			probe:   "t2",
+			wantOK:  true,
+		},
+		{
+			name:      "multi deps both unmet",
+			probe:     "t3",
+			wantOK:    false,
+			wantInErr: "unmet depends_on: [t1 t2]",
+		},
+		{
+			name:      "multi deps partial",
+			preDone:   []string{"t1"},
+			probe:     "t3",
+			wantOK:    false,
+			wantInErr: "unmet depends_on: [t2]",
+		},
+		{
+			name:    "multi deps all met",
+			preDone: []string{"t1", "t2"},
+			probe:   "t3",
+			wantOK:  true,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(nil, NewAgentRegistry(nil))
+			emitPlanWithDeps(t, h)
+			exec, _ := h.Registry().Register(RoleExecutor, RegisterArgs{
+				BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1", "t2", "t3"},
+			})
+			for _, tid := range tt.preDone {
+				if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+					"agent_id": string(exec),
+					"id":       tid,
+				}); err != nil {
+					t.Fatalf("preDone task_started %q: %v", tid, err)
+				}
+				if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskCompleted, map[string]any{
+					"agent_id": string(exec),
+					"id":       tid,
+				}); err != nil {
+					t.Fatalf("preDone task_completed %q: %v", tid, err)
+				}
+			}
+			_, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+				"agent_id": string(exec),
+				"id":       tt.probe,
+			})
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("task_started %q: unexpected error %v", tt.probe, err)
+				}
+				if got := h.State().Phase("P1").Tasks[tt.probe].Status; got != supervision.TaskInProgress {
+					t.Errorf("task %q status = %q, want in_progress", tt.probe, got)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("task_started %q: expected rejection, got ok", tt.probe)
+			}
+			if !strings.Contains(err.Error(), tt.wantInErr) {
+				t.Errorf("error %q lacks %q", err.Error(), tt.wantInErr)
+			}
+			// Rejection must leave status untouched.
+			if got := h.State().Phase("P1").Tasks[tt.probe].Status; got != supervision.TaskPending {
+				t.Errorf("task %q status = %q, want pending after rejection", tt.probe, got)
+			}
+		})
+	}
+}
+
+func TestHandleTaskStarted_ParallelInProgressAllowed(t *testing.T) {
+	// With phase-level parallelism authorized, independent tasks may
+	// be in_progress simultaneously. The handler only enforces the
+	// depends_on edges, not "one task at a time."
+	h := NewHandler(nil, NewAgentRegistry(nil))
+	emitPlanWithDeps(t, h)
+	exec, _ := h.Registry().Register(RoleExecutor, RegisterArgs{
+		BriefingID: "P1-1", PhaseID: "P1", SubDAG: []string{"t1", "t2", "t3"},
+	})
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t1",
+	}); err != nil {
+		t.Fatalf("task_started t1: %v", err)
+	}
+	// t2 depends on t1, so it stays blocked while t1 is in_progress.
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t2",
+	}); err == nil {
+		t.Fatal("task_started t2 must be rejected while t1 is in_progress")
+	}
+	// Close t1, then t2 unblocks even though t3 is still untouched.
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskCompleted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t1",
+	}); err != nil {
+		t.Fatalf("task_completed t1: %v", err)
+	}
+	if _, err := h.HandleCall(context.Background(), string(RoleExecutor), MethodTaskStarted, map[string]any{
+		"agent_id": string(exec),
+		"id":       "t2",
+	}); err != nil {
+		t.Fatalf("task_started t2 after t1 done: %v", err)
+	}
+	// t2 in_progress, t1 done. No other constraint; this state is legal.
+	if got := h.State().Phase("P1").Tasks["t2"].Status; got != supervision.TaskInProgress {
+		t.Errorf("t2 status = %q, want in_progress", got)
+	}
+}
+
 func TestIsPseudoTaskID(t *testing.T) {
 	if !IsPseudoTaskID(PlanningTaskID) {
 		t.Errorf("PlanningTaskID should be pseudo")

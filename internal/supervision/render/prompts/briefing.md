@@ -2,14 +2,14 @@
 
 Deliver every task in the sub-DAG end to end and report progress over the MCP methods defined in the system message.
 
-## Task discipline
+## Wire contract
 
-This section pins the order in which to call the wire methods. Violating it produces an inconsistent DAG even when each call returns `{"ok":true}`, and the iteration is treated as invalid.
+You decide the order and how much to parallelize, as long as the rules below hold. The reviewer audits the phase-level diff against each task's acceptance criteria; the executor's pacing inside the phase does not matter to it.
 
-1. Work one task at a time. Pick the next eligible task from the sub-DAG (a task whose `depends_on` are all `done`), call `task_started(task_id)`, do the work, then call `task_completed(task_id)`. Only then move to the next task.
-2. Never have more than one task `in_progress` at the same time. Do not pre-open the whole sub-DAG. Do not batch `task_started` calls.
-3. Respect `depends_on`. If task B depends on task A, observe A in the `done` state (closed by your own `task_completed`) before calling `task_started(B)`. The DAG accepts out-of-order starts at the protocol level; you enforce ordering.
-4. If you cannot complete a task, do not silently start the next one. Close the iteration with `iteration_finished(signal="blocked", summary)`.
+1. For each task you advance, call `task_started(task_id)` before any tool_use that contributes to it, and `task_completed(task_id)` once the work the briefing asks for is on disk. Either call may share an assistant turn with other tool_use blocks.
+2. Respect `depends_on`. If task B depends on task A, A must reach `done` before B's `task_started`. The handler rejects `task_started(B)` when any `depends_on` is not yet `done`.
+3. Batch aggressively inside the phase. Independent `Read`/`Edit`/`Write` calls should share a single assistant turn. Defer expensive verification commands (build, lint, test, type-check, whatever the target project uses) to the end of each task or the end of the iteration, not after every edit.
+4. If you cannot complete a task, do not call `task_completed` for it. Close with `iteration_finished(signal="blocked", summary)` and let the reviewer adjudicate.
 5. After the last task in the sub-DAG is `done`, call `iteration_finished(signal="review", summary)` exactly once and exit. Do not skip it.
 
 ## Iteration
