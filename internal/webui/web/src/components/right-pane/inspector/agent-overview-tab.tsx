@@ -31,7 +31,7 @@ export function AgentOverviewTab({ agentId, subAgentToolUseId, events }: AgentOv
     const sub = card.subAgents[subAgentToolUseId]
     if (!sub) return <NotFound label={`sub-agent ${subAgentToolUseId}`} />
     return (
-      <div style={{ padding: 12, fontFamily: 'var(--font-sans)', fontSize: 12, lineHeight: 1.5 }}>
+      <div style={{ height: '100%', overflowY: 'auto', padding: 12, fontFamily: 'var(--font-sans)', fontSize: 12, lineHeight: 1.5 }}>
         <Section title="Sub-agent (Task)">
           <Row label="Type" value={sub.subagentType ?? '(unspecified)'} mono />
           <Row label="Status" value={sub.status} />
@@ -222,6 +222,8 @@ function NotFound({ label }: { label: string }) {
   return (
     <div
       style={{
+        height: '100%',
+        overflowY: 'auto',
         padding: 16,
         color: 'var(--color-muted-foreground)',
         fontSize: 12,

@@ -41,6 +41,8 @@ export default function AgentsTab({ selection, events }: AgentsTabProps) {
     return (
       <div
         style={{
+          height: '100%',
+          overflowY: 'auto',
           padding: 12,
           fontStyle: 'italic',
           color: 'var(--color-muted-foreground)',
@@ -52,7 +54,16 @@ export default function AgentsTab({ selection, events }: AgentsTabProps) {
   }
 
   return (
-    <div style={{ padding: '4px 0', display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <div
+      style={{
+        height: '100%',
+        overflowY: 'auto',
+        padding: '4px 0',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
       {agentIds.map((agentId) => {
         const card = agents.byId[agentId]
         const role = card?.role ?? 'executor'

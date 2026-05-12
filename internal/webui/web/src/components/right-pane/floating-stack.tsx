@@ -50,7 +50,7 @@ export function FloatingInspectorStack({
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: 560,
+            height: 'min(560px, calc(100vh - 100px))',
           }}
         >
           <Inspector
