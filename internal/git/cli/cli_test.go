@@ -8,6 +8,22 @@ import (
 	"testing"
 )
 
+// gitLeakVars are environment variables that, when inherited from a parent
+// git process (e.g. a pre-commit hook running on the outer worktree), make
+// `git` invocations inside a brand-new temp repo discover the wrong
+// repository or run the outer repo's hooks against a directory that does
+// not have the matching config (notably .pre-commit-config.yaml). Unsetting
+// them for the test process forces every child git, both the helper below
+// and the production Probe under test, to bootstrap solely from cmd.Dir.
+var gitLeakVars = []string{
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_COMMON_DIR",
+	"GIT_INDEX_FILE",
+	"GIT_PREFIX",
+	"GIT_EXEC_PATH",
+}
+
 func skipIfNoGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -20,6 +36,25 @@ func skipIfNoGit(t *testing.T) {
 func initRepo(t *testing.T) string {
 	t.Helper()
 	skipIfNoGit(t)
+	// Unset leaked git env vars for the duration of this test. See
+	// gitLeakVars: when the test process inherits GIT_DIR / GIT_WORK_TREE
+	// etc. from an outer git invocation (e.g. a pre-commit hook running on
+	// the buchecha worktree), every `git` subprocess, both the test helper
+	// and the production Probe under test, would otherwise target the
+	// outer repo instead of the temp dir. t.Setenv-with-empty is rejected
+	// by git ("empty string is not a valid path"), so we Unsetenv and
+	// restore the originals via t.Cleanup.
+	for _, k := range gitLeakVars {
+		orig, present := os.LookupEnv(k)
+		os.Unsetenv(k)
+		t.Cleanup(func() {
+			if present {
+				os.Setenv(k, orig)
+			} else {
+				os.Unsetenv(k)
+			}
+		})
+	}
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-b", "main")
 	runGit(t, dir, "config", "user.email", "test@test.com")
