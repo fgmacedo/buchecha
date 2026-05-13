@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -85,10 +86,45 @@ func (p *Probe) CommitsSince(ctx context.Context, sha string) (int, error) {
 	return n, nil
 }
 
+// gitEnvBlocklist is the set of git environment variables that can leak
+// from an outer git process (e.g. a pre-commit hook) into child git
+// commands and cause them to operate on the wrong repository. When the
+// Probe has an explicit Dir, we strip these so git uses normal directory
+// traversal from cmd.Dir to discover the correct repository.
+var gitEnvBlocklist = []string{
+	"GIT_DIR",
+	"GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_WORK_TREE",
+	"GIT_COMMON_DIR",
+}
+
+func isolatedEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		blocked := false
+		for _, key := range gitEnvBlocklist {
+			if strings.HasPrefix(kv, key+"=") {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 func (p *Probe) run(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if p.Dir != "" {
 		cmd.Dir = p.Dir
+		// Strip inherited git env vars so this probe operates on the
+		// repository at p.Dir, not on whatever GIT_DIR was injected by
+		// an outer git invocation (e.g. a pre-commit hook).
+		cmd.Env = isolatedEnv()
 	}
 	out, err := cmd.Output()
 	if err != nil {

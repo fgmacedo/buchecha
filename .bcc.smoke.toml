@@ -1,0 +1,43 @@
+[project]
+language = "en"
+
+[journal]
+store = "markdown_inspec"
+
+[providers.claude]
+binary = "/Users/fernando.macedo/.local/bin/claude"
+extra_args = [
+    "--strict-mcp-config",
+    "--exclude-dynamic-system-prompt-sections",
+]
+skip_permissions = true
+
+[providers.codex]
+binary = "codex"
+
+[[roles.executor.options]]
+provider = "codex"
+model    = "gpt-5.3-codex"
+efforts  = ["medium"]
+
+[[roles.executor.options]]
+provider = "claude"
+model    = "claude-sonnet-4-6"
+efforts  = ["medium"]
+
+[loop]
+mode = "phase"
+max_iterations = 15
+retry_budget = 5
+
+[git]
+branch_prefix = "feat"
+require_commit_per_iteration = true
+
+[debug]
+
+[env]
+files = [".env"]
+
+[env.vars]
+CLAUDE_CONFIG_DIR = "~/.claude-pessoal"

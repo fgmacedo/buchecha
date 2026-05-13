@@ -7,9 +7,9 @@ import (
 )
 
 // Planner produces a Plan from a spec snapshot. Adapters implement this
-// against a concrete agent (Claude, future Codex/Gemini); the consumer
-// (cmd/cli wiring) holds the porter and the loop receives only the
-// resulting Plan.
+// on top of a vendor-agnostic provider port (see internal/provider); the
+// consumer (cmd/cli wiring) holds the porter and the loop receives only
+// the resulting Plan.
 //
 // events, when non-nil, receives the agent's stream telemetry
 // (thinking, tool_use, tool_result, assistant_text, result_summary,

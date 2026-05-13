@@ -4,10 +4,10 @@
 //
 // The Director's wire-shaped artifacts live here as Go structs (Plan,
 // Phase, AcceptanceItem, Briefing, Verdict, VerdictFeedback, ...) with
-// JSON round-trip discipline. Adapters that talk to a concrete agent
-// (claude, future codex/gemini) live in sibling sub-packages and depend
-// on this package via consumer-defined ports (see ports.go in a later
-// phase). This package itself has no adapter knowledge.
+// JSON round-trip discipline. Vendor adapters live under
+// internal/provider/<vendor>/ and depend on this package via the
+// consumer-defined ports (see ports.go); this package itself has no
+// adapter knowledge.
 //
 // Layer boundaries (enforced by a build-time check; see TestImports in
 // director_test.go):

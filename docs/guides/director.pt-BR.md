@@ -25,11 +25,22 @@ Director é o único modo. O loop legado de agente único não é mais exposto p
 retry_budget = 2     # tentativas padrão por sub-DAG antes de escalar
 mcp_audit = true     # grava cada chamada MCP em <session-dir>/mcp-log.jsonl
 
-[director.claude]
+[providers.claude]
 binary = "claude"
-# model = "claude-opus-4-7"
 extra_args = []
-max_budget_usd = 0   # > 0 limita cada chamada do Director; falha fechada quando excede
+skip_permissions = true
+# max_budget_usd = 0  # 0 desativa; > 0 limita cada spawn de papel Director
+
+# [providers.codex]
+# binary = "codex"
+
+# Menus de provider por papel. Cada [[roles.<papel>.options]] é um candidato
+# que o Planner escolhe. A ordem é preferência do usuário; o Planner atribui
+# por effort level. Omita para usar os defaults embutidos.
+# [[roles.executor.options]]
+# provider = "claude"
+# model    = "claude-sonnet-4-6"
+# efforts  = ["medium"]
 ```
 
 ## O que acontece em uma execução
@@ -145,9 +156,16 @@ Cada linha é `{at, role, agent_id, method, input, result, err?}`. Padrões comu
 
 Desligue o audit log com `[director].mcp_audit = false` se ele crescer demais; o formato é JSONL puro mas uma run longa pode produzir centenas de kilobytes.
 
+## Split Provider e DirectorRoles
+
+Cada vendor vive em `internal/provider/<vendor>/` e fornece tanto uma implementação de Executor quanto os DirectorRoles (Planner, Briefer, Reviewer) para aquele vendor. Os pacotes `loop` e `supervision` são vendor-neutral; dependem apenas de ports. Adapters são conectados na camada CLI.
+
+O port `Provider` carrega um campo enum `Sandbox`. Claude o ignora hoje; codex o lê para decidir o modo de isolamento.
+
+Para rodar o Director com múltiplos providers, declare-os em `[providers.*]` e adicione entradas `[[roles.executor.options]]` por papel apontando para cada provider. O Planner atribui um provider por fase de acordo com o effort level solicitado.
+
 ## Limites hoje
 
-- O Director roda apenas contra o adapter Claude. O protocolo MCP é vendor-neutral por construção; adapters codex e gemini estão desbloqueados mas não foram escritos.
 - Edições no spec mid-run não são detectadas automaticamente. Edite o spec, pare o run, e rode `bcc run --resume <spec>` para pegar a mudança.
 - Atribuição capability-aware (modelo por task) está rastreada na [issue #3](https://github.com/fgmacedo/buchecha/issues/3); o Plano ainda não carrega metadados de executor por task.
 - Execução paralela de sub-DAGs em worktrees está rastreada na [issue #2](https://github.com/fgmacedo/buchecha/issues/2); hoje o loop roda um Executor por vez.

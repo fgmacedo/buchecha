@@ -77,6 +77,21 @@ func (a *MCPLog) Append(entry MCPLogEntry) error {
 	return nil
 }
 
+// AppendConnect records an HTTP-level MCP call: initialize, tools/list,
+// tools/call, and any other method the transport layer dispatches before
+// reaching the DAG handler. AgentID is omitted because the transport
+// layer resolves only the role (X-BCC-Role header), not the registered
+// agent_id. This complements the tool-level entries written by Append
+// so the audit trail covers both the wire handshake and the actual
+// method calls.
+func (a *MCPLog) AppendConnect(role, method string) error {
+	return a.Append(MCPLogEntry{
+		At:     time.Now().UTC(),
+		Role:   role,
+		Method: method,
+	})
+}
+
 // Close releases the MCPLog file handle. Idempotent. After Close,
 // further Append calls will reopen the file lazily; the handler
 // typically calls Close once on run shutdown.

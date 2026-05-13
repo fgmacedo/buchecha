@@ -25,11 +25,22 @@ Director is the only mode. The legacy single-agent loop is no longer exposed by 
 retry_budget = 2     # default attempts per sub-DAG before escalation
 mcp_audit = true     # write every MCP call to <session-dir>/mcp-log.jsonl
 
-[director.claude]
+[providers.claude]
 binary = "claude"
-# model = "claude-opus-4-7"
 extra_args = []
-max_budget_usd = 0   # > 0 caps each Director call; fail-closed when exceeded
+skip_permissions = true
+# max_budget_usd = 0  # 0 disables; > 0 caps each Director-role spawn
+
+# [providers.codex]
+# binary = "codex"
+
+# Per-role provider menus. Each [[roles.<role>.options]] entry is one
+# candidate the Planner picks from. Order is user preference; the Planner
+# assigns based on effort level. Omit to use built-in defaults.
+# [[roles.executor.options]]
+# provider = "claude"
+# model    = "claude-sonnet-4-6"
+# efforts  = ["medium"]
 ```
 
 ## What happens when you run
@@ -145,9 +156,16 @@ Each line is `{at, role, agent_id, method, input, result, err?}`. Common pattern
 
 Disable the audit log with `[director].mcp_audit = false` if it grows uncomfortably large; the format is plain JSONL but a long run can produce hundreds of kilobytes.
 
+## Provider and DirectorRoles split
+
+Each vendor lives in `internal/provider/<vendor>/` and provides both an Executor implementation and the DirectorRoles (Planner, Briefer, Reviewer) for that vendor. The `loop` and `supervision` packages are vendor-neutral; they depend only on ports. Adapters are wired at the CLI boundary.
+
+The `Provider` port carries a `Sandbox` enum field. Claude ignores it today; codex reads it to decide isolation mode.
+
+To run the Director with multiple providers, declare them under `[providers.*]` and add per-role `[[roles.executor.options]]` entries pointing at each provider. The Planner assigns a provider per-phase based on the effort level requested.
+
 ## Limits today
 
-- The Director runs only against the Claude adapter. The MCP protocol is vendor-neutral by construction; codex and gemini adapters are unblocked but not written.
 - Mid-run spec edits are not detected automatically. Edit the spec, stop the run, then `bcc run --resume <spec>` to pick up the change.
 - Capability-aware execution (per-task model assignment) is tracked in [issue #3](https://github.com/fgmacedo/buchecha/issues/3); the Plan does not yet carry per-task executor metadata.
 - Parallel sub-DAG execution across worktrees is tracked in [issue #2](https://github.com/fgmacedo/buchecha/issues/2); today the loop runs one Executor at a time.

@@ -20,13 +20,14 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/fgmacedo/buchecha/internal/config"
-	"github.com/fgmacedo/buchecha/internal/executor/claude"
 	gitcli "github.com/fgmacedo/buchecha/internal/git/cli"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
+	"github.com/fgmacedo/buchecha/internal/provider"
+	providerclaude "github.com/fgmacedo/buchecha/internal/provider/claude"
+	providercodex "github.com/fgmacedo/buchecha/internal/provider/codex"
 	"github.com/fgmacedo/buchecha/internal/services"
 	"github.com/fgmacedo/buchecha/internal/supervision"
-	directorclaude "github.com/fgmacedo/buchecha/internal/supervision/claude"
 	"github.com/fgmacedo/buchecha/internal/supervision/dag"
 	"github.com/fgmacedo/buchecha/internal/supervision/journal"
 	"github.com/fgmacedo/buchecha/internal/supervision/menu"
@@ -80,6 +81,12 @@ type directorDeps struct {
 	// without re-constructing the boot. Tests leave this nil and skip
 	// the bind step.
 	boot *mcpBoot
+	// registry is the run-wide provider registry. Held here so
+	// enableDebugLogCapture and bindExecutorSpawnContext can pass it to
+	// makeNewExecutor after session resolution without rebuilding it.
+	// Tests leave nil; makeNewExecutor handles a nil registry gracefully
+	// (all provider lookups fail).
+	registry *provider.Registry
 	// stats, when non-nil, persists per-role spawn telemetry to
 	// stats.jsonl in the session directory. Bound after session
 	// resolution; tests typically leave nil to opt out.
@@ -312,32 +319,44 @@ func defaultDirectorDeps(cfg *config.Config, boot *mcpBoot) directorDeps {
 	// text/json mode forward stderr verbatim so users see auth/quota
 	// errors as they happen.
 	subprocessStderr := directorSubprocessStderr()
-	// loopEvents is set later in runDirectorWith after session resolution;
-	// the adapter pointer is kept so bindDirectorAdapterSession can patch it.
+	// One provider registry per run: every Director role (Planner,
+	// Briefer, Reviewer) reaches its vendor through this registry, and
+	// the Executor's factory consumes the same one. Both claude and codex
+	// are registered unconditionally; if the binary is absent from PATH
+	// the Spawn call will surface a clear error, and the Planner already
+	// filters unavailable options from the role menus.
 	claudeProvider := cfg.Providers["claude"]
-	adapter := directorclaude.New(directorclaude.Config{
-		Binary:       claudeProvider.Binary,
-		ExtraArgs:    claudeProvider.ExtraArgs,
-		MaxBudgetUSD: claudeProvider.MaxBudgetUSD,
-		Stderr:       subprocessStderr,
-		MCPURL:       boot.MCPURL(),
-		MCPToken:     boot.token(),
+	claudeProv := providerclaude.New(providerclaude.Config{
+		Binary:    claudeProvider.Binary,
+		ExtraArgs: claudeProvider.ExtraArgs,
+		Stderr:    subprocessStderr,
 	})
-	registry := buildCapabilityRegistry()
+	codexProvider := cfg.Providers["codex"]
+	codexProv := providercodex.New(providercodex.Config{
+		Binary:    codexProvider.Binary,
+		ExtraArgs: codexProvider.ExtraArgs,
+		Stderr:    subprocessStderr,
+	})
+	registry := provider.NewRegistry(claudeProv, codexProv)
+	roles := supervision.NewDirectorRoles(registry, supervision.DirectorConfig{
+		MaxBudgetUSD: claudeProvider.MaxBudgetUSD,
+	})
+	capabilities := buildCapabilityRegistry()
 	menus := buildRoleMenus(cfg)
 	if boot != nil && boot.handler != nil {
-		boot.handler.SetCapabilityRegistry(&registry)
+		boot.handler.SetCapabilityRegistry(&capabilities)
 		boot.handler.SetRoleMenus(menus)
 	}
 	return directorDeps{
 		cfg:         cfg,
-		planner:     adapter,
-		briefer:     adapter,
-		reviewer:    adapter,
+		planner:     roles,
+		briefer:     roles,
+		reviewer:    roles,
 		registerFn:  boot.registerDirectorAgent,
 		baseDir:     ".bcc",
 		git:         gitcli.New(""),
-		newExecutor: makeNewExecutor(cfg, boot, subprocessStderr, nil, nil, nil),
+		newExecutor: makeNewExecutor(cfg, boot, registry, subprocessStderr, nil, nil, nil),
+		registry:    registry,
 		now:         time.Now,
 	}
 }
@@ -428,26 +447,28 @@ type executorLogSinks struct {
 }
 
 // makeNewExecutor builds the per-iteration executor factory the loop
-// calls. logSinks, when non-nil, opens optional per-spawn capture files
-// and is invoked once per Run with the resolved agent_id and iteration
-// id; the returned writers are wired into the inner adapter and closed
-// when Run returns. Passing nil keeps the no-debug behavior. store and
-// loopEvents, when non-nil, are forwarded to the executor Config for
-// per-spawn prompt persistence and SpawnStarted event emission.
+// calls. registry supplies the available providers; the factory resolves
+// assignment.Provider against it on each call. logSinks, when non-nil,
+// opens optional per-spawn capture files; for claude the adapter is
+// re-constructed per spawn to inject the per-spawn writers. store and
+// loopEvents, when non-nil, are forwarded to the SpawnRequest template
+// for per-spawn prompt persistence and SpawnStarted / SpawnFinished
+// events.
 func makeNewExecutor(
 	cfg *config.Config,
 	boot *mcpBoot,
+	registry *provider.Registry,
 	subprocessStderr io.Writer,
 	logSinks func(args dag.RegisterArgs, agentID string) (executorLogSinks, error),
 	store *session.Store,
 	loopEvents chan<- loop.Event,
 ) func(dag.RegisterArgs, func(string) (string, error), *supervision.RoleAssignment) loop.Executor {
 	return func(args dag.RegisterArgs, renderSystem func(agentID string) (string, error), assignment *supervision.RoleAssignment) loop.Executor {
-		mcpCfg, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
+		mcpInfo, cleanup, err := boot.executorMCPConfig(dag.RoleExecutor, args)
 		if err != nil {
 			return &failingExecutor{err: fmt.Errorf("register executor agent: %w", err)}
 		}
-		systemPromptFile, err := renderSystem(mcpCfg.AgentID)
+		systemPromptFile, err := renderSystem(mcpInfo.AgentID)
 		if err != nil {
 			cleanup()
 			return &failingExecutor{err: fmt.Errorf("render executor system prompt: %w", err)}
@@ -456,51 +477,84 @@ func makeNewExecutor(
 			cleanup()
 			return &failingExecutor{err: fmt.Errorf("executor spawn requires a complete RoleAssignment (provider, model)")}
 		}
-		if assignment.Provider != "claude" {
+		prov, ok := registry.Get(assignment.Provider)
+		if !ok {
 			cleanup()
-			return &failingExecutor{err: fmt.Errorf("executor adapter does not support provider %q", assignment.Provider)}
+			return &failingExecutor{err: fmt.Errorf("unknown provider: %q", assignment.Provider)}
 		}
-		provider := cfg.Providers[assignment.Provider]
-		model := assignment.Model
-		effort := assignment.Effort
+		providerCfg := cfg.Providers[assignment.Provider]
 		var sinks executorLogSinks
 		if logSinks != nil {
-			sinks, err = logSinks(args, mcpCfg.AgentID)
+			sinks, err = logSinks(args, mcpInfo.AgentID)
 			if err != nil {
 				cleanup()
 				return &failingExecutor{err: fmt.Errorf("open executor log sinks: %w", err)}
 			}
-		}
-		stderrWriter := subprocessStderr
-		if sinks.StderrSink != nil {
-			if subprocessStderr != nil && subprocessStderr != io.Discard {
-				stderrWriter = io.MultiWriter(subprocessStderr, sinks.StderrSink)
-			} else {
-				stderrWriter = sinks.StderrSink
+			// When per-spawn sinks are requested, build a fresh per-spawn
+			// claude adapter so the writers flow into the subprocess I/O.
+			// Other providers fall back to the registry instance (no
+			// per-call writer injection yet).
+			if sinks.StderrSink != nil || sinks.StdoutSink != nil {
+				stderrWriter := subprocessStderr
+				if sinks.StderrSink != nil {
+					if subprocessStderr != nil && subprocessStderr != io.Discard {
+						stderrWriter = io.MultiWriter(subprocessStderr, sinks.StderrSink)
+					} else {
+						stderrWriter = sinks.StderrSink
+					}
+				}
+				switch prov.(type) {
+				case *providerclaude.Claude:
+					prov = providerclaude.New(providerclaude.Config{
+						Binary:    providerCfg.Binary,
+						ExtraArgs: providerCfg.ExtraArgs,
+						Stderr:    stderrWriter,
+						Stdout:    sinks.StdoutSink,
+					})
+				case *providercodex.Codex:
+					prov = providercodex.New(providercodex.Config{
+						Binary:    providerCfg.Binary,
+						ExtraArgs: providerCfg.ExtraArgs,
+						Stderr:    stderrWriter,
+						Stdout:    sinks.StdoutSink,
+					})
+				}
 			}
 		}
-		inner := claude.New(claude.Config{
-			Binary:            provider.Binary,
-			Model:             model,
-			Effort:            effort,
-			ExtraArgs:         provider.ExtraArgs,
-			SkipPermissions:   provider.ShouldSkipPermissions(),
-			SystemPromptFile:  systemPromptFile,
-			Stderr:            stderrWriter,
-			Stdout:            sinks.StdoutSink,
-			MCPURL:            mcpCfg.MCPURL,
-			MCPToken:          mcpCfg.MCPToken,
-			MCPConnectionName: mcpCfg.MCPConnectionName,
-			AgentID:           mcpCfg.AgentID,
-			PhaseID:           args.PhaseID,
-			IterationID:       args.BriefingID,
-			Attempt:           args.Attempt,
-			SessionStore:      store,
-			Events:            loopEvents,
-		})
+		// SystemPromptFile is read from disk so the body can be passed
+		// inline through SpawnRequest.SystemPrompt. The provider adapter
+		// re-materialises it into a tempfile when the CLI requires a file.
+		systemPrompt, err := readSystemPrompt(systemPromptFile)
+		if err != nil {
+			cleanup()
+			return &failingExecutor{err: fmt.Errorf("read executor system prompt: %w", err)}
+		}
+		exec := &loop.ProviderExecutor{
+			Provider: prov,
+			Request: provider.SpawnRequest{
+				Role:            "executor",
+				Sandbox:         provider.SandboxWorkspaceWrite,
+				SkipPermissions: providerCfg.ShouldSkipPermissions(),
+				ExtraArgs:       providerCfg.ExtraArgs,
+				Model:           assignment.Model,
+				Effort:          assignment.Effort,
+				SystemPrompt:    systemPrompt,
+				MCP: provider.MCPSpec{
+					URL:            mcpInfo.MCPURL,
+					Token:          mcpInfo.MCPToken,
+					ConnectionName: mcpInfo.MCPConnectionName,
+				},
+				AgentID:      mcpInfo.AgentID,
+				PhaseID:      args.PhaseID,
+				IterationID:  args.BriefingID,
+				Attempt:      args.Attempt,
+				SessionStore: store,
+				LoopEvents:   loopEvents,
+			},
+		}
 		return &deregisteringExecutor{
-			inner:         inner,
-			agentID:       mcpCfg.AgentID,
+			inner:         exec,
+			agentID:       mcpInfo.AgentID,
 			stderrLogPath: sinks.StderrLogPath,
 			cleanup: func() {
 				if sinks.StdoutSink != nil {
@@ -515,11 +569,31 @@ func makeNewExecutor(
 	}
 }
 
+// readSystemPrompt loads the rendered system-prompt file produced by
+// renderSystem into a string. Empty path returns empty string so the
+// adapter knows to skip --system-prompt-file altogether.
+func readSystemPrompt(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
 // enableDebugLogCapture wires per-spawn stderr (and optionally stdout)
-// capture to .bcc/sessions/<id>/runs/ when the [debug] toggles request
-// it. The session must already be resolved on deps.store. No-op when
-// captures are off, when the directorclaude adapter shape is not what
-// we expect (tests inject fakes), or when no Store is bound.
+// capture to .bcc/sessions/<id>/runs/ for the Executor when the
+// [debug] toggles request it. The session must already be resolved on
+// deps.store. No-op when captures are off or when no Store is bound.
+//
+// Note: the Director role spawns (Planner/Briefer/Reviewer) do not
+// route per-spawn stderr/stdout to debug files in this phase because
+// provider.Provider does not yet expose per-call writer hooks; the
+// adapter's run-wide Stderr still flows to os.Stderr in text mode, and
+// session-level audit (mcp-log.jsonl) plus the spawns/<id>.md prompt
+// capture cover the observability gap until that hook lands.
 func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
 	if !cfg.Debug.IsCaptureSubprocessLogsEnabled() {
 		return
@@ -537,29 +611,12 @@ func enableDebugLogCapture(cfg *config.Config, deps *directorDeps) {
 		}
 		return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	}
-	bucketFor := func(role, iter string) string {
-		if role == string(dag.RolePlanner) {
-			return session.PlannerRunsBucket
-		}
-		return iter
-	}
-
-	if a, ok := deps.planner.(*directorclaude.Adapter); ok {
-		a.SetStderrFactory(func(role, iter, agent string) (io.WriteCloser, error) {
-			return openLog(bucketFor(role, iter), agent, "stderr.log")
-		})
-		if captureStdout {
-			a.SetStdoutFactory(func(role, iter, agent string) (io.WriteCloser, error) {
-				return openLog(bucketFor(role, iter), agent, "stdout.jsonl")
-			})
-		}
-	}
 
 	if deps.boot == nil {
 		return
 	}
 	subprocessStderr := directorSubprocessStderr()
-	deps.newExecutor = makeNewExecutor(cfg, deps.boot, subprocessStderr, func(args dag.RegisterArgs, agentID string) (executorLogSinks, error) {
+	deps.newExecutor = makeNewExecutor(cfg, deps.boot, deps.registry, subprocessStderr, func(args dag.RegisterArgs, agentID string) (executorLogSinks, error) {
 		bucket := args.BriefingID
 		stderrPath, err := store.RunLogPath(bucket, agentID, "stderr.log")
 		if err != nil {
@@ -593,26 +650,54 @@ func bindExecutorSpawnContext(cfg *config.Config, deps *directorDeps) {
 	}
 	if !cfg.Debug.IsCaptureSubprocessLogsEnabled() {
 		subprocessStderr := directorSubprocessStderr()
-		deps.newExecutor = makeNewExecutor(cfg, deps.boot, subprocessStderr, nil, deps.store, deps.serviceEvents)
+		deps.newExecutor = makeNewExecutor(cfg, deps.boot, deps.registry, subprocessStderr, nil, deps.store, deps.serviceEvents)
 	}
 }
 
-// bindDirectorAdapterSession wires the resolved session store and the
-// serviceEvents channel into the director claude adapter after session
-// resolution. This is a best-effort post-construction configuration: if
-// the planner is not a *directorclaude.Adapter (test fakes), the call
-// is a no-op.
+// bindDirectorAdapterSession wires the resolved session store, the
+// serviceEvents channel, and the per-role MCP resolver into the
+// DirectorRoles orchestrator after session resolution. The orchestrator
+// forwards all three values through SpawnRequest fields the provider
+// adapter consumes. Best-effort: if the planner is not a
+// *supervision.DirectorRoles (test fakes), the call is a no-op.
+//
+// The MCP resolver is required for the Director roles to reach the
+// run-wide MCP handler; without it, the Planner subprocess runs without
+// --mcp-config and exits without calling plan_emit, which the loop then
+// reports as "planner exited without emitting a plan".
 func bindDirectorAdapterSession(deps *directorDeps) {
 	if deps == nil || deps.store == nil {
 		return
 	}
-	a, ok := deps.planner.(*directorclaude.Adapter)
+	roles, ok := deps.planner.(*supervision.DirectorRoles)
 	if !ok {
 		return
 	}
-	a.SetSessionStore(deps.store)
+	roles.SetSessionStore(deps.store)
 	if deps.serviceEvents != nil {
-		a.SetEvents(deps.serviceEvents)
+		// SpawnRequest.LoopEvents is typed as any to keep the supervision
+		// package independent of internal/loop; the concrete type at
+		// runtime is chan<- loop.Event, which provider adapters
+		// type-assert internally.
+		roles.SetLoopEvents(deps.serviceEvents)
+	}
+	if deps.boot != nil {
+		// Capture boot by value into the closure so the orchestrator can
+		// resolve URL and bearer token per spawn (the listener has bound
+		// by this point, but MCPURL is read on every call to keep things
+		// honest if the bind ordering changes).
+		boot := deps.boot
+		roles.SetMCPProvider(func(role agentcontract.Role) provider.MCPSpec {
+			url := boot.MCPURL()
+			if url == "" {
+				return provider.MCPSpec{}
+			}
+			return provider.MCPSpec{
+				URL:            url,
+				Token:          boot.token(),
+				ConnectionName: string(role),
+			}
+		})
 	}
 }
 

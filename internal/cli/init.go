@@ -6,9 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/fgmacedo/buchecha/internal/config"
 )
 
 var (
@@ -42,6 +45,12 @@ type initInput struct {
 	EnvFiles        []string
 	JournalFilePath string
 	SkipPermissions bool
+	// Codex provider configuration. UseCodex is set by the wizard when
+	// codex is detected on PATH and the user opts in. When false, no
+	// [providers.codex] section is written.
+	UseCodex             bool
+	CodexBinary          string
+	CodexSkipPermissions bool
 }
 
 func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
@@ -54,15 +63,15 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 
 	in := initInput{
 		Language:        initLanguage,
-		JournalStore:    "markdown_inspec",
-		MaxIter:         20,
-		BranchPrefix:    "feat",
-		EnvFiles:        []string{".env"},
-		SkipPermissions: true,
+		JournalStore:    config.DefaultJournalStore,
+		MaxIter:         config.DefaultMaxIterations,
+		BranchPrefix:    config.DefaultBranchPrefix,
+		EnvFiles:        config.DefaultEnvFiles(),
+		SkipPermissions: config.DefaultSkipPermissions,
 	}
 
 	if in.Language == "" {
-		in.Language = ask(r, stdout, "Project language [en/pt-BR]", "en")
+		in.Language = ask(r, stdout, "Project language [en/pt-BR]", config.DefaultLanguage)
 	}
 	if in.Language != "en" && in.Language != "pt-BR" {
 		return fmt.Errorf("invalid language %q (use en or pt-BR)", in.Language)
@@ -83,14 +92,14 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 		return fmt.Errorf("invalid journal store %q", in.JournalStore)
 	}
 
-	maxIterStr := ask(r, stdout, "Max iterations", "20")
+	maxIterStr := ask(r, stdout, "Max iterations", strconv.Itoa(config.DefaultMaxIterations))
 	if _, err := fmt.Sscanf(maxIterStr, "%d", &in.MaxIter); err != nil || in.MaxIter <= 0 {
 		return fmt.Errorf("invalid max iterations %q", maxIterStr)
 	}
 
 	in.BranchPrefix = ask(r, stdout, "Branch prefix", in.BranchPrefix)
 
-	envFilesStr := ask(r, stdout, "Env files (comma-separated)", ".env")
+	envFilesStr := ask(r, stdout, "Env files (comma-separated)", strings.Join(config.DefaultEnvFiles(), ","))
 	in.EnvFiles = splitTrim(envFilesStr, ",")
 
 	fmt.Fprintln(stdout, "")
@@ -113,6 +122,29 @@ func runInitWizard(stdin io.Reader, stdout io.Writer, target string) error {
 		in.SkipPermissions = false
 	default:
 		return fmt.Errorf("invalid answer %q (use yes or no)", skipStr)
+	}
+
+	// Codex provider: offered only when the binary is on PATH.
+	if codexPath, err := exec.LookPath("codex"); err == nil {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "codex detected on PATH. Configure it as an additional provider?")
+		configureCodex := ask(r, stdout, "Add codex provider? [yes/no]", "yes")
+		if strings.ToLower(strings.TrimSpace(configureCodex)) == "yes" || strings.ToLower(strings.TrimSpace(configureCodex)) == "y" {
+			in.UseCodex = true
+			in.CodexBinary = ask(r, stdout, "codex binary path", codexPath)
+
+			fmt.Fprintln(stdout, "")
+			fmt.Fprintln(stdout, "Skip codex permission/approval prompts (autonomous mode)?")
+			codexSkipStr := ask(r, stdout, "Skip codex approval prompts? [yes/no]", "yes")
+			switch strings.ToLower(strings.TrimSpace(codexSkipStr)) {
+			case "yes", "y":
+				in.CodexSkipPermissions = true
+			case "no", "n":
+				in.CodexSkipPermissions = false
+			default:
+				return fmt.Errorf("invalid answer %q (use yes or no)", codexSkipStr)
+			}
+		}
 	}
 
 	if err := WriteConfigTOML(target, in); err != nil {
@@ -155,8 +187,15 @@ func WriteConfigTOML(path string, in initInput) error {
 	fmt.Fprintf(&sb, "skip_permissions = %t\n", in.SkipPermissions)
 	sb.WriteString("# max_budget_usd = 0  # 0 disables; > 0 caps each Director-role spawn\n\n")
 
-	sb.WriteString("# [providers.codex]\n")
-	sb.WriteString("# binary = \"codex\"\n\n")
+	if in.UseCodex {
+		sb.WriteString("[providers.codex]\n")
+		fmt.Fprintf(&sb, "binary = %q\n", in.CodexBinary)
+		fmt.Fprintf(&sb, "skip_permissions = %t\n", in.CodexSkipPermissions)
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("# [providers.codex]\n")
+		sb.WriteString("# binary = \"codex\"\n\n")
+	}
 	sb.WriteString("# [providers.gemini]\n")
 	sb.WriteString("# binary = \"gemini\"\n\n")
 
@@ -165,15 +204,28 @@ func WriteConfigTOML(path string, in initInput) error {
 	sb.WriteString("# claude-opus-4-7 / high, Briefer/Reviewer = claude-sonnet-4-6 /\n")
 	sb.WriteString("# medium, Executor = sonnet preferred, opus available). Declare a\n")
 	sb.WriteString("# role only to restrict, expand, or reorder the menu.\n")
-	sb.WriteString("# [[roles.executor.options]]\n")
-	sb.WriteString("# provider = \"claude\"\n")
-	sb.WriteString("# model = \"claude-opus-4-7\"\n")
-	sb.WriteString("# efforts = [\"high\"]\n")
-	sb.WriteString("# note = \"only for architecturally-loaded phases\"\n\n")
+	if in.UseCodex {
+		sb.WriteString("[[roles.executor.options]]\n")
+		sb.WriteString("provider = \"claude\"\n")
+		sb.WriteString("model = \"claude-sonnet-4-6\"\n")
+		sb.WriteString("efforts = [\"medium\", \"high\"]\n")
+		sb.WriteString("\n")
+		sb.WriteString("[[roles.executor.options]]\n")
+		sb.WriteString("provider = \"codex\"\n")
+		sb.WriteString("model = \"gpt-5.3-codex\"\n")
+		sb.WriteString("efforts = [\"medium\"]\n")
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("# [[roles.executor.options]]\n")
+		sb.WriteString("# provider = \"claude\"\n")
+		sb.WriteString("# model = \"claude-opus-4-7\"\n")
+		sb.WriteString("# efforts = [\"high\"]\n")
+		sb.WriteString("# note = \"only for architecturally-loaded phases\"\n\n")
+	}
 
 	sb.WriteString("[loop]\n")
 	fmt.Fprintf(&sb, "max_iterations = %d\n", in.MaxIter)
-	sb.WriteString("retry_budget = 2\n\n")
+	fmt.Fprintf(&sb, "retry_budget = %d\n\n", config.DefaultRetryBudget)
 
 	sb.WriteString("[git]\n")
 	fmt.Fprintf(&sb, "branch_prefix = %q\n", in.BranchPrefix)

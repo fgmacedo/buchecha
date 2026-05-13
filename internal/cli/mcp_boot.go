@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fgmacedo/buchecha/internal/executor/claude"
 	"github.com/fgmacedo/buchecha/internal/loop"
 	"github.com/fgmacedo/buchecha/internal/loop/agentcontract"
 	"github.com/fgmacedo/buchecha/internal/mcp"
@@ -115,7 +114,15 @@ func (b *mcpBoot) bindSession(store *session.Store, mcpAudit bool, head dag.Head
 		&dagSnapshotPersister{path: dagPath},
 	)
 	if mcpAudit {
-		b.handler.AttachAudit(dag.NewMCPLog(filepath.Join(store.SessionDir(), "mcp-log.jsonl")))
+		mcpLog := dag.NewMCPLog(filepath.Join(store.SessionDir(), "mcp-log.jsonl"))
+		b.handler.AttachAudit(mcpLog)
+		// Record HTTP-level connection calls (initialize, tools/list, etc.)
+		// so the audit trail captures the wire handshake, not only tool
+		// method dispatches. This makes every agent's MCP connection visible
+		// in mcp-log.jsonl even when the agent never invokes a tool method.
+		b.server.SetOnCall(func(role, method string) {
+			_ = mcpLog.AppendConnect(role, method)
+		})
 	}
 	b.handler.AttachProviders(head, journal)
 }
@@ -202,24 +209,34 @@ func (b *mcpBoot) registerDirectorAgent(role dag.Role) (string, func(), error) {
 	return string(id), cleanup, nil
 }
 
-// executorMCPConfig fills the MCP-related fields on a claude.Config so
-// the executor adapter wires its per-spawn mcp-config against this run's
-// MCP server, registering a fresh agent_id under the given role. The
-// returned cleanup deregisters the id when the executor invocation
-// completes.
-func (b *mcpBoot) executorMCPConfig(role dag.Role, args dag.RegisterArgs) (claude.Config, func(), error) {
+// executorMCPInfo bundles the per-spawn MCP wiring the cli hands to the
+// provider adapter: the bcc URL and bearer token, the connection name
+// (role label carried in the X-BCC-Role header), and the agent_id the
+// run-wide registry assigned for this invocation.
+type executorMCPInfo struct {
+	MCPURL            string
+	MCPToken          string
+	MCPConnectionName string
+	AgentID           string
+}
+
+// executorMCPConfig registers a fresh agent_id under the given role and
+// returns the MCP fields the provider adapter needs to wire its
+// per-spawn mcp-config against this run's MCP server. The returned
+// cleanup deregisters the id when the executor invocation completes.
+func (b *mcpBoot) executorMCPConfig(role dag.Role, args dag.RegisterArgs) (executorMCPInfo, func(), error) {
 	id, err := b.registry.Register(role, args)
 	if err != nil {
-		return claude.Config{}, func() {}, err
+		return executorMCPInfo{}, func() {}, err
 	}
-	cfg := claude.Config{
+	info := executorMCPInfo{
 		MCPURL:            b.MCPURL(),
 		MCPToken:          b.token(),
 		MCPConnectionName: string(role),
 		AgentID:           string(id),
 	}
 	cleanup := func() { b.registry.Deregister(id) }
-	return cfg, cleanup, nil
+	return info, cleanup, nil
 }
 
 // deregisteringExecutor wraps a loop.Executor so its agent_id is

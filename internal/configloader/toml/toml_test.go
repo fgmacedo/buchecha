@@ -134,9 +134,10 @@ language = "en"
 }
 
 func TestLoad_ProviderNotInPathFiltersOptions(t *testing.T) {
-	// Only codex available, but defaults reference claude. Expect an error
-	// because the planner role ends up with no usable options.
-	withOnlyBinaries(t, "codex")
+	// No known provider on PATH. Defaults reference every known provider
+	// (claude, codex), but the availability filter strips all of them,
+	// leaving every role with an empty options list. Expect an error.
+	withOnlyBinaries(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".bcc.toml")
 	writeFile(t, path, `[project]
@@ -145,6 +146,29 @@ language = "en"
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected availability filter error, got nil")
+	}
+}
+
+func TestLoad_DefaultsCoverEveryKnownProviderOnPath(t *testing.T) {
+	// Inverse of TestLoad_ProviderNotInPathFiltersOptions: with codex
+	// alone on PATH and no explicit role menus, Load succeeds because
+	// the default role options now include codex via the tier-driven
+	// derivation in internal/config/defaults.go.
+	withOnlyBinaries(t, "codex")
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bcc.toml")
+	writeFile(t, path, `[project]
+language = "en"
+`)
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Roles.Planner.Options) == 0 {
+		t.Fatalf("Planner has no options with codex-only PATH")
+	}
+	if got := c.Roles.Planner.Options[0].Provider; got != "codex" {
+		t.Errorf("Planner Options[0].Provider = %q, want codex", got)
 	}
 }
 

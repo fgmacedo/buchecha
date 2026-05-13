@@ -83,6 +83,7 @@ type Server struct {
 	tools   []Tool
 	handler Handler
 	roleSet map[string]struct{}
+	onCall  func(role, method string) // optional connection-level logger
 }
 
 // New validates cfg and returns a Server ready to mount via Routes.
@@ -104,6 +105,15 @@ func New(cfg ServerConfig) (*Server, error) {
 		handler: cfg.Handler,
 		roleSet: roles,
 	}, nil
+}
+
+// SetOnCall installs an optional callback invoked after every
+// authenticated MCP HTTP request (role check passed). The arguments are
+// the X-BCC-Role value and the JSON-RPC method name. The callback is
+// called synchronously before the response is written; keep it fast.
+// Pass nil to clear. Safe to call concurrently with in-flight requests.
+func (s *Server) SetOnCall(fn func(role, method string)) {
+	s.onCall = fn
 }
 
 // Routes returns an http.Handler ready to mount at any prefix on a
@@ -181,10 +191,13 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request, role string)
 		writeErr(w, nil, -32700, "parse error: "+err.Error())
 		return
 	}
+	if s.onCall != nil {
+		s.onCall(role, req.Method)
+	}
 	switch req.Method {
 	case "initialize":
 		writeResp(w, req.ID, map[string]any{
-			"protocolVersion": "2025-03-26",
+			"protocolVersion": "2025-06-18",
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
 			},

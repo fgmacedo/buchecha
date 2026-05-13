@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestApplyDefaults_EnglishDefault(t *testing.T) {
 	var c Config
@@ -15,8 +18,8 @@ func TestApplyDefaults_EnglishDefault(t *testing.T) {
 	if c.Loop.MaxIterations != 20 {
 		t.Errorf("MaxIterations = %d", c.Loop.MaxIterations)
 	}
-	if c.Loop.RetryBudget != 2 {
-		t.Errorf("Loop.RetryBudget = %d, want 2", c.Loop.RetryBudget)
+	if c.Loop.RetryBudget != 3 {
+		t.Errorf("Loop.RetryBudget = %d, want 3", c.Loop.RetryBudget)
 	}
 	if len(c.Env.Files) != 1 || c.Env.Files[0] != ".env" {
 		t.Errorf("Env.Files = %v, want [.env]", c.Env.Files)
@@ -109,5 +112,74 @@ func TestApplyDefaults_PlannerDefaultsToFrontier(t *testing.T) {
 	opt := c.Roles.Planner.Options[0]
 	if opt.Provider != "claude" || opt.Model != "claude-opus-4-7" {
 		t.Errorf("Planner default = %s/%s, want claude/claude-opus-4-7", opt.Provider, opt.Model)
+	}
+}
+
+// TestApplyDefaults_DefaultsDerivedFromKnownProviders pins the contract
+// that defaults are derived from knownProviders × defaultRoleTiers.
+// When more than one provider has a model at the same tier (claude and
+// codex both expose balanced), both must appear in the role menu, in
+// registry order. The test fails loudly if a provider is added to
+// knownProviders without being picked up here.
+func TestApplyDefaults_DefaultsDerivedFromKnownProviders(t *testing.T) {
+	var c Config
+	ApplyDefaults(&c)
+
+	t.Run("planner: one entry per provider with a frontier model, registry order", func(t *testing.T) {
+		got := c.Roles.Planner.Options
+		want := []RoleOption{
+			{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"high"}},
+			{Provider: "codex", Model: "gpt-5.5", Efforts: []string{"high"}},
+		}
+		assertRoleOptions(t, got, want)
+	})
+
+	t.Run("briefer: tie at balanced includes both providers with curated efforts", func(t *testing.T) {
+		got := c.Roles.Briefer.Options
+		want := []RoleOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
+			{Provider: "codex", Model: "gpt-5.3-codex", Efforts: []string{"medium"}},
+		}
+		assertRoleOptions(t, got, want)
+	})
+
+	t.Run("reviewer: tie at balanced includes both providers with curated efforts", func(t *testing.T) {
+		got := c.Roles.Reviewer.Options
+		want := []RoleOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
+			{Provider: "codex", Model: "gpt-5.3-codex", Efforts: []string{"medium"}},
+		}
+		assertRoleOptions(t, got, want)
+	})
+
+	t.Run("executor: balanced→frontier→fast across providers with widened efforts", func(t *testing.T) {
+		got := c.Roles.Executor.Options
+		wide := []string{"low", "medium", "high"}
+		want := []RoleOption{
+			{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: wide},
+			{Provider: "codex", Model: "gpt-5.3-codex", Efforts: wide},
+			{Provider: "claude", Model: "claude-opus-4-7", Efforts: wide},
+			{Provider: "codex", Model: "gpt-5.5", Efforts: wide},
+			{Provider: "claude", Model: "claude-haiku-4-5", Efforts: wide},
+			{Provider: "codex", Model: "gpt-5.4-mini", Efforts: wide},
+		}
+		assertRoleOptions(t, got, want)
+	})
+}
+
+func assertRoleOptions(t *testing.T, got, want []RoleOption) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d\ngot:  %+v\nwant: %+v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i].Provider != want[i].Provider || got[i].Model != want[i].Model {
+			t.Errorf("[%d] = %s/%s, want %s/%s",
+				i, got[i].Provider, got[i].Model, want[i].Provider, want[i].Model)
+		}
+		if !slices.Equal(got[i].Efforts, want[i].Efforts) {
+			t.Errorf("[%d] %s/%s efforts = %v, want %v",
+				i, got[i].Provider, got[i].Model, got[i].Efforts, want[i].Efforts)
+		}
 	}
 }

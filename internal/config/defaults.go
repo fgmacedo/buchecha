@@ -2,6 +2,25 @@ package config
 
 import "slices"
 
+// Default values exported so callers that need to echo the same defaults
+// (e.g. the init wizard's starter values and prompt suggestions) share a
+// single source of truth with ApplyDefaults instead of duplicating
+// literals. Changing a value here changes the binary's default and the
+// scaffolded .bcc.toml together.
+const (
+	DefaultLanguage        = "en"
+	DefaultJournalStore    = "markdown_inspec"
+	DefaultMaxIterations   = 20
+	DefaultRetryBudget     = 3
+	DefaultBranchPrefix    = "feat"
+	DefaultSkipPermissions = true
+)
+
+// DefaultEnvFiles returns a fresh copy of the default env-file list.
+// A function (rather than a package-level slice) keeps callers from
+// aliasing and mutating the same backing array.
+func DefaultEnvFiles() []string { return []string{".env"} }
+
 // ApplyDefaults fills in zero-valued fields of c so an empty .bcc.toml
 // produces a working configuration.
 //
@@ -11,11 +30,11 @@ import "slices"
 // provider out of the box, without any user opt-in.
 func ApplyDefaults(c *Config) {
 	if c.Project.Language == "" {
-		c.Project.Language = "en"
+		c.Project.Language = DefaultLanguage
 	}
 
 	if c.Journal.Store == "" {
-		c.Journal.Store = "markdown_inspec"
+		c.Journal.Store = DefaultJournalStore
 	}
 
 	// Providers: seed every known provider with adapter-level defaults
@@ -34,7 +53,7 @@ func ApplyDefaults(c *Config) {
 			p.ExtraArgs = slices.Clone(kp.ExtraArgs)
 		}
 		if p.SkipPermissions == nil {
-			v := true
+			v := DefaultSkipPermissions
 			p.SkipPermissions = &v
 		}
 		c.Providers[kp.Name] = p
@@ -58,58 +77,89 @@ func ApplyDefaults(c *Config) {
 	}
 
 	if c.Loop.MaxIterations == 0 {
-		c.Loop.MaxIterations = 20
+		c.Loop.MaxIterations = DefaultMaxIterations
 	}
 	if c.Loop.RetryBudget == 0 {
-		c.Loop.RetryBudget = 2
+		c.Loop.RetryBudget = DefaultRetryBudget
 	}
 
 	if c.Git.BranchPrefix == "" {
-		c.Git.BranchPrefix = "feat"
+		c.Git.BranchPrefix = DefaultBranchPrefix
 	}
 
 	if len(c.Env.Files) == 0 {
-		c.Env.Files = []string{".env"}
+		c.Env.Files = DefaultEnvFiles()
 	}
 }
 
-// defaultPlannerOptions: frontier reasoning amortizes across the whole
-// run; the Planner is the one place where deep thinking pays for itself
-// many times over. One option keeps the choice deterministic.
+// defaultRoleTiers expresses the per-role philosophy in terms of model
+// tiers, decoupled from any specific vendor or model name:
+//
+//   - Planner: frontier reasoning amortizes across the whole run.
+//   - Briefer: balanced is plenty; most phases ship prepared_briefing inline.
+//   - Executor: balanced as the default with frontier and fast as upgrade
+//     and downgrade slots the Planner can reach for per phase. The tier
+//     order is the Planner's preference: best-fit first.
+//   - Reviewer: audits are deterministic against acceptance criteria;
+//     balanced is enough.
+//
+// The actual RoleOption list is derived from the cross-product of these
+// tiers and the knownProviders registry, so adding a new provider in
+// known.go automatically widens every role menu without edits here.
+var defaultRoleTiers = map[string][]string{
+	"planner":  {"frontier"},
+	"briefer":  {"balanced"},
+	"executor": {"balanced", "frontier", "fast"},
+	"reviewer": {"balanced"},
+}
+
+// defaultRoleOptions emits one RoleOption per (tier, provider, model)
+// match, iterating tiers in policy order and knownProviders in registry
+// order. When more than one provider has a model at the same tier
+// (e.g. claude and codex both at balanced), both are included; the
+// Planner picks per phase. efforts resolves the effort list to attach
+// per model so we can keep curated narrow lists for the strict roles
+// and widen them for the Executor.
+func defaultRoleOptions(tiers []string, efforts func(ModelCapability) []string) []RoleOption {
+	var out []RoleOption
+	for _, tier := range tiers {
+		for _, kp := range knownProviders {
+			for _, m := range kp.Models {
+				if m.Tier != tier {
+					continue
+				}
+				out = append(out, RoleOption{
+					Provider: kp.Name,
+					Model:    m.Model,
+					Efforts:  slices.Clone(efforts(m)),
+				})
+			}
+		}
+	}
+	return out
+}
+
+// curatedEfforts uses the model's recommended effort list as-is. Right
+// for roles where the Planner does not need flexibility per phase.
+func curatedEfforts(m ModelCapability) []string { return m.DefaultEfforts }
+
+// widenedEfforts ignores the curated default and offers the full effort
+// spectrum. Right for the Executor, where the Planner uses effort as a
+// per-phase dial to trade cost against depth.
+func widenedEfforts(ModelCapability) []string { return []string{"low", "medium", "high"} }
+
 func defaultPlannerOptions() []RoleOption {
-	return []RoleOption{
-		{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"high"}},
-	}
+	return defaultRoleOptions(defaultRoleTiers["planner"], curatedEfforts)
 }
 
-// defaultBrieferOptions: balanced is plenty when the Briefer is invoked
-// at all. Most phases ship with prepared_briefing inline by the Planner;
-// the Briefer is the exception, used for phases whose briefing depends
-// on runtime state.
 func defaultBrieferOptions() []RoleOption {
-	return []RoleOption{
-		{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
-	}
+	return defaultRoleOptions(defaultRoleTiers["briefer"], curatedEfforts)
 }
 
-// defaultExecutorOptions: balanced as the default; frontier as an
-// upgrade slot the Planner can reach for on architecturally-loaded
-// phases, fast as a downgrade slot for phases the Planner already
-// briefed inline. Three entries express the full "Planner can pay
-// more or less when it needs to" idea across the tier spectrum.
 func defaultExecutorOptions() []RoleOption {
-	return []RoleOption{
-		{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium", "high"}},
-		{Provider: "claude", Model: "claude-opus-4-7", Efforts: []string{"low", "medium", "high"}},
-		{Provider: "claude", Model: "claude-haiku-4-5", Efforts: []string{"low", "medium", "high"}},
-	}
+	return defaultRoleOptions(defaultRoleTiers["executor"], widenedEfforts)
 }
 
-// defaultReviewerOptions: audits are deterministic against acceptance
-// criteria; frontier is rarely needed and trivial reviews can be
-// skipped via skip_review on the Plan.
 func defaultReviewerOptions() []RoleOption {
-	return []RoleOption{
-		{Provider: "claude", Model: "claude-sonnet-4-6", Efforts: []string{"medium"}},
-	}
+	return defaultRoleOptions(defaultRoleTiers["reviewer"], curatedEfforts)
 }

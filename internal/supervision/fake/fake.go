@@ -2,10 +2,10 @@
 //
 // Each fake satisfies one of director's ports (Planner, Briefer,
 // Reviewer) and routes calls to a caller-supplied function. Tests use
-// these to drive the loop without spawning claude. Brief and Review
-// fakes typically invoke the run-wide dag.Handler in-process so they
-// emit briefings and per-task outcomes through the canonical wire
-// (without an HTTP round-trip).
+// these to drive the loop without spawning a real agent subprocess.
+// Brief and Review fakes typically invoke the run-wide dag.Handler
+// in-process so they emit briefings and per-task outcomes through the
+// canonical wire (without an HTTP round-trip).
 package fake
 
 import (

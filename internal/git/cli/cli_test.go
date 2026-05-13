@@ -67,11 +67,39 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	// Strip git-related env vars that the outer git process (e.g. a
+	// pre-commit hook) may have injected. If GIT_DIR or GIT_INDEX_FILE are
+	// inherited, git commands in the temp repo operate on the outer repo
+	// instead of the freshly initialised one, causing cross-repo pollution
+	// and spurious hook failures.
+	cmd.Env = filteredEnv(os.Environ(), "GIT_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 	return string(out)
+}
+
+// filteredEnv returns os.Environ() with the listed keys removed.
+func filteredEnv(env []string, removeKeys ...string) []string {
+	skip := make(map[string]bool, len(removeKeys))
+	for _, k := range removeKeys {
+		skip[k] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key := kv
+		for j := range len(kv) {
+			if kv[j] == '=' {
+				key = kv[:j]
+				break
+			}
+		}
+		if !skip[key] {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 func writeAndCommit(t *testing.T, dir, file, content, msg string) {

@@ -31,8 +31,8 @@ type ToolDescriptor struct {
 // Schemas so the advertised name, description, and inputSchema stay
 // in lockstep with what HandleCall validates. Tool names match the
 // wire method names exactly: plan_emit, briefing_emit, etc.
-// The Claude MCP transport prefixes them with the connection name on
-// the agent's side, so a planner sees mcp__bcc__plan_emit and
+// The MCP client transport prefixes them with the server connection
+// name on the agent's side, so a planner sees mcp__bcc__plan_emit and
 // calls it; the bare name reaches the handler.
 //
 // The returned slice is sorted by tool name so test fixtures and

@@ -63,6 +63,34 @@ var knownProviders = []KnownProvider{
 			},
 		},
 	},
+	{
+		Name:      "codex",
+		Binary:    "codex",
+		ExtraArgs: nil,
+		Models: []ModelCapability{
+			{
+				Provider:       "codex",
+				Model:          "gpt-5.5",
+				Tier:           "frontier",
+				DefaultEfforts: []string{"high"},
+				Summary:        "deep reasoning, flagship; complex coding and research",
+			},
+			{
+				Provider:       "codex",
+				Model:          "gpt-5.3-codex",
+				Tier:           "balanced",
+				DefaultEfforts: []string{"medium"},
+				Summary:        "coding-specialized; default workhorse for agentic tasks",
+			},
+			{
+				Provider:       "codex",
+				Model:          "gpt-5.4-mini",
+				Tier:           "fast",
+				DefaultEfforts: []string{"low"},
+				Summary:        "cheapest; mechanical work, scaffolding, low-risk phases",
+			},
+		},
+	},
 }
 
 // KnownProviderList returns a copy of the built-in provider registry.

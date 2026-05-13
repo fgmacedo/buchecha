@@ -64,9 +64,11 @@ internal/config/                 (Config types, defaults, env precedence)
 internal/mcp/                    (stdlib HTTP MCP server with per-connection
                                   auth; mounted at /mcp/* on the API listener)
         ↑
-internal/supervision/claude/     (claude adapter for Planner/Briefer/Reviewer)
+internal/provider/<vendor>/      (e.g. claude/, codex/) implements both loop.Executor
+                                  and the DirectorRoles (Planner/Briefer/Reviewer) for
+                                  that vendor; Sandbox enum field on the Provider port
+                                  is ignored by claude, consumed by codex)
 internal/supervision/fake/       (test fakes for Planner/Briefer/Reviewer)
-internal/executor/<adapter>/     (e.g. claude/) implements loop.Executor
 internal/git/<adapter>/          (e.g. cli/) implements loop.GitProbe
 internal/configloader/<adapter>/ (e.g. toml/) reads .bcc.toml into config.Config
 ```
@@ -79,8 +81,7 @@ Rules:
 1. `internal/loop` imports `agentcontract`, `config`, `supervision`, and `supervision/dag`. It defines its own ports (`ports.go`) for what it consumes from outside (Executor, GitProbe). It does not import any executor or git adapter.
 1. `internal/supervision/dag` owns the in-memory DAG state, the agent registry, and the MCP handler. It imports `internal/supervision` for typed value objects (Plan, Phase, Task, TaskStatus, Briefing), `internal/loop/agentcontract`, and stdlib only.
 1. `internal/services/` owns the CRUD readers, audit log, error codes, and file IO helpers; `internal/services/events/` owns the EventService. Protocol adapters route every read and (V2+) every mutation through internal/services; they import the core only for typed value objects.
-1. `internal/supervision/claude/` (and future siblings) implement the Planner/Briefer/Reviewer ports. They know about the agent CLI, stream-json, and per-spawn `mcp-config` files.
-1. `internal/executor/claude/` (and future siblings) implements `loop.Executor`. It knows about subprocess, stream-json, env, and the MCP wiring (URL, token, role connection name, agent_id) bcc passes via Config. The loop does not.
+1. `internal/provider/<vendor>/` (e.g. `claude/`, `codex/`) is the vendor adapter package. Each package implements both `loop.Executor` and the DirectorRoles (Planner/Briefer/Reviewer) for that vendor. It knows about subprocess, stream-json, env, the MCP wiring (URL, token, role connection name, agent_id), and any vendor-specific flags (e.g. `Sandbox` for codex, `--dangerously-skip-permissions` for claude). The loop does not.
 1. `internal/api/` and `internal/mcp/` are protocol adapters that consume `internal/services/`. The API uses chi router and huma for OpenAPI; the MCP is a stdlib-only HTTP handler with per-connection authorization mounted at `/mcp/*`. Both depend on services, not on the core directly.
 1. `internal/webui/` is a presentation adapter that exposes an http.Handler serving the embedded SPA bundle. It imports stdlib only and has no knowledge of services, core, or other adapters.
 1. `internal/tui/` imports `services`, `loop` types, `supervision` types, and `agentcontract` types. Never the reverse.
@@ -121,18 +122,18 @@ We do **not** use: domain events bus, CQRS, ubiquitous language clinics, factory
 
 ### SOLID, applied here
 
-- **SRP**: each package changes for a single reason. `executor/claude` changes when Claude's CLI changes. `supervision/dag` changes when MCP method semantics change. `supervision/claude` changes when the per-role agent invocation changes. Mixed concerns are a smell.
-- **OCP**: adding a new agent vendor is a new package under `executor/` and `supervision/<vendor>/`, not edits to existing ones. Adding a new MCP method is a new schema + a new dispatch entry, not surgery on the dispatch table.
+- **SRP**: each package changes for a single reason. `provider/claude` changes when Claude's CLI changes. `supervision/dag` changes when MCP method semantics change. `provider/codex` changes when the codex subprocess contract changes. Mixed concerns are a smell.
+- **OCP**: adding a new agent vendor is a new package under `internal/provider/<vendor>/`, not edits to existing ones. The `Sandbox` enum on the Provider port is a field claude ignores today; codex reads it to decide isolation mode. Adding a new MCP method is a new schema + a new dispatch entry, not surgery on the dispatch table.
 - **LSP**: any `Executor` or Director-role implementation must honor the contract (cancellable via context, exit code propagated, agent events streamed line-by-line, MCP calls obey scope authz). Tests use fakes that prove the contract.
 - **ISP**: small interfaces. `Executor` has one method (`Run`). `Planner`/`Briefer`/`Reviewer` have one method each. `GitProbe` has the few methods the loop actually calls. No god interfaces.
-- **DIP**: `loop` does not import `executor/claude` or `supervision/claude`. It depends on the ports. Adapters wire up at the cli boundary.
+- **DIP**: `loop` does not import any `provider/<vendor>` package. It depends on the ports. Adapters wire up at the cli boundary.
 
 ### Orthogonality (Pragmatic Programmer)
 
 A change in one dimension must not cascade into others.
 
 - Replace `bubbletea` with another TUI: touches `internal/tui/` only.
-- Add a `codex` agent: new packages `internal/executor/codex/` and `internal/supervision/codex/`. No edit to `loop` or `supervision` (root).
+- Add a `gemini` agent: new package `internal/provider/gemini/`. No edit to `loop` or `supervision` (root).
 - Switch from TOML to YAML for config: new adapter under `internal/configloader/`. The `Config` type does not move.
 - Add an MCP method: new JSON schema under `internal/supervision/dag/` (embedded MCP schemas), new handler function in `internal/supervision/dag/handler.go`, new prompt instruction. No loop edit.
 
@@ -229,7 +230,7 @@ Project-level testdata at `testdata/` for end-to-end fixtures (sample specs, sam
 ### Fixtures
 
 - DAG state fixtures inline in tests; round-trip through `dag.SaveStateFile` / `dag.LoadStateFile`.
-- Stream-json fixtures in `internal/executor/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content. The fixture covers wire-protocol `tool_use` envelopes (`mcp__bcc__*`) alongside ordinary built-in tools so the parser path is exercised end to end.
+- Stream-json fixtures in `internal/provider/claude/testdata/`: captured from real runs and trimmed; never include credentials or proprietary content. The fixture covers wire-protocol `tool_use` envelopes (`mcp__bcc__*`) alongside ordinary built-in tools so the parser path is exercised end to end.
 - End-to-end fixtures in `testdata/specs/`: sample specs in English and pt-BR to validate localization.
 
 ## Tooling and commands
@@ -297,13 +298,13 @@ The absolute restrictions embedded in [`internal/loop/agentcontract/absolute_res
 - This is a solo project (one author plus you). When a better port shape, type, layout, or naming choice emerges, propose the breaking change directly and ship it. No backwards-compatibility shims, deprecation aliases, or parallel old-and-new APIs unless explicitly requested. Compatibility scaffolding only matters once external users exist.
 - **Specs are normative, not historical.** Describe what to build, not how the spec got here. When refining a spec, rewrite the affected text in place. Do not narrate the change with "the previous version did X", "after the prior draft", "REMOVED:", "now we changed to Y", or "Breaking changes from previous spec". Each rewrite must read as if the doc were always this way. Design history belongs in commit messages and in the spec's Execution Journal, not in the body. Same rule applies to ADRs, PRDs, initiative docs, and any other design doc under `docs/`. Apply it equally to your own first drafts: write the target state directly, never the diff.
 - Before touching any package, scan the existing tests to understand the contract.
-- Respect layer boundaries: never import an adapter from `internal/loop/`, `internal/supervision/`, `internal/supervision/dag/`, or `internal/config/`. Wire adapters at the cli boundary.
+- Respect layer boundaries: never import a `provider/<vendor>` adapter from `internal/loop/`, `internal/supervision/`, `internal/supervision/dag/`, or `internal/config/`. Wire adapters at the cli boundary.
 - Never put a god `util` or `helpers` package. If a helper is small and obvious, inline it; if it is reused, it has a real home.
 - Working tree clean between milestones. Use `git reset` (non-destructive) before `git add <specific paths>` before `git status -s` to confirm. Never `git add -A` blindly.
 - Tests must pass on `go test -race ./...` before any commit that touches concurrent code.
 - TODOs require a concrete next action. No `// TODO: improve this`.
 - Commit messages: imperative mood, lowercase prefix matching `git log` style (`spec:`, `loop:`, `director:`, `executor:`, `tui:`, `cmd:`, `cli:`, `config:`, `docs:`, `refac:`). One commit per milestone.
-- When in doubt about whether a piece of code belongs on the domain side or the adapter side, ask: would replacing the agent (Claude → Codex) require touching this code? If yes, it is in the wrong place; move it to an adapter.
+- When in doubt about whether a piece of code belongs on the domain side or the adapter side, ask: would replacing the agent (Claude → Codex) require touching this code? If yes, it is in the wrong place; move it to `internal/provider/<vendor>/`.
 
 ## Open knowledge
 

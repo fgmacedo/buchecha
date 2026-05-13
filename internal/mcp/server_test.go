@@ -134,7 +134,7 @@ func TestServer_Initialize(t *testing.T) {
 		t.Fatalf("error: %+v", r.Error)
 	}
 	got, _ := r.Result.(map[string]any)
-	if got["protocolVersion"] != "2025-03-26" {
+	if got["protocolVersion"] != "2025-06-18" {
 		t.Errorf("protocolVersion = %v", got["protocolVersion"])
 	}
 	srvInfo, _ := got["serverInfo"].(map[string]any)

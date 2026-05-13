@@ -18,7 +18,7 @@
 // What is NOT here: the MCP transport itself (HTTP server, mcp-config
 // generation, name prefixing), which lives under internal/mcp and the
 // executor adapter; the per-vendor stream-json parser, which lives
-// under the relevant adapter (e.g. internal/executor/claude/streamjson);
+// under the relevant adapter (e.g. internal/provider/claude/streamjson);
 // the MCP method dispatch table that translates MCP method calls into
 // DAG mutations, which lives in internal/supervision/dag.
 package agentcontract

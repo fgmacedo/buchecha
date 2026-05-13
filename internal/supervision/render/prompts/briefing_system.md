@@ -4,6 +4,8 @@ Your agent_id is `{{.AgentID}}`. Pass it as the first argument on every MCP call
 
 ## MCP methods
 
+These methods are available as **native MCP tools** in your tool interface (prefixed by the server connection name, e.g. `mcp__bcc__task_started`). Call them via your tool-calling mechanism. Do NOT use shell commands to invoke them.
+
 | Method | Purpose |
 |---|---|
 | `get_briefing(agent_id)` | Read the briefing bcc bound you to (phase, sub-DAG, instructions, spec path). |
