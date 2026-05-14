@@ -34,6 +34,8 @@ var (
 	runWebUIOpen       bool
 	runWebUIDev        bool
 	runPrompt          string
+	runPlanner         string
+	runProvider        string
 )
 
 var runCmd = &cobra.Command{
@@ -69,6 +71,8 @@ func init() {
 	runCmd.Flags().BoolVarP(&runWebUIOpen, "webui-open", "W", false, "after the listener is up, launch the default browser at the dashboard URL (implies --webui)")
 	runCmd.Flags().BoolVar(&runWebUIDev, "webui-dev", false, "reverse-proxy the SPA from the local Vite dev server (contributor mode)")
 	runCmd.Flags().StringVarP(&runPrompt, "prompt", "p", "", "free-form user directive (the spec argument becomes optional; both compose when present)")
+	runCmd.Flags().StringVar(&runPlanner, "planner", "", "pin the Planner role to one provider (overrides --provider for planner only)")
+	runCmd.Flags().StringVar(&runProvider, "provider", "", "pin every role (planner, briefer, executor, reviewer) to one provider")
 	if err := runCmd.Flags().MarkHidden("webui-dev"); err != nil {
 		// Hidden marking only fails when the flag is missing. We just
 		// registered it above, so a non-nil err here is a programmer
@@ -162,6 +166,11 @@ func runSpec(ctx context.Context, cancel context.CancelFunc, cmd *cobra.Command,
 	if err := cfg.ApplyEnv(runEnvFlags); err != nil {
 		ExitCode = loop.ExitInvalid
 		return fmt.Errorf("apply env: %w", err)
+	}
+
+	if err := config.FilterProviders(cfg, runProvider, runPlanner); err != nil {
+		ExitCode = loop.ExitInvalid
+		return err
 	}
 
 	if specPath != "" {
